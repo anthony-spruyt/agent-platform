@@ -19,6 +19,7 @@ public static class WorkerServiceCollectionExtensions
         var pods = configuration.GetSection(AgentPodsOptions.SectionName).Get<AgentPodsOptions>() ?? new AgentPodsOptions();
         var gateway = configuration.GetSection(AgentGatewayOptions.SectionName).Get<AgentGatewayOptions>() ?? new AgentGatewayOptions();
         Validate(pods);
+        AgentRunTimeouts.ConfigureHeartbeatTimeout(pods.HeartbeatTimeout);
 
         services
             .AddHostedTemporalWorker(temporal.Address, temporal.Namespace, TaskQueues.AgentPlatform)
@@ -62,6 +63,11 @@ public static class WorkerServiceCollectionExtensions
         if (pods.HeartbeatInterval <= TimeSpan.Zero)
         {
             throw new InvalidOperationException("AgentPods:HeartbeatInterval must be positive.");
+        }
+
+        if (pods.HeartbeatInterval * 2 >= pods.HeartbeatTimeout)
+        {
+            throw new InvalidOperationException("AgentPods:HeartbeatTimeout must be more than twice AgentPods:HeartbeatInterval.");
         }
     }
 }

@@ -9,6 +9,7 @@ public sealed record RunAgentPodInput(string Step, string Prompt, AgentTier Tier
 public sealed partial class AgentPodActivities(IAgentRunner runner, AgentPodsOptions options, ILogger<AgentPodActivities> logger)
 {
     public const string RunAgentPodName = "RunAgentPod";
+    public const string DeleteAgentPodName = "DeleteAgentPod";
 
     [Activity(RunAgentPodName)]
     public async Task<AgentRunResult> RunAgentPodAsync(RunAgentPodInput input)
@@ -51,6 +52,20 @@ public sealed partial class AgentPodActivities(IAgentRunner runner, AgentPodsOpt
             heartbeatTimer.Dispose();
             await heartbeats.ConfigureAwait(false);
         }
+    }
+
+    [Activity(DeleteAgentPodName)]
+    public Task DeleteAgentPodAsync(string step)
+    {
+        var context = ActivityExecutionContext.Current;
+        var request = new AgentRunRequest(
+            context.Info.WorkflowId ?? throw new ApplicationFailureException("DeleteAgentPod must be started by a workflow.", nonRetryable: true),
+            context.Info.WorkflowRunId ?? throw new ApplicationFailureException("DeleteAgentPod must be started by a workflow.", nonRetryable: true),
+            step,
+            string.Empty,
+            AgentTier.Read,
+            1);
+        return runner.CancelAsync(request, context.CancellationToken);
     }
 
     private static async Task HeartbeatAsync(ActivityExecutionContext context, PeriodicTimer timer)

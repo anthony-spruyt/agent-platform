@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Activities;
 using Temporalio.Client;
 using Temporalio.Converters;
+using Temporalio.Exceptions;
 using Temporalio.Testing;
 using Temporalio.Worker;
 
@@ -24,6 +25,15 @@ public class SpikeWorkflowTests
         public List<RunAgentPodInput> Inputs { get; } = [];
 
         public Func<RunAgentPodInput, Task<AgentRunResult>> OnRun { get; set; } = _ => Task.FromResult(Succeeded());
+
+        public List<string> Cleanups { get; } = [];
+
+        [Activity("DeleteAgentPod")]
+        public Task DeleteAgentPodAsync(string step)
+        {
+            Cleanups.Add(step);
+            return Task.CompletedTask;
+        }
 
         [Activity("RunAgentPod")]
         public Task<AgentRunResult> RunAgentPodAsync(RunAgentPodInput input)
@@ -168,6 +178,41 @@ public class SpikeWorkflowTests
         Assert.Equal(SpikeStatus.AgentFailed, result.Status);
         Assert.Equal(outcome, result.Agent.Outcome);
         Assert.Equal("why", result.Agent.Detail);
+    }
+
+    [Fact]
+    public async Task WhenEveryActivityAttemptFails_ThePodIsDeletedAndTheWorkflowFails()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities
+        {
+            OnRun = _ => throw new ApplicationFailureException("boom", nonRetryable: true),
+        };
+
+        await InWorkersAsync(env, activities, async () =>
+        {
+            var handle = await StartAsync(env);
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            return 0;
+        });
+
+        Assert.Equal(["spike"], activities.Cleanups);
+    }
+
+    [Fact]
+    public async Task WhenTheRunEnds_ThePodIsDeletedOnce()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities();
+
+        await InWorkersAsync(env, activities, async () =>
+        {
+            var handle = await StartAsync(env);
+            await handle.SignalAsync(wf => wf.SubmitResultAsync(Payload));
+            return await handle.GetResultAsync();
+        });
+
+        Assert.Equal(["spike"], activities.Cleanups);
     }
 
     [Fact]

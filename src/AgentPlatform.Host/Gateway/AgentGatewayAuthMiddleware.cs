@@ -14,16 +14,18 @@ public sealed class AgentGatewayAuthMiddleware(RequestDelegate next, AgentSessio
     public Task InvokeAsync(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (!context.Request.Path.StartsWithSegments(McpPath, StringComparison.OrdinalIgnoreCase))
-        {
-            return next(context);
-        }
-
         var port = options.Value.Port;
-        if (port != 0 && context.Connection.LocalPort != port)
+        var onGatewayPort = port != 0 && context.Connection.LocalPort == port;
+        var isMcp = context.Request.Path.StartsWithSegments(McpPath, StringComparison.OrdinalIgnoreCase);
+        if (isMcp ? port != 0 && !onGatewayPort : onGatewayPort)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return Task.CompletedTask;
+        }
+
+        if (!isMcp)
+        {
+            return next(context);
         }
 
         var header = context.Request.Headers.Authorization.ToString();

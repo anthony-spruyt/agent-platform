@@ -32,17 +32,16 @@ public sealed partial class KubernetesAgentRunner(
         AgentRunResult result;
         try
         {
-            var (finalPod, stuckReason) = await WaitForEndAsync(name, waitCap.Token).ConfigureAwait(false);
-            result = stuckReason is null
-                ? await InterpretAsync(finalPod, cancellationToken).ConfigureAwait(false)
-                : new AgentRunResult(AgentRunOutcome.PodFailed, name, null, null, $"Pod stuck: {stuckReason}", null);
+            var (finalPod, failure) = await WaitForEndAsync(name, waitCap.Token).ConfigureAwait(false);
+            result = failure is null
+                ? await InterpretAsync(finalPod!, cancellationToken).ConfigureAwait(false)
+                : new AgentRunResult(AgentRunOutcome.PodFailed, name, null, null, failure, null);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (waitCap.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             result = new AgentRunResult(AgentRunOutcome.TimedOut, name, null, null, "Pod did not finish within the run deadline plus scheduling grace.", null);
         }
 
-        await DeletePodAsync(name, cancellationToken).ConfigureAwait(false);
         LogRunEnded(logger, name, result.Outcome);
         return result;
     }
@@ -112,14 +111,32 @@ public sealed partial class KubernetesAgentRunner(
     private Task<V1Pod> GetPodAsync(string name, CancellationToken cancellationToken) =>
         kubernetes.CoreV1.ReadNamespacedPodAsync(name, options.Namespace, cancellationToken: cancellationToken);
 
-    private async Task<(V1Pod Pod, string? StuckReason)> WaitForEndAsync(string name, CancellationToken cancellationToken)
+    private async Task<V1Pod?> TryGetPodAsync(string name, CancellationToken cancellationToken)
     {
-        var pod = await GetPodAsync(name, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await GetPodAsync(name, cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    private async Task<(V1Pod? Pod, string? Failure)> WaitForEndAsync(string name, CancellationToken cancellationToken)
+    {
+        const string PodGone = "The agent pod no longer exists.";
+        var pod = await TryGetPodAsync(name, cancellationToken).ConfigureAwait(false);
         while (true)
         {
+            if (pod is null)
+            {
+                return (null, PodGone);
+            }
+
             if (HasEnded(pod, out var stuck))
             {
-                return (pod, stuck);
+                return (pod, stuck is null ? null : $"Pod stuck: {stuck}");
             }
 
             try
@@ -136,7 +153,7 @@ public sealed partial class KubernetesAgentRunner(
                     pod = updated;
                     if (HasEnded(pod, out stuck))
                     {
-                        return (pod, stuck);
+                        return (pod, stuck is null ? null : $"Pod stuck: {stuck}");
                     }
                 }
             }
@@ -146,7 +163,7 @@ public sealed partial class KubernetesAgentRunner(
                 await Task.Delay(_watchRetryDelay, cancellationToken).ConfigureAwait(false);
             }
 
-            pod = await GetPodAsync(name, cancellationToken).ConfigureAwait(false);
+            pod = await TryGetPodAsync(name, cancellationToken).ConfigureAwait(false);
         }
     }
 

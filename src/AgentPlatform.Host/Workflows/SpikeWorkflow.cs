@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using AgentPlatform.Host.Agents;
 using Temporalio.Common;
+using Temporalio.Exceptions;
 using Temporalio.Workflows;
 
 namespace AgentPlatform.Host.Workflows;
@@ -26,11 +27,13 @@ public sealed record SpikeResult(
     string RunId);
 
 [Workflow]
-public class SpikeWorkflow
+public partial class SpikeWorkflow
 {
     public const string SubmitResultSignal = "submit_result";
 
     public static readonly TimeSpan ResultSignalTimeout = TimeSpan.FromMinutes(2);
+
+    private const string AgentStep = "spike";
 
     private SubmitResultPayload? _result;
 
@@ -45,22 +48,33 @@ public class SpikeWorkflow
     public async Task<SpikeResult> RunAsync(SpikeInput input)
     {
         var deadline = AgentRunTimeouts.DefaultPodDeadlineSeconds;
-        var agent = await Workflow.ExecuteActivityAsync(
-            (AgentPodActivities activities) => activities.RunAgentPodAsync(new RunAgentPodInput("spike", input.Prompt, input.Tier, deadline)),
-            new ActivityOptions
-            {
-                TaskQueue = TaskQueues.AgentPods,
-                StartToCloseTimeout = AgentRunTimeouts.ActivityStartToClose(deadline),
-                HeartbeatTimeout = TimeSpan.FromSeconds(60),
-                CancellationType = ActivityCancellationType.WaitCancellationCompleted,
-                RetryPolicy = new RetryPolicy
+        AgentRunResult agent;
+        try
+        {
+            agent = await Workflow.ExecuteActivityAsync(
+                (AgentPodActivities activities) => activities.RunAgentPodAsync(new RunAgentPodInput(AgentStep, input.Prompt, input.Tier, deadline)),
+                new ActivityOptions
                 {
-                    InitialInterval = TimeSpan.FromSeconds(1),
-                    BackoffCoefficient = 2,
-                    MaximumInterval = TimeSpan.FromMinutes(1),
-                    MaximumAttempts = 5,
-                },
-            });
+                    TaskQueue = TaskQueues.AgentPods,
+                    StartToCloseTimeout = AgentRunTimeouts.ActivityStartToClose(deadline),
+                    HeartbeatTimeout = AgentRunTimeouts.HeartbeatTimeout,
+                    CancellationType = ActivityCancellationType.WaitCancellationCompleted,
+                    RetryPolicy = new RetryPolicy
+                    {
+                        InitialInterval = TimeSpan.FromSeconds(1),
+                        BackoffCoefficient = 2,
+                        MaximumInterval = TimeSpan.FromMinutes(1),
+                        MaximumAttempts = 5,
+                    },
+                });
+        }
+        catch (ActivityFailureException)
+        {
+            await DeletePodAsync();
+            throw;
+        }
+
+        await DeletePodAsync();
 
         var info = Workflow.Info;
         if (agent.Outcome != AgentRunOutcome.Succeeded)
@@ -77,4 +91,27 @@ public class SpikeWorkflow
             info.WorkflowId,
             info.RunId);
     }
+
+    private static async Task DeletePodAsync()
+    {
+        try
+        {
+            await Workflow.ExecuteActivityAsync(
+                (AgentPodActivities activities) => activities.DeleteAgentPodAsync(AgentStep),
+                new ActivityOptions
+                {
+                    TaskQueue = TaskQueues.AgentPods,
+                    StartToCloseTimeout = TimeSpan.FromSeconds(30),
+                    CancellationToken = CancellationToken.None,
+                    RetryPolicy = new RetryPolicy { InitialInterval = TimeSpan.FromSeconds(1), MaximumAttempts = 5 },
+                });
+        }
+        catch (ActivityFailureException ex)
+        {
+            LogPodCleanupFailed(Workflow.Logger, ex);
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not delete the agent pod after the run.")]
+    private static partial void LogPodCleanupFailed(ILogger logger, Exception exception);
 }

@@ -13,23 +13,25 @@ Both roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPl
 
 ## Configuration
 
-| Key                                       | Default                                                               | Notes                                                                                 |
-| ----------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `AgentPlatform:Role`                      | none, required                                                        | `Web` or `Worker`; startup fails on anything else                                     |
-| `Temporal:Address`                        | `localhost:7233`                                                      | Both roles                                                                            |
-| `Temporal:Namespace`                      | `default`                                                             | Both roles                                                                            |
-| `AgentGateway:SessionTokenKey`            | none, required                                                        | At least 32 characters, identical on both roles; signs the per-run MCP session tokens |
-| `AgentGateway:Port`                       | `8081`                                                                | Web role. `/mcp` answers only on this local port; `0` disables the check (local dev)  |
-| `AgentPods:MaxConcurrentActivities`       | `2`                                                                   | Worker role. The global cap on concurrent agent pods                                  |
-| `AgentPods:Namespace`                     | `agent-platform-agents`                                               | Worker role                                                                           |
-| `AgentPods:Image`                         | pinned `claude-agent-read` tag and digest in `AgentPodsOptions`       | Worker role. Bump the default when the image is updated                               |
-| `AgentPods:Model`                         | `sonnet`                                                              | Worker role. Must be allowed by the tier's LiteLLM key                                |
-| `AgentPods:LiteLlmBaseUrl`                | `http://litellm.litellm.svc.cluster.local:4000`                       | Worker role. Injected into agent pods as `ANTHROPIC_BASE_URL`                         |
-| `AgentPods:AgentGatewayUrl`               | `http://agent-platform-web.agent-platform.svc.cluster.local:8081/mcp` | Worker role. The MCP endpoint written into agent pods                                 |
-| `AgentPods:ServiceAccountName`            | `agent-runner`                                                        | Worker role                                                                           |
-| `AgentPods:ClusterReadServiceAccountName` | unset                                                                 | Worker role. Required to run the `cluster-read` tier                                  |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`             | unset                                                                 | Enables the OTLP exporter when set                                                    |
-| `ASPNETCORE_HTTP_PORTS`                   | `8080`                                                                | Image default; the Web deployment sets `8080;8081`                                    |
+| Key                                       | Default                                                               | Notes                                                                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `AgentPlatform:Role`                      | none, required                                                        | `Web` or `Worker`; startup fails on anything else                                                                |
+| `Temporal:Address`                        | `localhost:7233`                                                      | Both roles                                                                                                       |
+| `Temporal:Namespace`                      | `default`                                                             | Both roles                                                                                                       |
+| `AgentGateway:SessionTokenKey`            | none, required                                                        | At least 32 characters, identical on both roles; signs the per-run MCP session tokens                            |
+| `AgentGateway:Port`                       | `8081`                                                                | Web role. The gateway port serves only `/mcp`, and `/mcp` answers only there; `0` disables the check (local dev) |
+| `AgentPods:MaxConcurrentActivities`       | `2`                                                                   | Worker role. The global cap on concurrent agent pods                                                             |
+| `AgentPods:HeartbeatInterval`             | `00:00:15`                                                            | Worker role. Must be less than half of `AgentPods:HeartbeatTimeout`                                              |
+| `AgentPods:HeartbeatTimeout`              | `00:01:00`                                                            | Worker role. The heartbeat timeout of the `RunAgentPod` activity                                                 |
+| `AgentPods:Namespace`                     | `agent-platform-agents`                                               | Worker role                                                                                                      |
+| `AgentPods:Image`                         | pinned `claude-agent-read` tag and digest in `AgentPodsOptions`       | Worker role. Bump the default when the image is updated                                                          |
+| `AgentPods:Model`                         | `sonnet`                                                              | Worker role. Must be allowed by the tier's LiteLLM key                                                           |
+| `AgentPods:LiteLlmBaseUrl`                | `http://litellm.litellm.svc.cluster.local:4000`                       | Worker role. Injected into agent pods as `ANTHROPIC_BASE_URL`                                                    |
+| `AgentPods:AgentGatewayUrl`               | `http://agent-platform-web.agent-platform.svc.cluster.local:8081/mcp` | Worker role. The MCP endpoint written into agent pods                                                            |
+| `AgentPods:ServiceAccountName`            | `agent-runner`                                                        | Worker role                                                                                                      |
+| `AgentPods:ClusterReadServiceAccountName` | unset                                                                 | Worker role. Required to run the `cluster-read` tier                                                             |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`             | unset                                                                 | Enables the OTLP exporter when set                                                                               |
+| `ASPNETCORE_HTTP_PORTS`                   | `8080`                                                                | Image default; the Web deployment sets `8080;8081`                                                               |
 
 Environment variables use `__` as the separator, for example `AgentPlatform__Role=Worker`.
 
@@ -38,14 +40,15 @@ Environment variables use `__` as the separator, for example `AgentPlatform__Rol
 `SpikeWorkflow` proves the agent-pod loop end to end.
 
 1. The workflow runs the `RunAgentPod` activity on task queue `agent-pods`.
-2. The activity (`KubernetesAgentRunner`) creates a Claude Code pod in `AgentPods:Namespace` and then a per-run Secret owned by the pod. It watches the pod to completion, heartbeating, and deletes it at the end.
+2. The activity (`KubernetesAgentRunner`) creates a Claude Code pod in `AgentPods:Namespace` and then a per-run Secret owned by the pod. It watches the pod to completion, heartbeating. The workflow then runs the `DeleteAgentPod` activity, also when the run activity fails.
 3. The agent calls the `submit_result` tool of AgentGateway. The gateway checks the per-run session token and signals the waiting workflow.
 4. The workflow returns the signalled result with the run metadata (`Status`, `Result`, `Agent`, `Tier`, `WorkflowId`, `RunId`).
 
-Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod with `AlreadyExists` and re-attaches instead of creating a second one. A pod is deleted only when the run ends or the workflow cancels the activity; a transient failure or a worker shutdown leaves it for the retry.
+Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod with `AlreadyExists` and re-attaches instead of creating a second one. A pod is deleted by the workflow after the run activity ends (or fails for good) or when the workflow cancels the activity; a transient failure or a worker shutdown leaves it for the retry. A pod that vanished while the activity
+waited is reported as `PodFailed` and is not recreated.
 
-The activity timeout and the pod's `activeDeadlineSeconds` come from the same deadline (`AgentRunTimeouts`); the deadline is at most 3600 seconds. The runner classifies each run from the pod's `stream-json` stdout: `Succeeded`, `Truncated` (no result event, a non-success subtype, a null stop reason, zero output tokens or an empty result), `UsageLimit`, `PodFailed` or `TimedOut`. Any outcome other
-than `Succeeded` ends the workflow with status `AgentFailed`.
+The activity timeout and the pod's `activeDeadlineSeconds` come from the same deadline (`AgentRunTimeouts`); the deadline is at most 3600 seconds. The runner classifies each run from the pod's `stream-json` stdout: `Succeeded`, `Truncated` (no result event, a non-success subtype, zero output tokens or an empty result), `UsageLimit`, `PodFailed` or `TimedOut`. Any outcome other than `Succeeded`
+ends the workflow with status `AgentFailed`.
 
 Start a run with the Temporal CLI in the admin-tools pod, which the frontend already accepts connections from:
 

@@ -58,6 +58,19 @@ public class AgentPodActivitiesTests
     }
 
     [Fact]
+    public async Task DeleteAgentPod_DeletesThePodOfTheCurrentRunAndStep()
+    {
+        var runner = new FakeRunner();
+
+        await Environment().RunAsync(() => Activities(runner).DeleteAgentPodAsync("claude"));
+
+        var cancel = Assert.Single(runner.Cancels);
+        Assert.Equal("spike-1", cancel.WorkflowId);
+        Assert.Equal("run-1", cancel.RunId);
+        Assert.Equal("claude", cancel.Step);
+    }
+
+    [Fact]
     public async Task RunAgentPod_HeartbeatsWhileThePodRuns()
     {
         var beats = 0;

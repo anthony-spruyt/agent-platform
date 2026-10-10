@@ -16,7 +16,6 @@ public sealed record ClaudeOutputSummary(
     public bool IsTruncated =>
         !HasResultEvent
         || Subtype != "success"
-        || StopReasonIsNull
         || OutputTokens == 0
         || ResultText is "";
 }
@@ -24,6 +23,9 @@ public sealed record ClaudeOutputSummary(
 public static partial class ClaudeOutputAnalyzer
 {
     public const int MaxResultTextLength = 16 * 1024;
+
+    private const string RateLimitErrorValue = "rate_limit";
+    private const string RateLimitFallbackMessage = "Claude rate limit reached";
 
     [GeneratedRegex(
         @"usage limit reached|hit your (usage |session |weekly )?limit|(5-hour|weekly|session|opus) limit reached|limit reached\s*[|∙·]",
@@ -112,6 +114,11 @@ public static partial class ClaudeOutputAnalyzer
         {
             var status = root.TryGetProperty("rate_limit_info", out var info) ? GetString(info, "status") : null;
             return status == "rejected" ? "Claude rate limit rejected the request" : null;
+        }
+
+        if (type == "assistant" && GetString(root, "error") == RateLimitErrorValue)
+        {
+            return FirstMessageText(root) ?? RateLimitFallbackMessage;
         }
 
         var text = type switch

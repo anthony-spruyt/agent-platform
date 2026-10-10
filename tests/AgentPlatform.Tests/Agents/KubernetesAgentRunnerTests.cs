@@ -81,7 +81,7 @@ public class KubernetesAgentRunnerTests
 
         await NewRunner(api).RunAsync(Request, Ct);
 
-        Assert.Equal([$"POST pod {PodName}", $"POST secret {PodName}", $"DELETE pod {PodName}"], api.Operations);
+        Assert.Equal([$"POST pod {PodName}", $"POST secret {PodName}"], api.Operations);
         var secret = api.Secrets[PodName];
         var owner = Assert.Single(secret.Metadata.OwnerReferences);
         Assert.Equal("Pod", owner.Kind);
@@ -118,14 +118,14 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
-    public async Task Run_DeletesThePodAtTheEnd()
+    public async Task Run_LeavesTheEndedPodForTheWorkflowToDelete()
     {
         var api = ApiWith(Success);
 
         await NewRunner(api).RunAsync(Request, Ct);
 
-        Assert.Empty(api.Pods);
-        Assert.Equal($"DELETE pod {PodName}", api.Operations[^1]);
+        Assert.Contains(PodName, api.Pods.Keys);
+        Assert.DoesNotContain($"DELETE pod {PodName}", api.Operations);
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public class KubernetesAgentRunnerTests
         Assert.Equal(AgentRunOutcome.Succeeded, second.Outcome);
         Assert.Equal(2, api.PodCreateAttempts);
         Assert.Equal(1, api.PodsCreated);
-        Assert.Empty(api.Pods);
+        Assert.Single(api.Pods);
         Assert.Single(api.Secrets);
     }
 
@@ -199,7 +199,7 @@ public class KubernetesAgentRunnerTests
     [InlineData("")]
     [InlineData("""{"type":"system","subtype":"init"}""")]
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":3}}""")]
-    [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"x","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":3}}""")]
+    [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":3}}""")]
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"x","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}""")]
     [InlineData("""{"type":"result","subtype":"error_max_turns","is_error":true,"result":"x","usage":{"input_tokens":1,"output_tokens":3}}""")]
     public async Task Run_WhenStdoutIsEmptyOrCutOff_ReportsTruncated(string logs)
@@ -210,7 +210,67 @@ public class KubernetesAgentRunnerTests
 
         Assert.Equal(AgentRunOutcome.Truncated, result.Outcome);
         Assert.Contains("incomplete", result.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(api.Pods);
+    }
+
+    [Fact]
+    public async Task Run_WhenStopReasonIsNullButTheResultHasText_Succeeds()
+    {
+        var api = ApiWith("""{"type":"result","subtype":"success","is_error":false,"result":"x","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":3}}""");
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
+    }
+
+    [Fact]
+    public async Task Run_WhenTheClientTimesOutOnARead_IsRetryableNotTimedOut()
+    {
+        var api = ApiWith(Success);
+        var timedOut = false;
+        api.Interceptor = request =>
+        {
+            if (!timedOut && request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith($"/pods/{PodName}", StringComparison.Ordinal))
+            {
+                timedOut = true;
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException());
+            }
+
+            return null;
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NewRunner(api).RunAsync(Request, Ct));
+
+        Assert.Contains(PodName, api.Pods.Keys);
+        Assert.DoesNotContain($"DELETE pod {PodName}", api.Operations);
+    }
+
+    [Fact]
+    public async Task Run_WhenThePodDisappearsWhileWaiting_ReportsPodFailedAndDoesNotRecreateIt()
+    {
+        var api = ApiWith(Success);
+        api.Interceptor = request =>
+            request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith($"/pods/{PodName}", StringComparison.Ordinal)
+                ? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("""{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound"}""") }
+                : null;
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
+        Assert.Contains("no longer exists", result.Detail, StringComparison.Ordinal);
+        Assert.Equal(1, api.PodCreateAttempts);
+    }
+
+    [Fact]
+    public async Task Run_WhenRetriedAfterTheRunEnded_ReattachesToTheEndedPodInsteadOfStartingANewOne()
+    {
+        var api = ApiWith(Success);
+
+        var first = await NewRunner(api).RunAsync(Request, Ct);
+        var second = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.Succeeded, first.Outcome);
+        Assert.Equal(AgentRunOutcome.Succeeded, second.Outcome);
+        Assert.Equal(1, api.PodsCreated);
     }
 
     [Theory]
@@ -225,7 +285,6 @@ public class KubernetesAgentRunnerTests
 
         Assert.Equal(AgentRunOutcome.UsageLimit, result.Outcome);
         Assert.False(string.IsNullOrWhiteSpace(result.Detail));
-        Assert.Empty(api.Pods);
     }
 
     [Fact]
@@ -237,7 +296,6 @@ public class KubernetesAgentRunnerTests
 
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Equal(137, result.ExitCode);
-        Assert.Empty(api.Pods);
     }
 
     [Fact]
@@ -251,7 +309,7 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
-    public async Task Run_WhenThePodNeverFinishes_TimesOutAndDeletesThePod()
+    public async Task Run_WhenThePodNeverFinishes_TimesOut()
     {
         var api = ApiWith(Success);
         api.SetBehavior(PodName, new PodBehavior { Logs = Success });
@@ -259,7 +317,6 @@ public class KubernetesAgentRunnerTests
         var result = await NewRunner(api, o => o.SchedulingGraceSeconds = 0).RunAsync(Request with { DeadlineSeconds = 1 }, Ct);
 
         Assert.Equal(AgentRunOutcome.TimedOut, result.Outcome);
-        Assert.Empty(api.Pods);
     }
 
     [Fact]
@@ -272,7 +329,6 @@ public class KubernetesAgentRunnerTests
 
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Contains("ImagePullBackOff", result.Detail, StringComparison.Ordinal);
-        Assert.Empty(api.Pods);
     }
 
     [Fact]

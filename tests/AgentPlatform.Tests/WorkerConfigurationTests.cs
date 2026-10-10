@@ -101,4 +101,33 @@ public class WorkerConfigurationTests
             ["AgentPods:SchedulingGraceSeconds"] = "100000",
         }));
     }
+
+    [Theory]
+    [InlineData("00:00:30", "00:01:00")]
+    [InlineData("00:00:40", "00:01:00")]
+    [InlineData("00:00:15", "00:00:20")]
+    public void HeartbeatIntervalNotWellUnderTheTimeout_FailsAtStartup(string interval, string timeout)
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["AgentPods:HeartbeatInterval"] = interval,
+            ["AgentPods:HeartbeatTimeout"] = timeout,
+        }));
+    }
+
+    [Theory]
+    [InlineData("00:00:15", "00:01:00")]
+    [InlineData("00:00:20", "00:01:30")]
+    public void HeartbeatIntervalWellUnderTheTimeout_Starts(string interval, string timeout)
+    {
+        using var provider = Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["AgentPods:HeartbeatInterval"] = interval,
+            ["AgentPods:HeartbeatTimeout"] = timeout,
+        });
+
+        Assert.NotNull(provider);
+    }
 }

@@ -261,6 +261,46 @@ public sealed class AgentGatewayTests : IAsyncDisposable
         Assert.Equal(served ? StatusCodes.Status200OK : StatusCodes.Status404NotFound, context.Response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/health")]
+    [InlineData("/alive")]
+    [InlineData("/mcpx")]
+    [InlineData("/other/mcp")]
+    public async Task Middleware_OnTheGatewayPort_ServesNothingButMcp(string path)
+    {
+        var called = false;
+        var middleware = new AgentGatewayAuthMiddleware(
+            _ => { called = true; return Task.CompletedTask; },
+            Tokens,
+            Microsoft.Extensions.Options.Options.Create(new AgentGatewayOptions { SessionTokenKey = Key, Port = 8081 }));
+        var context = new DefaultHttpContext();
+        context.Request.Path = path;
+        context.Connection.LocalPort = 8081;
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.False(called);
+    }
+
+    [Fact]
+    public async Task Middleware_WithTheGatewayPortCheckDisabled_LeavesOtherPathsAlone()
+    {
+        var called = false;
+        var middleware = new AgentGatewayAuthMiddleware(
+            _ => { called = true; return Task.CompletedTask; },
+            Tokens,
+            Microsoft.Extensions.Options.Options.Create(new AgentGatewayOptions { SessionTokenKey = Key, Port = 0 }));
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/health";
+        context.Connection.LocalPort = 8081;
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(called);
+    }
+
     [Fact]
     public async Task Middleware_LeavesOtherPathsAlone()
     {

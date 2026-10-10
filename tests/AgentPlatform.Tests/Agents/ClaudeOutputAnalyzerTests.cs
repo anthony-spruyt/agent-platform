@@ -73,9 +73,18 @@ public class ClaudeOutputAnalyzerTests
     }
 
     [Fact]
-    public async Task NullStopReason_IsTruncated()
+    public async Task NullStopReason_WithResultText_IsNotTruncated()
     {
         var summary = await Analyze(Init, Result(stopReason: "null"));
+
+        Assert.False(summary.IsTruncated);
+        Assert.True(summary.StopReasonIsNull);
+    }
+
+    [Fact]
+    public async Task NullStopReason_WithEmptyResultText_IsTruncated()
+    {
+        var summary = await Analyze(Init, Result(result: "", stopReason: "null"));
 
         Assert.True(summary.IsTruncated);
     }
@@ -157,6 +166,38 @@ public class ClaudeOutputAnalyzerTests
         var summary = await Analyze(Init, apiError);
 
         Assert.True(summary.UsageLimitReached);
+    }
+
+    [Fact]
+    public async Task AssistantEventWithRateLimitError_IsDetected()
+    {
+        const string rateLimited = """{"type":"assistant","error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your limit"}]}}""";
+
+        var summary = await Analyze(Init, rateLimited);
+
+        Assert.True(summary.UsageLimitReached);
+        Assert.Equal("You've hit your limit", summary.UsageLimitMessage);
+    }
+
+    [Fact]
+    public async Task AssistantEventWithRateLimitError_IsDetectedWithoutMessageText()
+    {
+        const string rateLimited = """{"type":"assistant","error":"rate_limit","message":{"content":[]}}""";
+
+        var summary = await Analyze(Init, rateLimited);
+
+        Assert.True(summary.UsageLimitReached);
+        Assert.False(string.IsNullOrWhiteSpace(summary.UsageLimitMessage));
+    }
+
+    [Fact]
+    public async Task AssistantEventWithAnotherError_IsNotAUsageLimit()
+    {
+        const string other = """{"type":"assistant","error":"invalid_request","message":{"content":[{"type":"text","text":"bad"}]}}""";
+
+        var summary = await Analyze(Init, other, Result());
+
+        Assert.False(summary.UsageLimitReached);
     }
 
     [Fact]
