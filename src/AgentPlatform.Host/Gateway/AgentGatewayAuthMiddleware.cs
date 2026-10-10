@@ -15,9 +15,9 @@ public sealed class AgentGatewayAuthMiddleware(RequestDelegate next, AgentSessio
     {
         ArgumentNullException.ThrowIfNull(context);
         var port = options.Value.Port;
-        var onGatewayPort = port != 0 && context.Connection.LocalPort == port;
+        var onGatewayPort = port > 0 && context.Connection.LocalPort == port;
         var isMcp = context.Request.Path.StartsWithSegments(McpPath, StringComparison.OrdinalIgnoreCase);
-        if (isMcp ? port != 0 && !onGatewayPort : onGatewayPort)
+        if (isMcp != onGatewayPort)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return Task.CompletedTask;

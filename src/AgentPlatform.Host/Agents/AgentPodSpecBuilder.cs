@@ -193,7 +193,7 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
         ValueFrom = new V1EnvVarSource { SecretKeyRef = new V1SecretKeySelector { Name = secret, Key = key } },
     };
 
-    private static string EscapeKubernetesReferences(string value) => value.Replace("$(", "$$(", StringComparison.Ordinal);
+    private static string EscapeKubernetesReferences(string value) => value.Replace("$", "$$", StringComparison.Ordinal);
 
     private sealed record TierSettings(
         string Label,

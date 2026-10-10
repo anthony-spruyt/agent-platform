@@ -136,6 +136,24 @@ public class SpikeWorkflowTests
     }
 
     [Fact]
+    public async Task ThePodActivity_IsBoundedBelowThePodCleanupWindowAcrossAllRetries()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities();
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            return await handle.GetResultAsync();
+        });
+
+        var info = Assert.Single(activities.Infos);
+        Assert.Equal(AgentRunTimeouts.ActivityScheduleToClose, info.ScheduleToCloseTimeout);
+        Assert.True(AgentRunTimeouts.ActivityScheduleToClose < TimeSpan.FromHours(2));
+    }
+
+    [Fact]
     public async Task ASecondSubmit_IsRejectedAndTheFirstResultIsKept()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();

@@ -253,6 +253,9 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [InlineData("", "summary")]
     [InlineData("success", "")]
     [InlineData("success", "   ")]
+    [InlineData("done", "summary")]
+    [InlineData("SUCCESS", "summary")]
+    [InlineData("ok", "summary")]
     public async Task InvalidPayload_IsAToolErrorAndNothingIsSignalled(string status, string summary)
     {
         await using var client = await ConnectAsync(ValidToken());
@@ -333,7 +336,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Middleware_WithTheGatewayPortCheckDisabled_LeavesOtherPathsAlone()
+    public async Task Middleware_WithNoGatewayPortConfigured_ServesNothingOnMcp()
     {
         var called = false;
         var middleware = new AgentGatewayAuthMiddleware(
@@ -341,12 +344,14 @@ public sealed class AgentGatewayTests : IAsyncDisposable
             Tokens,
             Microsoft.Extensions.Options.Options.Create(new AgentGatewayOptions { SessionTokenKey = Key, Port = 0 }));
         var context = new DefaultHttpContext();
-        context.Request.Path = "/health";
+        context.Request.Path = "/mcp";
         context.Connection.LocalPort = 8081;
+        context.Request.Headers.Authorization = $"Bearer {ValidToken()}";
 
         await middleware.InvokeAsync(context);
 
-        Assert.True(called);
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.False(called);
     }
 
     [Fact]

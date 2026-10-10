@@ -9,6 +9,8 @@ public static class AgentRunTimeouts
 
     public static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(60);
 
+    public static readonly TimeSpan ActivityScheduleToClose = TimeSpan.FromMinutes(110);
+
     public static TimeSpan ActivityStartToClose(int podDeadlineSeconds) =>
         TimeSpan.FromSeconds(podDeadlineSeconds + SchedulingGraceSeconds + CleanupSlackSeconds);
 }

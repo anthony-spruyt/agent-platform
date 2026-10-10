@@ -257,12 +257,17 @@ public class AgentPodSpecBuilderTests
         Assert.Equal("haiku", ArgAfter(container, "--model"));
     }
 
-    [Fact]
-    public void Container_EscapesKubernetesVariableReferencesInThePrompt()
+    [Theory]
+    [InlineData("echo $(HOME)", "echo $$(HOME)")]
+    [InlineData("$$(X)", "$$$$(X)")]
+    [InlineData("cost is $", "cost is $$")]
+    [InlineData("$$", "$$$$")]
+    [InlineData("no references here", "no references here")]
+    public void Container_EscapesEveryDollarInThePrompt(string prompt, string expected)
     {
-        var container = Agent(Build(Request with { Prompt = "echo $(HOME) and $$(x)" }));
+        var container = Agent(Build(Request with { Prompt = prompt }));
 
-        Assert.Equal("echo $$(HOME) and $$$(x)", container.Args[1]);
+        Assert.Equal(expected, container.Args[1]);
     }
 
     [Fact]

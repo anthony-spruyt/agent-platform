@@ -9,7 +9,8 @@ namespace AgentPlatform.Host.Gateway;
 [McpServerToolType]
 public sealed class SubmitResultTool(IHttpContextAccessor httpContextAccessor, IWorkflowResultSubmitter submitter)
 {
-    public const int MaxStatusLength = 32;
+    public const string StatusSuccess = "success";
+    public const string StatusFailure = "failure";
     public const int MaxSummaryLength = 16 * 1024;
     public const int MaxDataLength = 64 * 1024;
 
@@ -24,9 +25,9 @@ public sealed class SubmitResultTool(IHttpContextAccessor httpContextAccessor, I
         var run = httpContextAccessor.HttpContext?.Items[AgentGatewayAuthMiddleware.RunItemKey] as AgentRunIdentity
             ?? throw new McpException("The request carries no valid run token.");
 
-        if (string.IsNullOrWhiteSpace(status) || status.Length > MaxStatusLength)
+        if (status?.Trim() is not (StatusSuccess or StatusFailure))
         {
-            throw new McpException($"status is required and must be at most {MaxStatusLength} characters.");
+            throw new McpException($"status must be \"{StatusSuccess}\" or \"{StatusFailure}\".");
         }
 
         if (string.IsNullOrWhiteSpace(summary) || summary.Length > MaxSummaryLength)

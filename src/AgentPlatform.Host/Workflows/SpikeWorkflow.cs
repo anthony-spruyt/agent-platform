@@ -70,6 +70,7 @@ public partial class SpikeWorkflow
                 {
                     TaskQueue = TaskQueues.AgentPods,
                     StartToCloseTimeout = AgentRunTimeouts.ActivityStartToClose(deadline),
+                    ScheduleToCloseTimeout = AgentRunTimeouts.ActivityScheduleToClose,
                     HeartbeatTimeout = AgentRunTimeouts.HeartbeatTimeout,
                     CancellationType = ActivityCancellationType.WaitCancellationCompleted,
                     RetryPolicy = new RetryPolicy

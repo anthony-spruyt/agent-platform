@@ -168,8 +168,13 @@ public sealed partial class KubernetesAgentRunner(
                     timeoutSeconds: WatchTimeoutSeconds,
                     cancellationToken: cancellationToken);
 
-                await foreach (var (_, updated) in watch.ConfigureAwait(false))
+                await foreach (var (eventType, updated) in watch.ConfigureAwait(false))
                 {
+                    if (eventType == WatchEventType.Deleted)
+                    {
+                        return (null, PodGone);
+                    }
+
                     pod = updated;
                     if (HasEnded(pod, out stuck))
                     {

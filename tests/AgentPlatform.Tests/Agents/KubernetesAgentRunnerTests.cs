@@ -317,6 +317,32 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
+    public async Task Run_WhenTheWatchReportsThePodDeleted_ReportsPodFailedWithoutWaitingForTheWatchToEnd()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, new PodBehavior { Logs = Success });
+        api.Interceptor = request =>
+        {
+            if (request.Method != HttpMethod.Get || !request.RequestUri!.AbsolutePath.EndsWith("/pods", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var pod = new V1Pod { Metadata = new V1ObjectMeta { Name = PodName }, Status = new V1PodStatus { Phase = "Running" } };
+            var pipe = new System.IO.Pipelines.Pipe();
+            var line = $$"""{"type":"DELETED","object":{{k8s.KubernetesJson.Serialize(pod)}}}""" + "\n";
+            _ = pipe.Writer.WriteAsync(System.Text.Encoding.UTF8.GetBytes(line)).AsTask();
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(pipe.Reader.AsStream()) };
+        };
+
+        var result = await NewRunner(api, o => o.SchedulingGraceSeconds = 0).RunAsync(Request with { DeadlineSeconds = 5 }, Ct);
+
+        Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
+        Assert.Contains("no longer exists", result.Detail, StringComparison.Ordinal);
+        Assert.Equal(1, api.PodCreateAttempts);
+    }
+
+    [Fact]
     public async Task Run_WhenRetriedAfterTheRunEnded_ReattachesToTheEndedPodInsteadOfStartingANewOne()
     {
         var api = ApiWith(Success);
