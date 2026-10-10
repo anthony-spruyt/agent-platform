@@ -1,3 +1,23 @@
+// Repo-specific Renovate overrides — not synced after creation
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json"
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  customManagers: [
+    {
+      customType: "regex",
+      description: ["Container image pinned in the Aspire AppHost."],
+      managerFilePatterns: ["/(^|/)AppHost\\.cs$/"],
+      matchStrings: [
+        "AddContainer\\(\"[^\"]+\", \"(?<depName>[^\"]+)\", \"(?<currentValue>[^\"]+)\"\\)"
+      ],
+      datasourceTemplate: "docker",
+      versioningTemplate: "docker"
+    }
+  ],
+  packageRules: [
+    {
+      description: ["Keep the local Temporal dev server on the CLI line that embeds server 1.32."],
+      matchDepNames: ["temporalio/temporal"],
+      allowedVersions: "/^1\\.9\\./"
+    }
+  ]
 }

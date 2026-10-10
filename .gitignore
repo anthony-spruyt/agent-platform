@@ -23,3 +23,12 @@ agent.sock
 
 # MegaLinter
 .output
+
+# .NET
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+.vs/
+*.binlog

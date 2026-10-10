@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+.git/
+.github/
+.claude/
+.devcontainer/
+.vscode/
+.agent-progress/
+tests/
+src/AgentPlatform.AppHost/
+**/*.md
+Dockerfile
+.dockerignore
