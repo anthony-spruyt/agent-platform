@@ -18,6 +18,17 @@
       description: ["Keep the local Temporal dev server on the CLI line that embeds server 1.32."],
       matchDepNames: ["temporalio/temporal"],
       allowedVersions: "/^1\\.9\\./"
+    },
+    {
+      description: ["The SDK floor in global.json moves together with the SDK image in the Dockerfile."],
+      matchManagers: ["nuget"],
+      matchFileNames: ["global.json"],
+      enabled: false
+    },
+    {
+      description: ["Temporalio packages must share a version or the build hits a downgrade error."],
+      matchPackageNames: ["Temporalio", "Temporalio.*"],
+      groupName: "temporalio-dotnet"
     }
   ]
 }
