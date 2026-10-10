@@ -6,9 +6,41 @@ on:
   workflow_call: {}
 permissions: {}
 jobs:
-  no-repo-jobs:
-    name: "No repo jobs yet"
-    if: "github.event_name == 'never'"
+  dotnet:
+    name: "Build and test"
     runs-on: "ubuntu-latest"
+    permissions:
+      contents: "read"
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
     steps:
-      - run: "true"
+      - name: "Harden Runner"
+        uses: "step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25" # v2.22.1
+        with:
+          egress-policy: "audit"
+      - name: "Checkout"
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: "Setup .NET"
+        uses: "actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68" # v6.0.0
+        with:
+          global-json-file: "global.json"
+      - name: "Restore"
+        run: "dotnet restore AgentPlatform.slnx"
+      - name: "Build"
+        run: "dotnet build AgentPlatform.slnx --configuration Release --no-restore"
+      - name: "Verify formatting"
+        run: "dotnet format AgentPlatform.slnx --verify-no-changes --no-restore"
+      - name: "Test"
+        run: >-
+          dotnet test --solution AgentPlatform.slnx --configuration Release --no-build
+          --coverage --coverage-output-format cobertura --results-directory ./TestResults
+      - name: "Upload coverage"
+        if: "!cancelled()"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7
+        with:
+          name: "coverage"
+          path: "TestResults/**/*.cobertura.xml"
+          if-no-files-found: "warn"

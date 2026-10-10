@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AgentPlatform.AppHost/AgentPlatform.AppHost.csproj" />
+    <Project Path="src/AgentPlatform.Host/AgentPlatform.Host.csproj" />
+    <Project Path="src/AgentPlatform.ServiceDefaults/AgentPlatform.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AgentPlatform.Tests/AgentPlatform.Tests.csproj" />
+  </Folder>
+</Solution>

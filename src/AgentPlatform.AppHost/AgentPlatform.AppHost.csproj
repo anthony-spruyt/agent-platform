@@ -1,0 +1,10 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.6.1">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPublishable>false</IsPublishable>
+    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentPlatform.Host\AgentPlatform.Host.csproj" />
+  </ItemGroup>
+</Project>
