@@ -8,7 +8,11 @@ public class WebHealthTests : IClassFixture<WebApplicationFactory<Program>>
     private readonly WebApplicationFactory<Program> _factory;
 
     public WebHealthTests(WebApplicationFactory<Program> factory) =>
-        _factory = factory.WithWebHostBuilder(builder => builder.UseSetting("AgentPlatform:Role", "Web"));
+        _factory = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("AgentPlatform:Role", "Web");
+            builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
+        });
 
     [Theory]
     [InlineData("/health")]
