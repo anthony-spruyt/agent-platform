@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/master/src/schemas/json/github-workflow.json
+# This file is automatically updated - do not modify directly
+
+name: "Release Please"
+on:
+  push:
+    branches:
+      - "main"
+  workflow_dispatch: {}
+permissions:
+  contents: "write"
+  packages: "write"
+  id-token: "write"
+  attestations: "write"
+jobs:
+  release:
+    uses: "anthony-spruyt/repo-operator/.github/workflows/_release-please.yaml@03ce087ec3006c13aa278b3d1b42e8f409cd6c43"
+    with:
+      language: "none"
+      dockerhub-namespace: "aspruyt"
+    secrets:
+      RELEASE_PLEASE_APP_CLIENT_ID: "${{ secrets.RELEASE_PLEASE_APP_CLIENT_ID }}"
+      RELEASE_PLEASE_APP_PRIVATE_KEY: "${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}"
+      DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}"

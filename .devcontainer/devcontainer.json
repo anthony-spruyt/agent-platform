@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
+  "name": "devcontainer-common",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "BASE_REGISTRY": "${localEnv:BASE_REGISTRY:docker.io}",
+      "NEXUS_URL": "${localEnv:NEXUS_URL}"
+    }
+  },
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "containerUser": "vscode",
+  "remoteUser": "vscode",
+  "runArgs": [
+    "--security-opt",
+    "seccomp=${localWorkspaceFolder}/.devcontainer/podman-seccomp.json",
+    "--device",
+    "/dev/fuse",
+    "--env-file",
+    "${localEnv:HOME}/.secrets/.env.common"
+  ],
+  "mounts": [
+    "source=${localEnv:HOME}/.secrets/.gitignore,target=/home/vscode/.secrets/.gitignore,type=bind,readonly",
+    "source=${localEnv:HOME}/.ssh/agent.sock,target=/ssh-agent,type=bind",
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
+    "source=${localWorkspaceFolderBasename}-containers,target=/var/lib/containers,type=volume"
+  ],
+  "features": {
+    "ghcr.io/devcontainers/features/dotnet": {
+      "version": "10.0.401"
+    },
+    "ghcr.io/devcontainers-extra/features/renovate-cli": {
+      "version": "44.149.1"
+    }
+  },
+  "initializeCommand": "bash ${localWorkspaceFolder}/.devcontainer/initialize.sh",
+  "postCreateCommand": "bash -lc \"cd ${containerWorkspaceFolder} && devcontainer-post-create\"",
+  "waitFor": "postStartCommand",
+  "postStartCommand": "bash -lc \"cd ${containerWorkspaceFolder} && bash .devcontainer/post-start.sh\"",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "bierner.markdown-mermaid",
+        "blueglassblock.better-json5",
+        "esbenp.prettier-vscode",
+        "jetmartin.bats",
+        "mhutchie.git-graph",
+        "nk2552003.forest-ash-theme-vscode",
+        "redhat.vscode-yaml",
+        "github.vscode-github-actions",
+        "ms-dotnettools.csdevkit"
+      ],
+      "settings": {
+        "workbench.startupEditor": "none"
+      }
+    }
+  }
+}
