@@ -41,7 +41,7 @@ public sealed partial class AgentPodActivities(IAgentRunner runner, AgentPodsOpt
         {
             throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
         }
-        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested && context.CancelReason != ActivityCancelReason.WorkerShutdown)
+        catch (OperationCanceledException) when (context.CancelReason == ActivityCancelReason.CancelRequested)
         {
             LogCancelling(logger, request.WorkflowId);
             await runner.CancelAsync(request, CancellationToken.None).ConfigureAwait(false);
@@ -76,6 +76,6 @@ public sealed partial class AgentPodActivities(IAgentRunner runner, AgentPodsOpt
         }
     }
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Activity for workflow {WorkflowId} was cancelled; deleting its agent pod.")]
+    [LoggerMessage(Level = LogLevel.Information, Message = "Workflow {WorkflowId} cancelled the activity; deleting its agent pod.")]
     private static partial void LogCancelling(ILogger logger, string workflowId);
 }

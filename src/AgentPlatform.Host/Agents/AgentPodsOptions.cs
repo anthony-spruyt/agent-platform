@@ -19,8 +19,6 @@ public sealed class AgentPodsOptions
 
     public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(15);
 
-    public TimeSpan HeartbeatTimeout { get; set; } = AgentRunTimeouts.DefaultHeartbeatTimeout;
-
     public string ServiceAccountName { get; set; } = "agent-runner";
 
     public string? ClusterReadServiceAccountName { get; set; }

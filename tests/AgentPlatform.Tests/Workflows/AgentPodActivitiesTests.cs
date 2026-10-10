@@ -1,5 +1,6 @@
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Workflows;
+using AgentPlatform.Tests.Support;
 using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Activities;
 using Temporalio.Exceptions;
@@ -113,18 +114,59 @@ public class AgentPodActivitiesTests
         Assert.Single(runner.Cancels);
     }
 
-    [Fact]
-    public async Task RunAgentPod_WhenTheWorkerIsShuttingDown_LeavesThePodForTheRetry()
+    [Theory]
+    [InlineData(ActivityCancelReason.WorkerShutdown)]
+    [InlineData(ActivityCancelReason.Timeout)]
+    [InlineData(ActivityCancelReason.GoneFromServer)]
+    [InlineData(ActivityCancelReason.Paused)]
+    [InlineData(ActivityCancelReason.Reset)]
+    [InlineData(ActivityCancelReason.HeartbeatRecordFailure)]
+    public async Task RunAgentPod_WhenCancelledForAnyReasonButTheWorkflow_LeavesThePodForTheRetry(ActivityCancelReason reason)
     {
         var runner = new FakeRunner { OnRun = async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return null!; } };
         var environment = Environment();
 
         var run = environment.RunAsync(() => Activities(runner).RunAgentPodAsync(Input));
         await WaitUntilAsync(() => runner.Runs.Count == 1);
-        environment.Cancel(ActivityCancelReason.WorkerShutdown);
+        environment.Cancel(reason);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
         Assert.Empty(runner.Cancels);
+    }
+
+    [Fact]
+    public async Task RunAgentPod_AnAttemptThatTimedOutNeverDeletesThePodTheRetryReattachedTo()
+    {
+        var api = new FakeKubeApi();
+        var podName = AgentPodNaming.PodName("spike-1", "run-1", "claude");
+        var held = new PodBehavior { Logs = FakeKubeApi.SuccessLogs };
+        api.SetBehavior(podName, held);
+        var options = new AgentPodsOptions();
+        var runner = new KubernetesAgentRunner(
+            api.CreateClient(),
+            new AgentPodSpecBuilder(options),
+            new AgentSessionTokens("0123456789abcdef0123456789abcdef"),
+            [],
+            options,
+            TimeProvider.System,
+            NullLogger<KubernetesAgentRunner>.Instance);
+        var activities = new AgentPodActivities(runner, options, NullLogger<AgentPodActivities>.Instance);
+
+        var firstAttempt = Environment();
+        var first = firstAttempt.RunAsync(() => activities.RunAgentPodAsync(Input));
+        await WaitUntilAsync(() => api.Secrets.ContainsKey(podName));
+        var secondAttempt = Environment();
+        var second = secondAttempt.RunAsync(() => activities.RunAgentPodAsync(Input));
+        await WaitUntilAsync(() => api.PodCreateAttempts == 2);
+        firstAttempt.Cancel(ActivityCancelReason.Timeout);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        held.Release.SetResult();
+        var result = await second;
+
+        Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
+        Assert.Equal(1, api.PodsCreated);
+        Assert.DoesNotContain($"DELETE pod {podName}", api.Operations);
+        Assert.Contains(podName, api.Pods.Keys);
     }
 
     [Fact]

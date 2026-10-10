@@ -72,7 +72,7 @@ public sealed partial class KubernetesAgentRunner(
     {
         var data = new Dictionary<string, string>
         {
-            [AgentPodSpecBuilder.SessionTokenKey] = sessionTokens.Issue(request.WorkflowId, request.RunId),
+            [AgentPodSpecBuilder.SessionTokenKey] = sessionTokens.Issue(request.WorkflowId, request.RunId, TokenExpiry(pod, request)),
         };
         foreach (var contributor in secretContributors)
         {
@@ -104,8 +104,28 @@ public sealed partial class KubernetesAgentRunner(
         }
         catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.Conflict)
         {
-            LogSecretExists(logger, pod.Metadata.Name);
+            LogSecretReplaced(logger, pod.Metadata.Name);
+            await DeleteSecretAsync(pod.Metadata.Name, cancellationToken).ConfigureAwait(false);
+            await kubernetes.CoreV1.CreateNamespacedSecretAsync(secret, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task DeleteSecretAsync(string name, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await kubernetes.CoreV1.DeleteNamespacedSecretAsync(name, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
+        {
+            LogSecretAlreadyGone(logger, name);
+        }
+    }
+
+    private DateTimeOffset TokenExpiry(V1Pod pod, AgentRunRequest request)
+    {
+        var created = new DateTimeOffset(pod.Metadata.CreationTimestamp ?? time.GetUtcNow().UtcDateTime);
+        return created.AddSeconds(request.DeadlineSeconds + options.SchedulingGraceSeconds + AgentRunTimeouts.TokenGraceSeconds);
     }
 
     private Task<V1Pod> GetPodAsync(string name, CancellationToken cancellationToken) =>
@@ -258,8 +278,11 @@ public sealed partial class KubernetesAgentRunner(
     [LoggerMessage(Level = LogLevel.Information, Message = "Agent pod {PodName} already exists; re-attaching.")]
     private static partial void LogPodReattached(ILogger logger, string podName);
 
-    [LoggerMessage(Level = LogLevel.Debug, Message = "Per-run Secret {SecretName} already exists.")]
-    private static partial void LogSecretExists(ILogger logger, string secretName);
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Per-run Secret {SecretName} already exists; replacing it so the current pod owns it.")]
+    private static partial void LogSecretReplaced(ILogger logger, string secretName);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Per-run Secret {SecretName} was already gone.")]
+    private static partial void LogSecretAlreadyGone(ILogger logger, string secretName);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Watch on agent pod {PodName} failed; retrying.")]
     private static partial void LogWatchRetry(ILogger logger, string podName, Exception exception);

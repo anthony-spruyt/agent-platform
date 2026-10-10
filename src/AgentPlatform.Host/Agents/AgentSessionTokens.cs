@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -5,12 +6,13 @@ namespace AgentPlatform.Host.Agents;
 
 public sealed class AgentSessionTokens
 {
-    private const string Version = "v1";
+    private const string Version = "v2";
     private const int MinimumKeyLength = 32;
 
     private readonly byte[] _key;
+    private readonly TimeProvider _time;
 
-    public AgentSessionTokens(string key)
+    public AgentSessionTokens(string key, TimeProvider? time = null)
     {
         if (string.IsNullOrWhiteSpace(key) || key.Length < MinimumKeyLength)
         {
@@ -18,21 +20,23 @@ public sealed class AgentSessionTokens
         }
 
         _key = Encoding.UTF8.GetBytes(key);
+        _time = time ?? TimeProvider.System;
     }
 
-    public string Issue(string workflowId, string runId)
+    public string Issue(string workflowId, string runId, DateTimeOffset expiresAt)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workflowId);
         ArgumentException.ThrowIfNullOrWhiteSpace(runId);
 
-        return $"{Version}.{Encode(workflowId)}.{Encode(runId)}.{Base64Url(Sign(workflowId, runId))}";
+        var expiry = expiresAt.ToUnixTimeSeconds();
+        return $"{Version}.{Encode(workflowId)}.{Encode(runId)}.{expiry.ToString(CultureInfo.InvariantCulture)}.{Base64Url(Sign(workflowId, runId, expiry))}";
     }
 
     public bool TryValidate(string? token, out AgentRunIdentity run)
     {
         run = null!;
         var parts = token?.Split('.');
-        if (parts is not [Version, var encodedWorkflow, var encodedRun, var encodedMac])
+        if (parts is not [Version, var encodedWorkflow, var encodedRun, var encodedExpiry, var encodedMac])
         {
             return false;
         }
@@ -40,13 +44,15 @@ public sealed class AgentSessionTokens
         if (!TryDecode(encodedWorkflow, out var workflowId)
             || !TryDecode(encodedRun, out var runId)
             || !TryDecodeBytes(encodedMac, out var mac)
+            || !long.TryParse(encodedExpiry, NumberStyles.None, CultureInfo.InvariantCulture, out var expiry)
             || workflowId.Length == 0
             || runId.Length == 0)
         {
             return false;
         }
 
-        if (!CryptographicOperations.FixedTimeEquals(mac, Sign(workflowId, runId)))
+        if (!CryptographicOperations.FixedTimeEquals(mac, Sign(workflowId, runId, expiry))
+            || _time.GetUtcNow().ToUnixTimeSeconds() >= expiry)
         {
             return false;
         }
@@ -55,8 +61,8 @@ public sealed class AgentSessionTokens
         return true;
     }
 
-    private byte[] Sign(string workflowId, string runId) =>
-        HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes($"{Version}\n{workflowId}\n{runId}"));
+    private byte[] Sign(string workflowId, string runId, long expiry) =>
+        HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes($"{Version}\n{workflowId}\n{runId}\n{expiry.ToString(CultureInfo.InvariantCulture)}"));
 
     private static string Encode(string value) => Base64Url(Encoding.UTF8.GetBytes(value));
 

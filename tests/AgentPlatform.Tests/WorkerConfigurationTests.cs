@@ -103,29 +103,28 @@ public class WorkerConfigurationTests
     }
 
     [Theory]
-    [InlineData("00:00:30", "00:01:00")]
-    [InlineData("00:00:40", "00:01:00")]
-    [InlineData("00:00:15", "00:00:20")]
-    public void HeartbeatIntervalNotWellUnderTheTimeout_FailsAtStartup(string interval, string timeout)
+    [InlineData("00:00:30")]
+    [InlineData("00:00:40")]
+    [InlineData("00:01:00")]
+    public void HeartbeatIntervalNotWellUnderTheTimeout_FailsAtStartup(string interval)
     {
         Assert.Throws<InvalidOperationException>(() => Build(new()
         {
             ["AgentGateway:SessionTokenKey"] = Key,
             ["AgentPods:HeartbeatInterval"] = interval,
-            ["AgentPods:HeartbeatTimeout"] = timeout,
         }));
     }
 
     [Theory]
-    [InlineData("00:00:15", "00:01:00")]
-    [InlineData("00:00:20", "00:01:30")]
-    public void HeartbeatIntervalWellUnderTheTimeout_Starts(string interval, string timeout)
+    [InlineData("00:00:15")]
+    [InlineData("00:00:20")]
+    [InlineData("00:00:29")]
+    public void HeartbeatIntervalWellUnderTheTimeout_Starts(string interval)
     {
         using var provider = Build(new()
         {
             ["AgentGateway:SessionTokenKey"] = Key,
             ["AgentPods:HeartbeatInterval"] = interval,
-            ["AgentPods:HeartbeatTimeout"] = timeout,
         });
 
         Assert.NotNull(provider);

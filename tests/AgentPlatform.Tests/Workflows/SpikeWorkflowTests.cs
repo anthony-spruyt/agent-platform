@@ -5,6 +5,7 @@ using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Support;
 using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Activities;
+using Temporalio.Api.Enums.V1;
 using Temporalio.Client;
 using Temporalio.Converters;
 using Temporalio.Exceptions;
@@ -18,14 +19,29 @@ public class SpikeWorkflowTests
     private static readonly SubmitResultPayload Payload =
         new("success", "Looks fine", JsonDocument.Parse("""{"verdict":"safe"}""").RootElement.Clone());
 
+    private static readonly SubmitResultPayload Second = Payload with { Summary = "second" };
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private sealed class ScriptedActivities
     {
         public List<RunAgentPodInput> Inputs { get; } = [];
 
+        public List<ActivityInfo> Infos { get; } = [];
+
         public Func<RunAgentPodInput, Task<AgentRunResult>> OnRun { get; set; } = _ => Task.FromResult(Succeeded());
 
+        [Activity("RunAgentPod")]
+        public Task<AgentRunResult> RunAgentPodAsync(RunAgentPodInput input)
+        {
+            Inputs.Add(input);
+            Infos.Add(ActivityExecutionContext.Current.Info);
+            return OnRun(input);
+        }
+    }
+
+    private sealed class RecordingCleanup
+    {
         public List<string> Cleanups { get; } = [];
 
         [Activity("DeleteAgentPod")]
@@ -34,30 +50,25 @@ public class SpikeWorkflowTests
             Cleanups.Add(step);
             return Task.CompletedTask;
         }
-
-        [Activity("RunAgentPod")]
-        public Task<AgentRunResult> RunAgentPodAsync(RunAgentPodInput input)
-        {
-            Inputs.Add(input);
-            return OnRun(input);
-        }
     }
 
     private static AgentRunResult Succeeded() =>
         new(AgentRunOutcome.Succeeded, "pod-1", 0, "all good", null, new AgentRunUsage(1, 2, 0.1, 3, 4, "s"));
 
-    private static async Task<T> InWorkersAsync<T, TActivities>(
+    private static async Task<T> InWorkersAsync<T, TPod, TCleanup>(
         WorkflowEnvironment env,
-        TActivities activities,
+        TPod podActivities,
+        TCleanup cleanup,
         Func<Task<T>> body)
-        where TActivities : class
+        where TPod : class
+        where TCleanup : class
     {
         using var workflows = new TemporalWorker(
             env.Client,
-            new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<SpikeWorkflow>());
+            new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<SpikeWorkflow>().AddAllActivities(cleanup));
         using var pods = new TemporalWorker(
             env.Client,
-            new TemporalWorkerOptions(TaskQueues.AgentPods).AddAllActivities(activities));
+            new TemporalWorkerOptions(TaskQueues.AgentPods).AddAllActivities(podActivities));
         return await workflows.ExecuteAsync(() => pods.ExecuteAsync(body, Ct), Ct);
     }
 
@@ -67,7 +78,7 @@ public class SpikeWorkflowTests
             new WorkflowOptions($"spike-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
 
     [Fact]
-    public async Task HappyPath_ReturnsTheSignalledResultWithRunMetadata()
+    public async Task HappyPath_ReturnsTheSubmittedResultWithRunMetadata()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var running = new TaskCompletionSource();
@@ -82,11 +93,11 @@ public class SpikeWorkflowTests
             },
         };
 
-        var result = await InWorkersAsync(env, activities, async () =>
+        var result = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
         {
             var handle = await StartAsync(env);
             await running.Task;
-            await handle.SignalAsync(wf => wf.SubmitResultAsync(Payload));
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
             release.SetResult();
             return await handle.GetResultAsync();
         });
@@ -102,38 +113,71 @@ public class SpikeWorkflowTests
     }
 
     [Fact]
-    public async Task HappyPath_RunsThePodActivityOnTheAgentPodsQueueWithADeadlineAndHeartbeat()
+    public async Task HappyPath_RunsThePodActivityOnTheAgentPodsQueueWithTheDeadlineAndHeartbeatTimeout()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var activities = new ScriptedActivities();
 
-        var handleId = await InWorkersAsync(env, activities, async () =>
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
         {
             var handle = await StartAsync(env, new SpikeInput("check the repo", AgentTier.Read));
-            await handle.SignalAsync(wf => wf.SubmitResultAsync(Payload));
-            await handle.GetResultAsync();
-            return handle.Id;
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            return await handle.GetResultAsync();
         });
 
         var input = Assert.Single(activities.Inputs);
         Assert.Equal("check the repo", input.Prompt);
         Assert.Equal(AgentTier.Read, input.Tier);
-        Assert.InRange(input.DeadlineSeconds, 1, 3600);
-        Assert.False(string.IsNullOrEmpty(handleId));
+        Assert.Equal(AgentRunTimeouts.DefaultPodDeadlineSeconds, input.DeadlineSeconds);
+        var info = Assert.Single(activities.Infos);
+        Assert.Equal(TaskQueues.AgentPods, info.TaskQueue);
+        Assert.Equal(TimeSpan.FromSeconds(60), info.HeartbeatTimeout);
+        Assert.Equal(AgentRunTimeouts.ActivityStartToClose(input.DeadlineSeconds), info.StartToCloseTimeout);
     }
 
     [Fact]
-    public async Task SignalArrivingAfterThePodEnds_IsStillAccepted()
+    public async Task ASecondSubmit_IsRejectedAndTheFirstResultIsKept()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var running = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var activities = new ScriptedActivities
+        {
+            OnRun = async _ =>
+            {
+                running.SetResult();
+                await release.Task;
+                return Succeeded();
+            },
+        };
+
+        var result = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await running.Task;
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            var rejected = await Assert.ThrowsAsync<WorkflowUpdateFailedException>(
+                () => handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Second)));
+            Assert.Equal(SpikeWorkflow.ResultAlreadySubmittedErrorType, Assert.IsType<ApplicationFailureException>(rejected.InnerException).ErrorType);
+            release.SetResult();
+            return await handle.GetResultAsync();
+        });
+
+        Assert.Equal("Looks fine", result.Result!.Summary);
+    }
+
+    [Fact]
+    public async Task SubmitArrivingAfterThePodEnds_IsStillAccepted()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var activities = new ScriptedActivities();
 
-        var result = await InWorkersAsync(env, activities, async () =>
+        var result = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
         {
             var handle = await StartAsync(env);
             await WaitUntilAsync(() => activities.Inputs.Count == 1);
             await Task.Delay(200, Ct);
-            await handle.SignalAsync(wf => wf.SubmitResultAsync(Payload));
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
             return await handle.GetResultAsync();
         });
 
@@ -141,11 +185,11 @@ public class SpikeWorkflowTests
     }
 
     [Fact]
-    public async Task WhenNoSignalArrives_TimesOutWithTheRunMetadata()
+    public async Task WhenNoResultArrives_TimesOutWithTheRunMetadata()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
 
-        var result = await InWorkersAsync(env, new ScriptedActivities(), async () =>
+        var result = await InWorkersAsync(env, new ScriptedActivities(), new RecordingCleanup(), async () =>
         {
             var handle = await StartAsync(env);
             return await handle.GetResultAsync();
@@ -161,7 +205,7 @@ public class SpikeWorkflowTests
     [InlineData(AgentRunOutcome.UsageLimit)]
     [InlineData(AgentRunOutcome.PodFailed)]
     [InlineData(AgentRunOutcome.TimedOut)]
-    public async Task WhenTheAgentRunFails_ReportsAgentFailedWithoutWaitingForASignal(AgentRunOutcome outcome)
+    public async Task WhenTheAgentRunFails_ReportsAgentFailedWithoutWaitingForAResult(AgentRunOutcome outcome)
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var activities = new ScriptedActivities
@@ -169,7 +213,7 @@ public class SpikeWorkflowTests
             OnRun = _ => Task.FromResult(new AgentRunResult(outcome, "pod-1", 1, null, "why", null)),
         };
 
-        var result = await InWorkersAsync(env, activities, async () =>
+        var result = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
         {
             var handle = await StartAsync(env);
             return await handle.GetResultAsync();
@@ -184,35 +228,68 @@ public class SpikeWorkflowTests
     public async Task WhenEveryActivityAttemptFails_ThePodIsDeletedAndTheWorkflowFails()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var cleanup = new RecordingCleanup();
         var activities = new ScriptedActivities
         {
             OnRun = _ => throw new ApplicationFailureException("boom", nonRetryable: true),
         };
 
-        await InWorkersAsync(env, activities, async () =>
+        await InWorkersAsync(env, activities, cleanup, async () =>
         {
             var handle = await StartAsync(env);
             await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
             return 0;
         });
 
-        Assert.Equal(["spike"], activities.Cleanups);
+        Assert.Equal(["spike"], cleanup.Cleanups);
     }
 
     [Fact]
-    public async Task WhenTheRunEnds_ThePodIsDeletedOnce()
+    public async Task WhenTheRunEnds_ThePodIsDeletedOnceByTheWorkflowWorkerWithoutTheAgentPodsQueue()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
-        var activities = new ScriptedActivities();
+        var cleanup = new RecordingCleanup();
 
-        await InWorkersAsync(env, activities, async () =>
+        await InWorkersAsync(env, new ScriptedActivities(), cleanup, async () =>
         {
             var handle = await StartAsync(env);
-            await handle.SignalAsync(wf => wf.SubmitResultAsync(Payload));
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
             return await handle.GetResultAsync();
         });
 
-        Assert.Equal(["spike"], activities.Cleanups);
+        Assert.Equal(["spike"], cleanup.Cleanups);
+    }
+
+    [Fact]
+    public async Task WhenTheWorkflowIsCancelled_ItEndsCanceledAndDeletesThePodOnce()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var cleanup = new RecordingCleanup();
+        var activities = new ScriptedActivities
+        {
+            OnRun = async _ =>
+            {
+                var context = ActivityExecutionContext.Current;
+                while (true)
+                {
+                    context.Heartbeat();
+                    await Task.Delay(50, context.CancellationToken);
+                }
+            },
+        };
+
+        var status = await InWorkersAsync(env, activities, cleanup, async () =>
+        {
+            var handle = await StartAsync(env);
+            await WaitUntilAsync(() => activities.Inputs.Count == 1);
+            await handle.CancelAsync();
+            var failure = await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            Assert.IsType<CanceledFailureException>(failure.InnerException);
+            return (await handle.DescribeAsync()).Status;
+        });
+
+        Assert.Equal(WorkflowExecutionStatus.Canceled, status);
+        Assert.Equal(["spike"], cleanup.Cleanups);
     }
 
     [Fact]
@@ -242,11 +319,11 @@ public class SpikeWorkflowTests
             NullLogger<KubernetesAgentRunner>.Instance);
         var activities = new AgentPodActivities(runner, options, NullLogger<AgentPodActivities>.Instance);
 
-        var result = await InWorkersAsync(env, activities, async () =>
+        var result = await InWorkersAsync(env, activities, activities, async () =>
         {
             var handle = await StartAsync(env);
             await WaitUntilAsync(() => api.PodCreateAttempts >= 2);
-            await handle.SignalAsync(wf => wf.SubmitResultAsync(Payload));
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
             return await handle.GetResultAsync();
         });
 

@@ -106,6 +106,62 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
+    public async Task Run_IssuesATokenThatExpiresShortlyAfterThePodDeadline()
+    {
+        var api = ApiWith(Success);
+        var before = DateTimeOffset.UtcNow;
+
+        await NewRunner(api).RunAsync(Request, Ct);
+
+        var token = api.Secrets[PodName].StringData["session-token"];
+        var lifetime = TimeSpan.FromSeconds(Request.DeadlineSeconds + AgentRunTimeouts.SchedulingGraceSeconds);
+        var grace = TimeSpan.FromSeconds(AgentRunTimeouts.TokenGraceSeconds);
+        Assert.True(new AgentSessionTokens(SessionKey, new FixedTime(before + lifetime + (grace / 2))).TryValidate(token, out _));
+        Assert.False(new AgentSessionTokens(SessionKey, new FixedTime(before + lifetime + grace + TimeSpan.FromMinutes(2))).TryValidate(token, out _));
+    }
+
+    [Fact]
+    public async Task Run_WhenAnEarlierPodOfTheSameNameLeftItsSecret_ReplacesItWithOneOwnedByTheCurrentPod()
+    {
+        var api = ApiWith(Success);
+        api.SeedSecret(new V1Secret
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = PodName,
+                NamespaceProperty = "agent-platform-agents",
+                OwnerReferences = [new V1OwnerReference { ApiVersion = "v1", Kind = "Pod", Name = PodName, Uid = "uid-of-a-deleted-pod" }],
+            },
+            StringData = new Dictionary<string, string> { ["session-token"] = "stale" },
+        });
+
+        await NewRunner(api).RunAsync(Request, Ct);
+
+        var secret = api.Secrets[PodName];
+        Assert.Equal(api.Pods[PodName].Metadata.Uid, Assert.Single(secret.Metadata.OwnerReferences).Uid);
+        Assert.NotEqual("stale", secret.StringData["session-token"]);
+    }
+
+    [Fact]
+    public async Task Run_ReplacesTheSecretWithOnlyCreateAndDelete()
+    {
+        var api = ApiWith(Success);
+        var requests = new List<string>();
+        api.Interceptor = request =>
+        {
+            requests.Add($"{request.Method} {request.RequestUri!.AbsolutePath}");
+            return null;
+        };
+
+        await NewRunner(api).RunAsync(Request, Ct);
+        await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.DoesNotContain(requests, r => r.StartsWith("GET", StringComparison.Ordinal) && r.Contains("/secrets", StringComparison.Ordinal));
+        Assert.Contains($"DELETE secret {PodName}", api.Operations);
+        Assert.Single(api.Secrets);
+    }
+
+    [Fact]
     public async Task Run_StoresAdditionalSecretDataFromContributors()
     {
         var api = ApiWith(Success);

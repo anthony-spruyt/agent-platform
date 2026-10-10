@@ -13,10 +13,9 @@ var temporalAddress = ReferenceExpression.Create($"{temporalGrpc.Property(Endpoi
 builder.AddProject<Projects.AgentPlatform_Host>("web")
     .WithEnvironment("AgentPlatform__Role", "Web")
     .WithEnvironment("AgentGateway__SessionTokenKey", LocalSessionTokenKey)
-    .WithEnvironment("AgentGateway__Port", "0")
     .WithEnvironment("Temporal__Address", temporalAddress)
-    .WithHttpEndpoint(name: "webhooks")
-    .WithHttpEndpoint(name: "mcp")
+    .WithHttpEndpoint(targetPort: 8080, name: "webhooks")
+    .WithHttpEndpoint(targetPort: 8081, name: "mcp")
     .WithHttpHealthCheck("/health", endpointName: "webhooks")
     .WaitFor(temporal);
 

@@ -39,7 +39,9 @@ public sealed partial class FakeKubeApi : DelegatingHandler
     private readonly Dictionary<string, V1Secret> _secrets = [];
     private readonly Dictionary<string, PodBehavior> _behaviors = [];
 
-    public PodBehavior DefaultBehavior { get; set; } = PodBehavior.Completes("""{"type":"result","subtype":"success","is_error":false,"result":"ok","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}""");
+    public const string SuccessLogs = """{"type":"result","subtype":"success","is_error":false,"result":"ok","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}""";
+
+    public PodBehavior DefaultBehavior { get; set; } = PodBehavior.Completes(SuccessLogs);
 
     public List<string> Operations { get; } = [];
 
@@ -94,6 +96,14 @@ public sealed partial class FakeKubeApi : DelegatingHandler
         }
     }
 
+    public void SeedSecret(V1Secret secret)
+    {
+        lock (_gate)
+        {
+            _secrets[secret.Metadata.Name] = secret;
+        }
+    }
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var response = Interceptor?.Invoke(request) ?? await RouteAsync(request, cancellationToken);
@@ -127,6 +137,11 @@ public sealed partial class FakeKubeApi : DelegatingHandler
         if (SecretsCollection().IsMatch(path) && request.Method == HttpMethod.Post)
         {
             return await CreateSecretAsync(request, cancellationToken);
+        }
+
+        if (SingleSecret().Match(path) is { Success: true } singleSecret && request.Method == HttpMethod.Delete)
+        {
+            return DeleteSecret(singleSecret.Groups[2].Value);
         }
 
         return Json(HttpStatusCode.NotFound, Status(404, "NotFound", $"unhandled {request.Method} {path}"));
@@ -168,6 +183,20 @@ public sealed partial class FakeKubeApi : DelegatingHandler
 
             _secrets[secret.Metadata.Name] = secret;
             return Json(HttpStatusCode.Created, KubernetesJson.Serialize(secret));
+        }
+    }
+
+    private HttpResponseMessage DeleteSecret(string name)
+    {
+        lock (_gate)
+        {
+            Operations.Add($"DELETE secret {name}");
+            if (!_secrets.Remove(name, out var secret))
+            {
+                return Json(HttpStatusCode.NotFound, Status(404, "NotFound", $"secrets \"{name}\" not found"));
+            }
+
+            return Json(HttpStatusCode.OK, KubernetesJson.Serialize(secret));
         }
     }
 
@@ -318,6 +347,9 @@ public sealed partial class FakeKubeApi : DelegatingHandler
 
     [GeneratedRegex(@"^/api/v1/namespaces/([^/]+)/secrets$")]
     private static partial Regex SecretsCollection();
+
+    [GeneratedRegex(@"^/api/v1/namespaces/([^/]+)/secrets/([^/]+)$")]
+    private static partial Regex SingleSecret();
 
     [GeneratedRegex(@"metadata\.name=([^&]+)")]
     private static partial Regex WatchSelector();

@@ -29,19 +29,32 @@ public sealed record SpikeResult(
 [Workflow]
 public partial class SpikeWorkflow
 {
-    public const string SubmitResultSignal = "submit_result";
+    public const string SubmitResultUpdate = "submit_result";
+    public const string ResultAlreadySubmittedErrorType = "ResultAlreadySubmitted";
 
-    public static readonly TimeSpan ResultSignalTimeout = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan ResultTimeout = TimeSpan.FromMinutes(2);
 
     private const string AgentStep = "spike";
 
     private SubmitResultPayload? _result;
 
-    [WorkflowSignal(SubmitResultSignal)]
+    [WorkflowUpdate(SubmitResultUpdate)]
     public Task SubmitResultAsync(SubmitResultPayload payload)
     {
-        _result ??= payload;
+        _result = payload;
         return Task.CompletedTask;
+    }
+
+    [WorkflowUpdateValidator(nameof(SubmitResultAsync))]
+    public void ValidateSubmitResult(SubmitResultPayload payload)
+    {
+        if (_result is not null)
+        {
+            throw new ApplicationFailureException(
+                "A result was already submitted for this run.",
+                errorType: ResultAlreadySubmittedErrorType,
+                nonRetryable: true);
+        }
     }
 
     [WorkflowRun]
@@ -68,7 +81,7 @@ public partial class SpikeWorkflow
                     },
                 });
         }
-        catch (ActivityFailureException)
+        catch (Exception ex) when (ex is ActivityFailureException or OperationCanceledException)
         {
             await DeletePodAsync();
             throw;
@@ -82,7 +95,7 @@ public partial class SpikeWorkflow
             return new SpikeResult(SpikeStatus.AgentFailed, _result, agent, input.Tier, info.WorkflowId, info.RunId);
         }
 
-        var arrived = await Workflow.WaitConditionAsync(() => _result is not null, ResultSignalTimeout);
+        var arrived = await Workflow.WaitConditionAsync(() => _result is not null, ResultTimeout);
         return new SpikeResult(
             arrived ? SpikeStatus.Succeeded : SpikeStatus.ResultTimeout,
             _result,
@@ -96,11 +109,10 @@ public partial class SpikeWorkflow
     {
         try
         {
-            await Workflow.ExecuteActivityAsync(
+            await Workflow.ExecuteLocalActivityAsync(
                 (AgentPodActivities activities) => activities.DeleteAgentPodAsync(AgentStep),
-                new ActivityOptions
+                new LocalActivityOptions
                 {
-                    TaskQueue = TaskQueues.AgentPods,
                     StartToCloseTimeout = TimeSpan.FromSeconds(30),
                     CancellationToken = CancellationToken.None,
                     RetryPolicy = new RetryPolicy { InitialInterval = TimeSpan.FromSeconds(1), MaximumAttempts = 5 },

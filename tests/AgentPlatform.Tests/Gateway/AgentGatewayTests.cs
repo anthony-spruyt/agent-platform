@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Gateway;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -15,11 +17,14 @@ namespace AgentPlatform.Tests.Gateway;
 public sealed class AgentGatewayTests : IAsyncDisposable
 {
     private const string Key = "0123456789abcdef0123456789abcdef";
+    private const int GatewayPort = 8081;
+    private const int WebhookPort = 8080;
     private const string McpUrl = "http://localhost/mcp";
 
     private static readonly AgentSessionTokens Tokens = new(Key);
+    private static readonly DateTimeOffset InAnHour = DateTimeOffset.UtcNow.AddHours(1);
 
-    private readonly RecordingSignaller _signaller = new();
+    private readonly RecordingSubmitter _submitter = new();
     private readonly WebApplicationFactory<Program> _factory;
 
     public AgentGatewayTests()
@@ -28,20 +33,37 @@ public sealed class AgentGatewayTests : IAsyncDisposable
         {
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", Key);
-            builder.UseSetting("AgentGateway:Port", "0");
-            builder.ConfigureTestServices(services => services.AddSingleton<IWorkflowSignaller>(_signaller));
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton<IWorkflowResultSubmitter>(_submitter);
+                services.AddSingleton<IStartupFilter>(new LocalPortFilter(GatewayPort, WebhookPort));
+            });
         });
+    }
+
+    private sealed class LocalPortFilter(int gatewayPort, int webhookPort) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) =>
+            app =>
+            {
+                app.Use((context, nextMiddleware) =>
+                {
+                    context.Connection.LocalPort = context.Request.Path.StartsWithSegments(AgentGatewayAuthMiddleware.McpPath) ? gatewayPort : webhookPort;
+                    return nextMiddleware(context);
+                });
+                next(app);
+            };
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private sealed class RecordingSignaller : IWorkflowSignaller
+    private sealed class RecordingSubmitter : IWorkflowResultSubmitter
     {
         public List<(AgentRunIdentity Run, SubmitResultPayload Payload)> Signals { get; } = [];
 
         public Exception? Failure { get; set; }
 
-        public Task SignalResultAsync(AgentRunIdentity run, SubmitResultPayload payload, CancellationToken cancellationToken)
+        public Task SubmitResultAsync(AgentRunIdentity run, SubmitResultPayload payload, CancellationToken cancellationToken)
         {
             if (Failure is not null)
             {
@@ -67,7 +89,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
         return await McpClient.CreateAsync(transport, cancellationToken: Ct);
     }
 
-    private static string ValidToken() => Tokens.Issue("spike-1", "run-1");
+    private static string ValidToken() => Tokens.Issue("spike-1", "run-1", InAnHour);
 
     private async Task<HttpResponseMessage> PostRawAsync(string? authorization, string body)
     {
@@ -104,7 +126,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
             cancellationToken: Ct);
 
         Assert.NotEqual(true, result.IsError);
-        var (run, payload) = Assert.Single(_signaller.Signals);
+        var (run, payload) = Assert.Single(_submitter.Signals);
         Assert.Equal(new AgentRunIdentity("spike-1", "run-1"), run);
         Assert.Equal("success", payload.Status);
         Assert.Equal("Looks fine", payload.Summary);
@@ -121,7 +143,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
             new Dictionary<string, object?> { ["status"] = "failure", ["summary"] = "could not check" },
             cancellationToken: Ct);
 
-        var (_, payload) = Assert.Single(_signaller.Signals);
+        var (_, payload) = Assert.Single(_submitter.Signals);
         Assert.Null(payload.Data);
     }
 
@@ -142,7 +164,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.False(response.Headers.Contains("Mcp-Session-Id"));
-        Assert.Single(_signaller.Signals);
+        Assert.Single(_submitter.Signals);
     }
 
     [Fact]
@@ -151,18 +173,29 @@ public sealed class AgentGatewayTests : IAsyncDisposable
         using var response = await PostRawAsync("Bearer v1.bm9wZQ.bm9wZQ.AAAA", CallBody);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Empty(_signaller.Signals);
+        Assert.Empty(_submitter.Signals);
     }
 
     [Fact]
     public async Task TokenSignedWithAnotherKey_IsRejected()
     {
-        var foreign = new AgentSessionTokens("another-key-another-key-another-key").Issue("spike-1", "run-1");
+        var foreign = new AgentSessionTokens("another-key-another-key-another-key").Issue("spike-1", "run-1", InAnHour);
 
         using var response = await PostRawAsync($"Bearer {foreign}", CallBody);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Empty(_signaller.Signals);
+        Assert.Empty(_submitter.Signals);
+    }
+
+    [Fact]
+    public async Task ExpiredToken_IsRejected()
+    {
+        var expired = Tokens.Issue("spike-1", "run-1", DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        using var response = await PostRawAsync($"Bearer {expired}", CallBody);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Empty(_submitter.Signals);
     }
 
     [Theory]
@@ -176,20 +209,20 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Contains("Bearer", response.Headers.WwwAuthenticate.ToString(), StringComparison.Ordinal);
-        Assert.Empty(_signaller.Signals);
+        Assert.Empty(_submitter.Signals);
     }
 
     [Fact]
     public async Task ClientConnectWithBadToken_Fails()
     {
         await Assert.ThrowsAnyAsync<Exception>(() => ConnectAsync("v1.bm9wZQ.bm9wZQ.AAAA"));
-        Assert.Empty(_signaller.Signals);
+        Assert.Empty(_submitter.Signals);
     }
 
     [Fact]
     public async Task WhenTheRunIsNoLongerActive_TheAgentGetsAToolError()
     {
-        _signaller.Failure = new RunNotActiveException("spike-1");
+        _submitter.Failure = new RunNotActiveException("spike-1");
         await using var client = await ConnectAsync(ValidToken());
 
         var result = await client.CallToolAsync(
@@ -199,6 +232,21 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
         Assert.True(result.IsError);
         Assert.Contains("no longer", string.Concat(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(c => c.Text)), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WhenAResultWasAlreadySubmitted_TheAgentGetsAnAlreadySubmittedToolError()
+    {
+        _submitter.Failure = new ResultAlreadySubmittedException("spike-1");
+        await using var client = await ConnectAsync(ValidToken());
+
+        var result = await client.CallToolAsync(
+            "submit_result",
+            new Dictionary<string, object?> { ["status"] = "success", ["summary"] = "done" },
+            cancellationToken: Ct);
+
+        Assert.True(result.IsError);
+        Assert.Contains("already", string.Concat(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(c => c.Text)), StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -215,7 +263,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
             cancellationToken: Ct);
 
         Assert.True(result.IsError);
-        Assert.Empty(_signaller.Signals);
+        Assert.Empty(_submitter.Signals);
     }
 
     [Fact]
@@ -229,7 +277,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
             cancellationToken: Ct);
 
         Assert.True(result.IsError);
-        Assert.Empty(_signaller.Signals);
+        Assert.Empty(_submitter.Signals);
     }
 
     [Fact]
