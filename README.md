@@ -4,22 +4,22 @@ Temporal workers and webhook intake for homelab agents, in .NET.
 
 One .NET 10 image runs as two deployments. The role is chosen by configuration:
 
-| Role     | Does                                                | Ports                                 |
-| -------- | --------------------------------------------------- | ------------------------------------- |
-| `Web`    | ASP.NET minimal API (health endpoints only for now) | `8080` webhooks, `8081` MCP, in image |
-| `Worker` | Temporal worker on task queue `agent-platform`      | `8080` health only                    |
+| Role     | Does                                                | Ports                                                  |
+| -------- | --------------------------------------------------- | ------------------------------------------------------ |
+| `Web`    | ASP.NET minimal API (health endpoints only for now) | `8080` webhooks, `8081` MCP, set by the Web deployment |
+| `Worker` | Temporal worker on task queue `agent-platform`      | `8080` health only                                     |
 
 Both roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPlatform.ServiceDefaults`, which also wires OpenTelemetry and HTTP resilience.
 
 ## Configuration
 
-| Key                           | Default          | Notes                                             |
-| ----------------------------- | ---------------- | ------------------------------------------------- |
-| `AgentPlatform:Role`          | none, required   | `Web` or `Worker`; startup fails on anything else |
-| `Temporal:Address`            | `localhost:7233` | Worker role only                                  |
-| `Temporal:Namespace`          | `default`        | Worker role only                                  |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset            | Enables the OTLP exporter when set                |
-| `ASPNETCORE_HTTP_PORTS`       | `8080;8081`      | Set by the image; Worker deployments use `8080`   |
+| Key                           | Default          | Notes                                              |
+| ----------------------------- | ---------------- | -------------------------------------------------- |
+| `AgentPlatform:Role`          | none, required   | `Web` or `Worker`; startup fails on anything else  |
+| `Temporal:Address`            | `localhost:7233` | Worker role only                                   |
+| `Temporal:Namespace`          | `default`        | Worker role only                                   |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset            | Enables the OTLP exporter when set                 |
+| `ASPNETCORE_HTTP_PORTS`       | `8080`           | Image default; the Web deployment sets `8080;8081` |
 
 Environment variables use `__` as the separator, for example `AgentPlatform__Role=Worker`.
 

@@ -9,8 +9,9 @@ var temporalGrpc = temporal.GetEndpoint("grpc");
 
 builder.AddProject<Projects.AgentPlatform_Host>("web")
     .WithEnvironment("AgentPlatform__Role", "Web")
-    .WithHttpEndpoint(env: "ASPNETCORE_HTTP_PORTS")
-    .WithHttpHealthCheck("/health");
+    .WithHttpEndpoint(name: "webhooks")
+    .WithHttpEndpoint(name: "mcp")
+    .WithHttpHealthCheck("/health", endpointName: "webhooks");
 
 builder.AddProject<Projects.AgentPlatform_Host>("worker")
     .WithEnvironment("AgentPlatform__Role", "Worker")
