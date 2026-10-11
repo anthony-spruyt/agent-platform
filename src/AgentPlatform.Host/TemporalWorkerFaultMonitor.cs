@@ -1,11 +1,10 @@
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Temporalio.Extensions.Hosting;
 
 namespace AgentPlatform.Host;
 
-// Must be registered after the Temporal worker: it reads the worker's ExecuteTask, which exists once the worker has started.
+// Must be registered after the Temporal workers: it reads each worker's ExecuteTask, which exists once the worker has started.
 // Resolves hosted services lazily; injecting IEnumerable<IHostedService> would be a circular dependency.
 internal sealed partial class TemporalWorkerFaultMonitor(
     IServiceProvider services,
@@ -14,14 +13,17 @@ internal sealed partial class TemporalWorkerFaultMonitor(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var workerTask = services.GetServices<IHostedService>().OfType<TemporalWorkerService>().Single().ExecuteTask
-            ?? throw new InvalidOperationException("The Temporal worker has not started.");
+        var workerTasks = services.GetServices<IHostedService>()
+            .OfType<TemporalWorkerService>()
+            .Select(worker => worker.ExecuteTask ?? throw new InvalidOperationException("A Temporal worker has not started."))
+            .ToList();
 
         try
         {
-            await workerTask.WaitAsync(stoppingToken).ConfigureAwait(false);
+            var first = await Task.WhenAny(workerTasks).WaitAsync(stoppingToken).ConfigureAwait(false);
+            await first.ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested && !workerTask.IsFaulted)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested && !workerTasks.Any(t => t.IsFaulted))
         {
         }
         catch (Exception ex)
