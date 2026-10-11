@@ -1,5 +1,6 @@
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Gateway;
+using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
 using k8s;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,6 +26,7 @@ public static class WorkerServiceCollectionExtensions
             .AddWorkflow<PingWorkflow>()
             .AddWorkflow<SpikeWorkflow>()
             .AddSingletonActivities<PingActivities>()
+            .AddSingletonActivities<RunDataActivities>()
             .AddScopedActivities<AgentPodActivities>();
 
         services
@@ -32,6 +34,7 @@ public static class WorkerServiceCollectionExtensions
             .ConfigureOptions(options => options.MaxConcurrentActivities = pods.MaxConcurrentActivities)
             .AddScopedActivities<AgentPodActivities>();
 
+        services.AddRunData(configuration);
         services.AddSingleton(pods);
         services.AddSingleton(new AgentSessionTokens(gateway.SessionTokenKey));
         services.AddSingleton<AgentPodSpecBuilder>();

@@ -34,6 +34,7 @@ public sealed record AgentRunResult(
     int? ExitCode,
     string? ResultText,
     string? Detail,
-    AgentRunUsage? Usage);
+    AgentRunUsage? Usage,
+    string? Model = null);
 
 public sealed record AgentRunIdentity(string WorkflowId, string RunId);

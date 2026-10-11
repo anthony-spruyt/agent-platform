@@ -43,7 +43,7 @@ public sealed partial class KubernetesAgentRunner(
         }
 
         LogRunEnded(logger, name, result.Outcome);
-        return result;
+        return result with { Model = options.Model };
     }
 
     public Task CancelAsync(AgentRunRequest request, CancellationToken cancellationToken)

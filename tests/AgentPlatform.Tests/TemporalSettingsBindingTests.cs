@@ -12,6 +12,7 @@ public class TemporalSettingsBindingTests
     private static TemporalWorkerServiceOptions ResolveWorkerOptions(Dictionary<string, string?> settings)
     {
         settings["AgentGateway:SessionTokenKey"] = "0123456789abcdef0123456789abcdef";
+        settings["ConnectionStrings:rundata"] = "Host=localhost;Database=agent_platform";
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddLogging();

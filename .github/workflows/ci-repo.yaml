@@ -33,6 +33,10 @@ jobs:
         run: "dotnet build AgentPlatform.slnx --configuration Release --no-restore"
       - name: "Verify formatting"
         run: "dotnet format AgentPlatform.slnx --verify-no-changes --no-restore"
+      - name: "Restore tools"
+        run: "dotnet tool restore"
+      - name: "Verify migrations match the model"
+        run: "dotnet ef migrations has-pending-model-changes --project src/AgentPlatform.Host --no-build --configuration Release"
       - name: "Test"
         run: >-
           dotnet test --project tests/AgentPlatform.Tests --configuration Release --no-build
