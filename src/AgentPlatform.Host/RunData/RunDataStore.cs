@@ -11,6 +11,12 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
         ArgumentException.ThrowIfNullOrWhiteSpace(workflowRunId);
         ArgumentNullException.ThrowIfNull(input);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.WorkflowType);
+        workflowId = JsonRedactor.RedactText(workflowId);
+        workflowRunId = JsonRedactor.RedactText(workflowRunId);
+        var workflowType = JsonRedactor.RedactText(input.WorkflowType);
+        var model = Text(input.Model);
+        var promptName = Text(input.PromptName);
+        var promptBody = Text(input.PromptBody);
         if (input.PromptBody is not null && string.IsNullOrWhiteSpace(input.PromptName))
         {
             throw new ArgumentException("A prompt needs a name.", nameof(input));
@@ -34,12 +40,12 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
                 }
 
                 string? promptHash = null;
-                if (input.PromptBody is not null)
+                if (promptBody is not null)
                 {
-                    promptHash = PromptHashing.Compute(input.PromptBody);
+                    promptHash = PromptHashing.Compute(promptBody);
                     if (!await db.Prompts.AnyAsync(p => p.Hash == promptHash, cancellationToken).ConfigureAwait(false))
                     {
-                        db.Prompts.Add(new Prompt { Hash = promptHash, Name = input.PromptName!, Body = input.PromptBody, CreatedAt = DateTimeOffset.UtcNow });
+                        db.Prompts.Add(new Prompt { Hash = promptHash, Name = promptName!, Body = promptBody, CreatedAt = DateTimeOffset.UtcNow });
                     }
                 }
 
@@ -48,12 +54,12 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
                     Id = Guid.NewGuid(),
                     WorkflowId = workflowId,
                     WorkflowRunId = workflowRunId,
-                    WorkflowType = input.WorkflowType,
+                    WorkflowType = workflowType,
                     Status = RunStatus.Running,
                     InputEvent = inputEvent!,
                     Context = context,
                     PromptHash = promptHash,
-                    Model = input.Model,
+                    Model = model,
                     StartedAt = startedAt,
                 };
                 db.Runs.Add(run);
@@ -77,6 +83,9 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
 
         var stepInput = RawJson(input.Input, nameof(input.Input));
         var stepOutput = RawJson(input.Output, nameof(input.Output));
+        var name = JsonRedactor.RedactText(input.Name);
+        var stopReason = JsonRedactor.RedactText(input.StopReason);
+        var stepModel = Text(input.Model);
 
         return ExecuteAsync(
             async db =>
@@ -91,20 +100,25 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
                     return true;
                 }
 
+                if (input.PromptHash is not null && !await db.Prompts.AnyAsync(p => p.Hash == input.PromptHash, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new ArgumentException("The prompt hash does not match a stored prompt.", nameof(input));
+                }
+
                 db.RunSteps.Add(new RunStep
                 {
                     RunId = input.RunId,
                     Seq = input.Seq,
-                    Name = input.Name,
+                    Name = name,
                     Rung = input.Rung,
-                    StopReason = input.StopReason,
+                    StopReason = stopReason,
                     StartedAt = input.StartedAt.ToUniversalTime(),
                     DurationMs = input.DurationMs,
                     Input = stepInput,
                     Output = stepOutput,
                     Confidence = input.Confidence,
                     PromptHash = input.PromptHash,
-                    Model = input.Model,
+                    Model = stepModel,
                     InputTokens = input.InputTokens,
                     OutputTokens = input.OutputTokens,
                     CostUsd = input.CostUsd,
@@ -118,6 +132,7 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
     public Task CompleteRunAsync(CompleteRunInput input, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
+        var model = Text(input.Model);
 
         return ExecuteAsync(
             async db =>
@@ -137,12 +152,14 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
                 run.InputTokens = steps.Any(s => s.InputTokens is not null) ? steps.Sum(s => s.InputTokens ?? 0) : null;
                 run.OutputTokens = steps.Any(s => s.OutputTokens is not null) ? steps.Sum(s => s.OutputTokens ?? 0) : null;
                 run.CostUsd = steps.Any(s => s.CostUsd is not null) ? steps.Sum(s => s.CostUsd ?? 0) : null;
-                run.Model = input.Model ?? run.Model;
+                run.Model = model ?? run.Model;
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 return true;
             },
             cancellationToken);
     }
+
+    private static string? Text(string? value) => value is null ? null : JsonRedactor.RedactText(value);
 
     private static string? RawJson(JsonElement? value, string name)
     {

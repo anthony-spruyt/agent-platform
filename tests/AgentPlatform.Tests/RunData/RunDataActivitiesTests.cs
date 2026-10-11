@@ -46,6 +46,21 @@ public class RunDataActivitiesTests
     }
 
     [Fact]
+    public async Task RecordStep_WithAnUnknownPromptHash_FailsWithoutRetry()
+    {
+        var data = InMemoryRunData.Create();
+        var activities = data.Activities;
+        var env = Environment();
+        var run = await env.RunAsync(() => activities.BeginRunAsync(Begin()));
+
+        var failure = await Assert.ThrowsAsync<ApplicationFailureException>(
+            () => env.RunAsync(() => activities.RecordStepAsync(
+                new RecordStepInput(run.RunId, 1, "ping", LadderRung.Rule, "deterministic", Started, 7, PromptHash: new string('0', 64)))));
+
+        Assert.True(failure.NonRetryable);
+    }
+
+    [Fact]
     public async Task RecordStepAndCompleteRun_WriteThroughTheStore()
     {
         var data = InMemoryRunData.Create();

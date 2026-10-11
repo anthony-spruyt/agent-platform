@@ -29,22 +29,71 @@ public class RunDataMigrationIntegrationTests(AppHostFixture fixture)
     }
 
     [Fact]
-    public async Task Migrations_CreateTheRunDataTablesAndRunningThemAgainChangesNothing()
+    public async Task Migrations_CreateTheRunDataTablesAndRecordTheMigration()
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TestTimeout);
         var ct = timeout.Token;
-        var connectionString = await fixture.RunDataConnectionStringAsync(ct);
-        var options = new DbContextOptionsBuilder<RunDataDbContext>().UseNpgsql(connectionString).Options;
+        var options = await OptionsAsync(ct);
+        await new RunDataMigrator(new FixedFactory(options), NullLogger<RunDataMigrator>.Instance).RunAsync(ct);
+
+        await using var db = new RunDataDbContext(options);
+        var tables = await db.Database
+            .SqlQueryRaw<string>("SELECT table_name AS \"Value\" FROM information_schema.tables WHERE table_schema = 'public'")
+            .ToListAsync(ct);
+        Assert.Contains("prompts", tables);
+        Assert.Contains("runs", tables);
+        Assert.Contains("run_steps", tables);
+        Assert.Contains("__EFMigrationsHistory", tables);
+        Assert.Contains(db.Database.GetMigrations().Single(), await db.Database.GetAppliedMigrationsAsync(ct));
+        Assert.Empty(await db.Database.GetPendingMigrationsAsync(ct));
+    }
+
+    [Fact]
+    public async Task Migrate_RunTwice_SucceedsBothTimesAndChangesNothing()
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TestTimeout);
+        var ct = timeout.Token;
+        var options = await OptionsAsync(ct);
         var migrator = new RunDataMigrator(new FixedFactory(options), NullLogger<RunDataMigrator>.Instance);
 
-        var again = await migrator.RunAsync(ct);
+        var first = await migrator.RunAsync(ct);
+        var appliedAfterFirst = await AppliedMigrationsAsync(options, ct);
+        var second = await migrator.RunAsync(ct);
 
-        Assert.Equal(0, again);
+        Assert.Equal(0, first);
+        Assert.Equal(0, second);
+        Assert.Equal(appliedAfterFirst, await AppliedMigrationsAsync(options, ct));
+    }
+
+    [Fact]
+    public async Task Migrate_RunConcurrently_SucceedsForEveryRunner()
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TestTimeout);
+        var ct = timeout.Token;
+        var options = await OptionsAsync(ct);
+
+        var results = await Task.WhenAll(
+            Enumerable.Range(0, 4).Select(_ => new RunDataMigrator(new FixedFactory(options), NullLogger<RunDataMigrator>.Instance).RunAsync(ct)));
+
+        Assert.All(results, result => Assert.Equal(0, result));
+        Assert.Empty(await PendingMigrationsAsync(options, ct));
+    }
+
+    private async Task<DbContextOptions<RunDataDbContext>> OptionsAsync(CancellationToken ct) =>
+        new DbContextOptionsBuilder<RunDataDbContext>().UseNpgsql(await fixture.RunDataConnectionStringAsync(ct)).Options;
+
+    private static async Task<IReadOnlyList<string>> AppliedMigrationsAsync(DbContextOptions<RunDataDbContext> options, CancellationToken ct)
+    {
         await using var db = new RunDataDbContext(options);
-        Assert.Empty(await db.Database.GetPendingMigrationsAsync(ct));
-        Assert.True(await db.Prompts.CountAsync(ct) >= 0);
-        Assert.True(await db.Runs.CountAsync(ct) >= 0);
-        Assert.True(await db.RunSteps.CountAsync(ct) >= 0);
+        return (await db.Database.GetAppliedMigrationsAsync(ct)).ToList();
+    }
+
+    private static async Task<IReadOnlyList<string>> PendingMigrationsAsync(DbContextOptions<RunDataDbContext> options, CancellationToken ct)
+    {
+        await using var db = new RunDataDbContext(options);
+        return (await db.Database.GetPendingMigrationsAsync(ct)).ToList();
     }
 }

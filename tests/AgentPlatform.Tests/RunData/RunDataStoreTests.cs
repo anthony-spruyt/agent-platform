@@ -173,6 +173,31 @@ public class RunDataStoreTests
         await Assert.ThrowsAsync<UnknownRunException>(() => store.RecordStepAsync(Step(Guid.NewGuid()), Ct));
     }
 
+    [Fact]
+    public async Task RecordStep_WithAnUnknownPromptHash_IsRejectedBeforeAnyWrite()
+    {
+        var (store, factory) = NewStore();
+        var run = await store.BeginRunAsync("wf", "run", Begin(), Ct);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => store.RecordStepAsync(Step(run.RunId) with { PromptHash = new string('0', 64) }, Ct));
+
+        await using var db = await factory.CreateDbContextAsync(Ct);
+        Assert.Equal(0, await db.RunSteps.CountAsync(Ct));
+    }
+
+    [Fact]
+    public async Task RecordStep_WithAKnownPromptHash_IsStored()
+    {
+        var (store, factory) = NewStore();
+        var run = await store.BeginRunAsync("wf", "run", Begin("p"), Ct);
+
+        await store.RecordStepAsync(Step(run.RunId) with { PromptHash = run.PromptHash }, Ct);
+
+        await using var db = await factory.CreateDbContextAsync(Ct);
+        Assert.Equal(run.PromptHash, (await db.RunSteps.SingleAsync(Ct)).PromptHash);
+    }
+
     [Theory]
     [InlineData(-0.1)]
     [InlineData(1.1)]
