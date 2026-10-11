@@ -37,6 +37,6 @@ if (role == AgentPlatformRole.Web)
 }
 
 app.Run();
-return 0;
+return Environment.ExitCode;
 
 public partial class Program;
