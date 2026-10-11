@@ -174,6 +174,63 @@ public class RunDataStoreTests
     }
 
     [Fact]
+    public async Task BeginRun_StripsNulCharactersPostgresRejects()
+    {
+        var (store, factory) = NewStore();
+        var input = new BeginRunInput(
+            "Ping\u0000Workflow",
+            Json("""{"na\u0000me":"a\u0000b","literal":"x\\u0000y"}"""),
+            Started,
+            PromptName: "pi\u0000ng",
+            PromptBody: "bo\u0000dy",
+            Model: "mo\u0000del") with
+        { Context = Json("""["c\u0000\u0000d"]""") };
+
+        await store.BeginRunAsync("wf\u0000", "run\u0000", input, Ct);
+
+        await using var db = await factory.CreateDbContextAsync(Ct);
+        var run = await db.Runs.SingleAsync(Ct);
+        var prompt = await db.Prompts.SingleAsync(Ct);
+        Assert.Equal("wf", run.WorkflowId);
+        Assert.Equal("run", run.WorkflowRunId);
+        Assert.Equal("PingWorkflow", run.WorkflowType);
+        Assert.Equal("model", run.Model);
+        Assert.Equal("ping", prompt.Name);
+        Assert.Equal("body", prompt.Body);
+        Assert.Equal(PromptHashing.Compute("body"), prompt.Hash);
+        var inputEvent = Json(run.InputEvent);
+        Assert.Equal("ab", inputEvent.GetProperty("name").GetString());
+        Assert.Equal("x\\u0000y", inputEvent.GetProperty("literal").GetString());
+        Assert.Equal("cd", Json(run.Context!)[0].GetString());
+    }
+
+    [Fact]
+    public async Task RecordStep_StripsNulCharactersPostgresRejects()
+    {
+        var (store, factory) = NewStore();
+        var run = await store.BeginRunAsync("wf", "run", Begin(), Ct);
+
+        await store.RecordStepAsync(
+            Step(run.RunId) with
+            {
+                Name = "pi\u0000ng",
+                StopReason = "deter\u0000ministic",
+                Model = "mo\u0000del",
+                Input = Json("""{"k":"a\u0000b"}"""),
+                Output = Json("""{"k":"c\u0000d"}"""),
+            },
+            Ct);
+
+        await using var db = await factory.CreateDbContextAsync(Ct);
+        var step = await db.RunSteps.SingleAsync(Ct);
+        Assert.Equal("ping", step.Name);
+        Assert.Equal("deterministic", step.StopReason);
+        Assert.Equal("model", step.Model);
+        Assert.Equal("ab", Json(step.Input!).GetProperty("k").GetString());
+        Assert.Equal("cd", Json(step.Output!).GetProperty("k").GetString());
+    }
+
+    [Fact]
     public async Task RecordStep_WithAnUnknownPromptHash_IsRejectedBeforeAnyWrite()
     {
         var (store, factory) = NewStore();

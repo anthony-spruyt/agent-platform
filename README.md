@@ -81,9 +81,7 @@ Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF C
 
 Only activities write to the database, so workflow code stays deterministic. `BeginRun`, `RecordStep` and `CompleteRun` run on the `agent-platform` queue and are idempotent on the unique keys above, so a retried activity never duplicates a row. A failed or cancelled run is completed as `Failed`.
 
-Run data is readable through a read-only tool, so it never holds credential material: only prompts, model inputs and outputs, and metrics are stored. `JsonRedactor` replaces the value of every credential-named JSON property (token, secret, password, authorization, cookie, signature, API or private
-key) and every credential-shaped string (GitHub, API and cloud keys, bearer values, JWTs and the per-run session tokens) with `[redacted]` in every jsonb column before it is written. Token-count metrics such as `input_tokens` are kept. Callers still pass only the fields they need from an input
-event, never raw headers.
+NUL characters are stripped from text and jsonb values before they are written, because PostgreSQL rejects them.
 
 The `Migrate` role applies the EF Core migrations in `src/AgentPlatform.Host/RunData/Migrations` and exits `0` on success or non-zero on failure, so the Worker never migrates. Add a migration with the local tool (`dotnet tool restore` first):
 

@@ -11,9 +11,9 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
         ArgumentException.ThrowIfNullOrWhiteSpace(workflowRunId);
         ArgumentNullException.ThrowIfNull(input);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.WorkflowType);
-        workflowId = JsonRedactor.RedactText(workflowId);
-        workflowRunId = JsonRedactor.RedactText(workflowRunId);
-        var workflowType = JsonRedactor.RedactText(input.WorkflowType);
+        workflowId = NulStripping.Strip(workflowId);
+        workflowRunId = NulStripping.Strip(workflowRunId);
+        var workflowType = NulStripping.Strip(input.WorkflowType);
         var model = Text(input.Model);
         var promptName = Text(input.PromptName);
         var promptBody = Text(input.PromptBody);
@@ -83,8 +83,8 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
 
         var stepInput = RawJson(input.Input, nameof(input.Input));
         var stepOutput = RawJson(input.Output, nameof(input.Output));
-        var name = JsonRedactor.RedactText(input.Name);
-        var stopReason = JsonRedactor.RedactText(input.StopReason);
+        var name = NulStripping.Strip(input.Name);
+        var stopReason = NulStripping.Strip(input.StopReason);
         var stepModel = Text(input.Model);
 
         return ExecuteAsync(
@@ -159,7 +159,7 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
             cancellationToken);
     }
 
-    private static string? Text(string? value) => value is null ? null : JsonRedactor.RedactText(value);
+    private static string? Text(string? value) => value is null ? null : NulStripping.Strip(value);
 
     private static string? RawJson(JsonElement? value, string name)
     {
@@ -174,7 +174,7 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
     private static string RawJson(JsonElement value, string name) =>
         value.ValueKind == JsonValueKind.Undefined
             ? throw new ArgumentException("A JSON value is required.", name)
-            : JsonRedactor.Redact(value);
+            : NulStripping.StripJson(value);
 
     // A concurrent writer can win the unique key between the existence check and the insert: look again on a fresh context.
     private async Task<T> ExecuteAsync<T>(Func<RunDataDbContext, Task<T>> action, CancellationToken cancellationToken)
