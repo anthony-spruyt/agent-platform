@@ -56,7 +56,7 @@ public class WorkerFaultExitTests
     }
 
     [Fact]
-    public async Task Worker_WithUnreachableTemporal_SetsNonZeroExitCode()
+    public async Task Worker_WhenTemporalClosesConnection_SetsNonZeroExitCode()
     {
         var ct = TestContext.Current.CancellationToken;
         var exitCode = new RecordingExitCodeSetter();
