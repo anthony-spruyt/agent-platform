@@ -10,7 +10,7 @@ One .NET 10 image runs as three roles. The role is chosen by configuration:
 | `Worker`  | Temporal workers on task queues `agent-platform` (workflows) and `agent-pods` | `8080` health only                                     |
 | `Migrate` | Applies the run-data database migrations, then exits                          | none                                                   |
 
-Both roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPlatform.ServiceDefaults`, which also wires OpenTelemetry and HTTP resilience.
+The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPlatform.ServiceDefaults`, which also wires OpenTelemetry and HTTP resilience.
 
 ## Configuration
 
