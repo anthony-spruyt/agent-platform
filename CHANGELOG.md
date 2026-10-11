@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.1.0...v1.2.0) (2026-10-11)
+
+
+### Features
+
+* add run-data store and Migrate role ([#13](https://github.com/anthony-spruyt/agent-platform/issues/13)) ([6864e72](https://github.com/anthony-spruyt/agent-platform/commit/6864e72d04bb6feb440073fe396891d4962fae39))
+
+
+### Bug Fixes
+
+* keep workflows running when run-data recording fails ([#16](https://github.com/anthony-spruyt/agent-platform/issues/16)) ([f73a008](https://github.com/anthony-spruyt/agent-platform/commit/f73a008ce5087d8a08d8d0fc319ec19395d72c72))
+
 ## [1.1.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.0.0...v1.1.0) (2026-10-11)
 
 
