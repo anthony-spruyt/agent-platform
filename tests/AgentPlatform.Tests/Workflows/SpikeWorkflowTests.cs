@@ -525,6 +525,25 @@ public class SpikeWorkflowTests
     }
 
     [Fact]
+    public async Task WhenCancelledWhileCompletingTheRun_EndsCanceled()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var runData = new BlockingCompleteRunData();
+
+        var status = await InWorkersAsync(env, new ScriptedActivities(), new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            await runData.Blocked.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+            await handle.CancelAsync();
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            return (await handle.DescribeAsync()).Status;
+        }, runDataActivities: runData);
+
+        Assert.Equal(WorkflowExecutionStatus.Canceled, status);
+    }
+
+    [Fact]
     public async Task WhenTheAgentRunFailsAndRecordingFails_StillFailsWithTheAgentFailure()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();

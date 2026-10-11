@@ -30,7 +30,7 @@ internal static partial class RunRecorder
         {
             return await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.BeginRunAsync(input), _options);
         }
-        catch (ActivityFailureException ex)
+        catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {
             LogRecordingFailed(Workflow.Logger, ex, RunDataActivities.BeginRunName);
             return null;
@@ -43,7 +43,7 @@ internal static partial class RunRecorder
         {
             await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.RecordStepAsync(input), _options);
         }
-        catch (ActivityFailureException ex)
+        catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {
             LogRecordingFailed(Workflow.Logger, ex, RunDataActivities.RecordStepName);
         }
@@ -55,7 +55,7 @@ internal static partial class RunRecorder
         {
             await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.CompleteRunAsync(input), _options);
         }
-        catch (ActivityFailureException ex)
+        catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {
             LogRecordingFailed(Workflow.Logger, ex, RunDataActivities.CompleteRunName);
         }

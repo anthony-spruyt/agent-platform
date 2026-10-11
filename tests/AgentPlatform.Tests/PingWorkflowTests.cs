@@ -5,6 +5,7 @@ using AgentPlatform.Tests.Replay;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
 using Temporalio.Activities;
+using Temporalio.Api.Enums.V1;
 using Temporalio.Client;
 using Temporalio.Exceptions;
 using Temporalio.Testing;
@@ -172,6 +173,29 @@ public class PingWorkflowTests
                 return 0;
             },
             Ct);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenCancelledWhileCompletingTheRun_EndsCanceled()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var runData = new BlockingCompleteRunData();
+        using var worker = NewWorker(env, runData, new PingActivities());
+
+        var status = await worker.ExecuteAsync(
+            async () =>
+            {
+                var handle = await env.Client.StartWorkflowAsync(
+                    (PingWorkflow wf) => wf.RunAsync("platform"),
+                    new WorkflowOptions($"ping-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
+                await runData.Blocked.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+                await handle.CancelAsync();
+                await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+                return (await handle.DescribeAsync()).Status;
+            },
+            Ct);
+
+        Assert.Equal(WorkflowExecutionStatus.Canceled, status);
     }
 
     private sealed class CountingPing
