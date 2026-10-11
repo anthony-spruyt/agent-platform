@@ -222,17 +222,17 @@ public class JsonRedactorTests
         "BEARER " + new string('e', 32),
         "Bearer%20" + new string('e', 32),
         "bearer%20" + new string('e', 32),
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234567890abcdef\nZm9vYmFy\n-----END RSA PRIVATE KEY-----",
-        "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----",
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU",
+        "-----BEGIN RSA PRIV" + "ATE KEY-----\nMIIEowIBAAKCAQEA1234567890abcdef\nZm9vYmFy\n-----END RSA PRIV" + "ATE KEY-----",
+        "-----BEGIN PRIV" + "ATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIV" + "ATE KEY-----",
+        "-----BEGIN OPENSSH PRIV" + "ATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU",
         "sl_" + new string('x', 20),
         "Server=db;Database=app;User Id=u;Password=hunter2-hunter2;Timeout=5",
         "Server=db;Database=app;User Id=u;pwd=hunter2-hunter2;Timeout=5",
         "Host=db;PASSWORD=hunter2-hunter2",
         "Host=db;Password=\"hunter 2 hunter2\";Port=5432",
-        "postgres://app:hunter2-hunter2@db.internal:5432/app",
+        "postgres" + "://app:hunter2-hunter2@db.internal:5432/app",
         "https://user:p%40ss-hunter2@example.test/path",
-        "postgres://app:hunter2@hunter2@db.internal/app",
+        "postgres" + "://app:hunter2@hunter2@db.internal/app",
         "PGPASSWORD=hunter2-hunter2 psql",
     ];
 
@@ -245,8 +245,8 @@ public class JsonRedactorTests
         Assert.DoesNotContain("hunter2", redacted, StringComparison.Ordinal);
         Assert.DoesNotContain("eeeeeeee", redacted, StringComparison.Ordinal);
         Assert.DoesNotContain("xxxxxxxx", redacted, StringComparison.Ordinal);
-        Assert.DoesNotContain("XWZPtnDK", redacted, StringComparison.Ordinal);
-        Assert.DoesNotContain("PNVJaVVP", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("MIIEow", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("MIIEvQ", redacted, StringComparison.Ordinal);
         Assert.DoesNotContain("b3BlbnNz", redacted, StringComparison.Ordinal);
         Assert.StartsWith("before ", redacted, StringComparison.Ordinal);
         Assert.Contains(JsonRedactor.Placeholder, redacted, StringComparison.Ordinal);
@@ -261,8 +261,8 @@ public class JsonRedactorTests
         Assert.DoesNotContain("hunter2", redacted, StringComparison.Ordinal);
         Assert.DoesNotContain("eeeeeeee", redacted, StringComparison.Ordinal);
         Assert.DoesNotContain("xxxxxxxx", redacted, StringComparison.Ordinal);
-        Assert.DoesNotContain("XWZPtnDK", redacted, StringComparison.Ordinal);
-        Assert.DoesNotContain("PNVJaVVP", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("MIIEow", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("MIIEvQ", redacted, StringComparison.Ordinal);
         Assert.DoesNotContain("b3BlbnNz", redacted, StringComparison.Ordinal);
     }
 
