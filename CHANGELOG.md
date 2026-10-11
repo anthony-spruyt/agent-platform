@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.2.0...v1.2.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* return the worker's fault exit code from the host ([#20](https://github.com/anthony-spruyt/agent-platform/issues/20)) ([605fc33](https://github.com/anthony-spruyt/agent-platform/commit/605fc333ee828e8d37f44ee23c472b98eb286334))
+
 ## [1.2.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.1.0...v1.2.0) (2026-10-11)
 
 
