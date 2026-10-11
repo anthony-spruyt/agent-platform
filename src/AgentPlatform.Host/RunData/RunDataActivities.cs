@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Temporalio.Activities;
 using Temporalio.Exceptions;
 
@@ -39,7 +41,15 @@ public sealed class RunDataActivities(RunDataStore store)
         {
             throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
         }
+        catch (DbUpdateException ex) when (IsPermanent(ex))
+        {
+            throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
+        }
     }
+
+    // SQLSTATE class 22 (data exception) and 23 (integrity constraint violation): the same input fails every time.
+    private static bool IsPermanent(DbUpdateException exception) =>
+        exception.InnerException is PostgresException { SqlState: { } state } && (state.StartsWith("22", StringComparison.Ordinal) || state.StartsWith("23", StringComparison.Ordinal));
 
     private static async Task GuardAsync(Func<Task> action) =>
         await GuardAsync(async () =>

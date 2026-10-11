@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Temporalio.Exceptions;
 using Temporalio.Testing;
 
@@ -90,5 +91,69 @@ public class RunDataActivitiesTests
                 new RecordStepInput(run.RunId, 1, "ping", LadderRung.Rule, "deterministic", Started, 7, Confidence: 2))));
 
         Assert.True(failure.NonRetryable);
+    }
+
+    private static DbUpdateException DatabaseFailure(string sqlState) =>
+        new("The database rejected the write.", new PostgresException("rejected", "ERROR", "ERROR", sqlState));
+
+    [Theory]
+    [InlineData("22021")]
+    [InlineData("22001")]
+    [InlineData("22P05")]
+    [InlineData("23502")]
+    [InlineData("23503")]
+    [InlineData("23505")]
+    [InlineData("23514")]
+    public async Task BeginRun_WhenTheDatabaseRejectsTheDataPermanently_FailsWithoutRetry(string sqlState)
+    {
+        var data = InMemoryRunData.Create();
+        data.FailSavesWith(DatabaseFailure(sqlState));
+        var activities = data.Activities;
+
+        var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Environment().RunAsync(() => activities.BeginRunAsync(Begin())));
+
+        Assert.True(failure.NonRetryable);
+    }
+
+    [Theory]
+    [InlineData("40001")]
+    [InlineData("40P01")]
+    [InlineData("57P01")]
+    [InlineData("08006")]
+    [InlineData("53300")]
+    public async Task BeginRun_WhenTheDatabaseFailsTransiently_StaysRetryable(string sqlState)
+    {
+        var data = InMemoryRunData.Create();
+        data.FailSavesWith(DatabaseFailure(sqlState));
+        var activities = data.Activities;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => Environment().RunAsync(() => activities.BeginRunAsync(Begin())));
+    }
+
+    [Fact]
+    public async Task BeginRun_WhenTheWriteFailsWithoutAPostgresError_StaysRetryable()
+    {
+        var data = InMemoryRunData.Create();
+        data.FailSavesWith(new DbUpdateException("lost connection"));
+        var activities = data.Activities;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => Environment().RunAsync(() => activities.BeginRunAsync(Begin())));
+    }
+
+    [Fact]
+    public async Task RecordStepAndCompleteRun_WhenTheDatabaseRejectsTheDataPermanently_FailWithoutRetry()
+    {
+        var data = InMemoryRunData.Create();
+        var failing = data.Activities;
+        var run = await Environment().RunAsync(() => failing.BeginRunAsync(Begin()));
+        data.FailSavesWith(DatabaseFailure("22021"));
+
+        var step = await Assert.ThrowsAsync<ApplicationFailureException>(
+            () => Environment().RunAsync(() => failing.RecordStepAsync(new RecordStepInput(run.RunId, 1, "ping", LadderRung.Rule, "deterministic", Started, 7))));
+        var complete = await Assert.ThrowsAsync<ApplicationFailureException>(
+            () => Environment().RunAsync(() => failing.CompleteRunAsync(new CompleteRunInput(run.RunId, RunStatus.Succeeded, Started.AddSeconds(1)))));
+
+        Assert.True(step.NonRetryable);
+        Assert.True(complete.NonRetryable);
     }
 }

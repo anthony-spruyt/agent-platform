@@ -34,7 +34,7 @@ public class RunDataMigrationIntegrationTests(AppHostFixture fixture)
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TestTimeout);
         var ct = timeout.Token;
-        var options = await OptionsAsync(ct);
+        var options = await EmptyDatabaseOptionsAsync(ct);
         await new RunDataMigrator(new FixedFactory(options), NullLogger<RunDataMigrator>.Instance).RunAsync(ct);
 
         await using var db = new RunDataDbContext(options);
@@ -55,7 +55,7 @@ public class RunDataMigrationIntegrationTests(AppHostFixture fixture)
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TestTimeout);
         var ct = timeout.Token;
-        var options = await OptionsAsync(ct);
+        var options = await EmptyDatabaseOptionsAsync(ct);
         var migrator = new RunDataMigrator(new FixedFactory(options), NullLogger<RunDataMigrator>.Instance);
 
         var first = await migrator.RunAsync(ct);
@@ -73,7 +73,7 @@ public class RunDataMigrationIntegrationTests(AppHostFixture fixture)
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TestTimeout);
         var ct = timeout.Token;
-        var options = await OptionsAsync(ct);
+        var options = await EmptyDatabaseOptionsAsync(ct);
 
         var results = await Task.WhenAll(
             Enumerable.Range(0, 4).Select(_ => new RunDataMigrator(new FixedFactory(options), NullLogger<RunDataMigrator>.Instance).RunAsync(ct)));
@@ -82,8 +82,12 @@ public class RunDataMigrationIntegrationTests(AppHostFixture fixture)
         Assert.Empty(await PendingMigrationsAsync(options, ct));
     }
 
-    private async Task<DbContextOptions<RunDataDbContext>> OptionsAsync(CancellationToken ct) =>
-        new DbContextOptionsBuilder<RunDataDbContext>().UseNpgsql(await fixture.RunDataConnectionStringAsync(ct)).Options;
+    private async Task<DbContextOptions<RunDataDbContext>> EmptyDatabaseOptionsAsync(CancellationToken ct)
+    {
+        var options = new DbContextOptionsBuilder<RunDataDbContext>().UseNpgsql(await fixture.CreateEmptyDatabaseAsync(ct)).Options;
+        Assert.Empty(await AppliedMigrationsAsync(options, ct));
+        return options;
+    }
 
     private static async Task<IReadOnlyList<string>> AppliedMigrationsAsync(DbContextOptions<RunDataDbContext> options, CancellationToken ct)
     {

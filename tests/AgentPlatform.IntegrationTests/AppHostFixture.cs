@@ -1,6 +1,7 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
+using Npgsql;
 using Temporalio.Client;
 
 namespace AgentPlatform.IntegrationTests;
@@ -38,6 +39,22 @@ public sealed class AppHostFixture : IAsyncLifetime
     public async Task<string> RunDataConnectionStringAsync(CancellationToken ct) =>
         await App.GetConnectionStringAsync("rundata", ct)
         ?? throw new InvalidOperationException("The rundata connection string is not available.");
+
+    public async Task<string> CreateEmptyDatabaseAsync(CancellationToken ct)
+    {
+        var server = await App.GetConnectionStringAsync("postgres", ct)
+            ?? throw new InvalidOperationException("The postgres connection string is not available.");
+        var name = "rundata_" + Guid.NewGuid().ToString("N");
+
+        await using (var connection = new NpgsqlConnection(server))
+        {
+            await connection.OpenAsync(ct);
+            await using var command = new NpgsqlCommand($"CREATE DATABASE \"{name}\"", connection);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        return new NpgsqlConnectionStringBuilder(server) { Database = name }.ConnectionString;
+    }
 
     public async Task<TemporalClient> ConnectAsync(CancellationToken ct)
     {

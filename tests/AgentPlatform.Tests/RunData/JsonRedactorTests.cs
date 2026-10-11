@@ -234,6 +234,34 @@ public class JsonRedactorTests
         "https://user:p%40ss-hunter2@example.test/path",
         "postgres" + "://app:hunter2@hunter2@db.internal/app",
         "PGPASSWORD=hunter2-hunter2 psql",
+        "Authorization: token hunter2-hunter2",
+        "Authorization: Bearer\thunter2-hunter2",
+        "Authorization: Bearer%09" + new string('e', 32),
+        "authorization: basic " + new string('x', 24),
+        "Basic%20" + new string('x', 24),
+        "basic " + new string('x', 24),
+        "-----BEGIN PGP PRIV" + "ATE KEY BLOCK-----\nMIIEowIBAAKCAQEA1234567890abcdef\n-----END PGP PRIV" + "ATE KEY BLOCK-----",
+        "-----BEGIN ENCRYPTED PRIV" + "ATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END ENCRYPTED PRIV" + "ATE KEY-----",
+        "-----BEGIN EC PRIV" + "ATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+        "https://" + "hunter2token@example.test/path",
+        "GITHUB_TOKEN=hunter2-hunter2",
+        "export API_KEY=hunter2-hunter2",
+        "AWS_SECRET_ACCESS_KEY=hunter2-hunter2",
+        "secret=hunter2-hunter2",
+        "DB_PASS=hunter2-hunter2",
+        "password: hunter2-hunter2",
+        "api_key: hunter2-hunter2",
+        "x-api-key:hunter2-hunter2",
+        "\"token\": \"hunter2 hunter2\"",
+        "'token': 'hunter2-hunter2'",
+        "{\\\"token\\\": \\\"hunter2-hunter2\\\"}",
+        "https://example.test/cb?state=1&access_token=hunter2-hunter2&x=2",
+        "https://example.test/cb?access_token=hunter2-hunter2",
+        "{\"ok\":1,\"password\":\"hunter2-hunter2\",\"note\":\"unterminated",
+        "{\"result\":{\"client_secret\":\"hunter2-hunter2\"",
+        "{\"token\":\"hunter2-hunter2",
+        "Cookie: a=hunter2-hunter2; b=hunter2",
+        "Set-Cookie: session=hunter2-hunter2; Path=/",
     ];
 
     [Theory]
@@ -274,9 +302,99 @@ public class JsonRedactorTests
     [InlineData("ssh://git@example.test/repo.git")]
     [InlineData("sl_short")]
     [InlineData("a passphrase-free flow with password rotation")]
+    [InlineData("Status: ok, retries=3, error: connection refused")]
+    [InlineData("author: someone; pr=12; verdict: safe")]
+    [InlineData("""input_tokens: 10, "output_tokens": 20, 'total_tokens':30""")]
+    [InlineData("max_tokens=30 token_count: 5 tokens_in=7")]
+    [InlineData("password:")]
+    [InlineData("https://github.com/owner/repo")]
     public void RedactText_LeavesOrdinaryTextAlone(string text)
     {
         Assert.Equal(text, JsonRedactor.RedactText(text));
+    }
+
+    [Fact]
+    public void RedactText_KeepsTheRestOfATruncatedJsonFragment()
+    {
+        var redacted = JsonRedactor.RedactText("""{"input_tokens": 10, "password": "hunter2-hunter2", "repo": "owner/repo", "note": "cut""");
+
+        Assert.Equal("""{"input_tokens": 10, "password": "[redacted]", "repo": "owner/repo", "note": "cut""", redacted);
+    }
+
+    [Fact]
+    public void RedactText_KeepsTheSurroundingTextOfAKeyValuePair()
+    {
+        Assert.Equal("run with GITHUB_TOKEN=[redacted] then stop", JsonRedactor.RedactText("run with GITHUB_TOKEN=hunter2-hunter2 then stop"));
+        Assert.Equal("callback?access_token=[redacted]&x=2", JsonRedactor.RedactText("callback?access_token=hunter2-hunter2&x=2"));
+    }
+
+    [Fact]
+    public void RedactText_RedactsSeveralPairsAndNestedKeys()
+    {
+        var redacted = JsonRedactor.RedactText("password: hunter2-hunter2\napi_key: hunter2-hunter2\nrepo: owner/repo");
+
+        Assert.Equal("password: [redacted]\napi_key: [redacted]\nrepo: owner/repo", redacted);
+    }
+
+    [Fact]
+    public void Redact_ScrubsKeyValuesInATruncatedJsonStringValue()
+    {
+        var redacted = JsonRedactor.Redact(Json(JsonSerializer.Serialize(new { ResultText = "{\"summary\":\"ok\",\"token\":\"hunter2-hunter2\",\"more\":\"cut" })));
+
+        Assert.DoesNotContain("hunter2", redacted, StringComparison.Ordinal);
+        Assert.Contains("ok", redacted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RedactText_StripsLoneSurrogatesAndKeepsPairs()
+    {
+        Assert.Equal("ab", JsonRedactor.RedactText("a\ud800b"));
+        Assert.Equal("ab", JsonRedactor.RedactText("a\udc00b"));
+        Assert.Equal("a\ud83d\ude00b", JsonRedactor.RedactText("a\ud83d\ude00b"));
+        Assert.Equal("ab", JsonRedactor.RedactText("ab\ud83d"));
+    }
+
+    [Fact]
+    public void Redact_StripsLoneSurrogatesFromValuesAndNames()
+    {
+        var element = Json("{\"na\\ud800me\":\"a\\udc00b\"}");
+
+        var redacted = JsonRedactor.Redact(element);
+
+        Assert.Equal("""{"name":"ab"}""", redacted);
+    }
+
+    [Fact]
+    public void Redact_KeepsEscapedBackslashesAndValidSurrogatePairsInJson()
+    {
+        var redacted = JsonRedactor.Redact(Json("""{"a":"x\\ud800y","b":"\ud83d\ude00"}"""));
+
+        Assert.Equal("""{"a":"x\\ud800y","b":"\uD83D\uDE00"}""", redacted);
+    }
+
+    [Fact]
+    public void Redact_StripsLoneSurrogatesInJsonNestedInAString()
+    {
+        var redacted = JsonRedactor.Redact(Json("""{"text":"{\"a\":\"x\\ud800y\",\"password\":\"hunter2-hunter2\"}"}"""));
+
+        Assert.DoesNotContain("hunter2", redacted, StringComparison.Ordinal);
+        Assert.Contains("xy", redacted, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("token=\"")]
+    [InlineData("password: '")]
+    [InlineData("a=b;")]
+    [InlineData("\\\"token\\\":\\\"")]
+    public void RedactText_FinishesQuicklyOnLargeInputs(string unit)
+    {
+        var text = string.Concat(Enumerable.Repeat(unit + "word ", 4000));
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var redacted = JsonRedactor.RedactText(text);
+
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"took {stopwatch.Elapsed}");
+        Assert.NotEmpty(redacted);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -26,6 +27,22 @@ public static partial class JsonRedactor
     }
 
     private static string Redact(JsonElement value, int nesting)
+    {
+        var raw = value.GetRawText();
+        if (raw.Contains("\\u", StringComparison.Ordinal))
+        {
+            var cleaned = LoneSurrogateEscape().Replace(raw, static m => m.Groups["lone"].Success ? string.Empty : m.Value);
+            if (!string.Equals(cleaned, raw, StringComparison.Ordinal))
+            {
+                using var document = JsonDocument.Parse(cleaned, _readerOptions);
+                return Write(document.RootElement, nesting);
+            }
+        }
+
+        return Write(value, nesting);
+    }
+
+    private static string Write(JsonElement value, int nesting)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, _writerOptions))
@@ -101,11 +118,11 @@ public static partial class JsonRedactor
     private static bool IsSensitive(string name, JsonElement value) =>
         SensitiveName().IsMatch(name) && !(value.ValueKind == JsonValueKind.Number && TokenCountName().IsMatch(name));
 
-    private static string RedactName(string name) => CredentialShape().Replace(StripNul(name), Placeholder);
+    private static string RedactName(string name) => CredentialShape().Replace(StripInvalid(name), Placeholder);
 
     private static string RedactString(string value, int nesting)
     {
-        var text = StripNul(value);
+        var text = StripInvalid(value);
         if (LooksLikeJsonContainer(text))
         {
             if (nesting >= MaxStringNesting)
@@ -125,15 +142,109 @@ public static partial class JsonRedactor
         return RedactPlainText(text);
     }
 
+    // A pathological input that times a pattern out is dropped whole rather than stored unchecked.
     private static string RedactPlainText(string text)
     {
-        var redacted = PrivateKeyBlock().Replace(text, Placeholder);
-        redacted = KeyValueSecret().Replace(redacted, "${key}=" + Placeholder);
-        redacted = UrlUserInfo().Replace(redacted, "${scheme}" + Placeholder + "@");
-        return CredentialShape().Replace(redacted, Placeholder);
+        try
+        {
+            var redacted = PrivateKeyBlock().Replace(text, Placeholder);
+            redacted = RedactKeyValues(redacted);
+            redacted = UrlUserInfo().Replace(redacted, "${scheme}" + Placeholder + "@");
+            redacted = UrlTokenUserInfo().Replace(redacted, "${scheme}" + Placeholder + "@");
+            return CredentialShape().Replace(redacted, Placeholder);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return Placeholder;
+        }
     }
 
-    private static string StripNul(string value) => value.Contains('\0', StringComparison.Ordinal) ? value.Replace("\0", string.Empty, StringComparison.Ordinal) : value;
+    // Free text and truncated JSON: any `name = value` or `name: value` whose name is sensitive loses its value.
+    private static string RedactKeyValues(string text)
+    {
+        StringBuilder? result = null;
+        var copied = 0;
+        var search = 0;
+        while (search < text.Length)
+        {
+            var key = KeyStart().Match(text, search);
+            if (!key.Success)
+            {
+                break;
+            }
+
+            var valueStart = key.Index + key.Length;
+            search = valueStart;
+            var name = key.Groups["name"].Value;
+            if (!SensitiveName().IsMatch(name))
+            {
+                continue;
+            }
+
+            var isCookieHeader = key.Groups["sep"].Value == ":" && name.Contains("cookie", StringComparison.OrdinalIgnoreCase);
+            var value = (isCookieHeader ? LineValue() : KeyValue()).Match(text, valueStart);
+            if (!value.Success || (TokenCountName().IsMatch(name) && NumericValue().IsMatch(value.Value)))
+            {
+                continue;
+            }
+
+            result ??= new StringBuilder(text.Length);
+            var quote = value.Groups["quote"];
+            result.Append(text, copied, valueStart - copied);
+            result.Append(quote.Value).Append(Placeholder).Append(quote.Value);
+            copied = valueStart + value.Length;
+            search = copied;
+        }
+
+        return result is null ? text : result.Append(text, copied, text.Length - copied).ToString();
+    }
+
+    private static string StripInvalid(string value)
+    {
+        if (!HasInvalidChar(value))
+        {
+            return value;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c == '\0')
+            {
+                continue;
+            }
+
+            if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+            {
+                builder.Append(c).Append(value[++i]);
+            }
+            else if (!char.IsSurrogate(c))
+            {
+                builder.Append(c);
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool HasInvalidChar(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+            {
+                i++;
+            }
+            else if (c == '\0' || char.IsSurrogate(c))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static bool LooksLikeJsonContainer(string text)
     {
@@ -165,17 +276,37 @@ public static partial class JsonRedactor
     private static partial Regex TokenCountName();
 
     [GeneratedRegex(
-        @"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|\bsl_\w{16,}|(?:Basic\s+|(?i:bearer)(?:\s|%20|\+)+)[A-Za-z0-9._~+/=%-]{16,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bv2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.\d+\.[A-Za-z0-9_-]{20,}",
+        @"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|\bsl_\w{16,}|(?i:basic|bearer)(?:\s|%20|%09|\+)+[A-Za-z0-9._~+/=%-]{16,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bv2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.\d+\.[A-Za-z0-9_-]{20,}",
         RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex CredentialShape();
 
-    [GeneratedRegex(@"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\z)", RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    // JSON escapes are walked in order so an escaped backslash is never read as the start of a \uD800.
+    [GeneratedRegex(@"\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|(?<lone>\\u[dD][89a-fA-F][0-9a-fA-F]{2})|\\.", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex LoneSurrogateEscape();
+
+    [GeneratedRegex(@"-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----|\z)", RegexOptions.Singleline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex PrivateKeyBlock();
 
-    [GeneratedRegex(@"(?<key>[A-Za-z_]*(?:password|passwd|pwd))\s*=\s*(?:""[^""]*""|'[^']*'|[^;&\s""']*)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex KeyValueSecret();
+    [GeneratedRegex(@"(?<![\w.-])[\\""']*(?<name>[\w.-]+)[\\""']*[ \t]*(?<sep>[:=])[ \t]*", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex KeyStart();
+
+    [GeneratedRegex(
+        @"\G(?:(?<quote>\\*[""'])(?:(?!\k<quote>)(?:\\.|[^\\]))*(?:\k<quote>|\z)|(?:(?i:bearer|basic|token|digest|negotiate)(?:[ \t]|%20|%09|\+)+)?[^\s;&""']+)",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex KeyValue();
+
+    [GeneratedRegex(@"\G[^\r\n]+", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex LineValue();
+
+    [GeneratedRegex(@"^-?\d+(?:\.\d+)?[,}\])]*$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex NumericValue();
 
     [GeneratedRegex(@"(?<scheme>\b[A-Za-z][A-Za-z0-9+.-]*://)[^/\s:@]*:[^/\s]+@", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex UrlUserInfo();
+
+    // ssh-style schemes carry a user name, not a secret, in the userinfo.
+    [GeneratedRegex(@"(?<scheme>\b(?!(?i:ssh|sftp|scp|rsync|git\+ssh|ssh\+git)://)[A-Za-z][A-Za-z0-9+.-]*://)[^/\s:@?#]+@", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex UrlTokenUserInfo();
 }
