@@ -1,4 +1,5 @@
 using AgentPlatform.Host.Workflows;
+using AgentPlatform.Tests.Replay;
 using Temporalio.Client;
 using Temporalio.Testing;
 using Temporalio.Worker;
@@ -19,9 +20,15 @@ public class PingWorkflowTests
                 .AddAllActivities(new PingActivities()));
 
         var result = await worker.ExecuteAsync(
-            () => env.Client.ExecuteWorkflowAsync(
-                (PingWorkflow wf) => wf.RunAsync("platform"),
-                new WorkflowOptions($"ping-{Guid.NewGuid()}", TaskQueues.AgentPlatform)),
+            async () =>
+            {
+                var handle = await env.Client.StartWorkflowAsync(
+                    (PingWorkflow wf) => wf.RunAsync("platform"),
+                    new WorkflowOptions($"ping-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
+                var output = await handle.GetResultAsync();
+                await HistoryStore.RecordAsync(handle, "ping-happy-path");
+                return output;
+            },
             ct);
 
         Assert.Equal("pong: platform", result);

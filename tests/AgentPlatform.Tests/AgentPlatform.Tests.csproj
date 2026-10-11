@@ -13,6 +13,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="Replay\Histories\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AgentPlatform.Host\AgentPlatform.Host.csproj" />
   </ItemGroup>
 </Project>

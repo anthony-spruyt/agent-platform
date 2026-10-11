@@ -5,6 +5,7 @@
     <Project Path="src/AgentPlatform.ServiceDefaults/AgentPlatform.ServiceDefaults.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AgentPlatform.IntegrationTests/AgentPlatform.IntegrationTests.csproj" />
     <Project Path="tests/AgentPlatform.Tests/AgentPlatform.Tests.csproj" />
   </Folder>
 </Solution>

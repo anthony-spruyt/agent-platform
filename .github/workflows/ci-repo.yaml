@@ -35,7 +35,7 @@ jobs:
         run: "dotnet format AgentPlatform.slnx --verify-no-changes --no-restore"
       - name: "Test"
         run: >-
-          dotnet test --solution AgentPlatform.slnx --configuration Release --no-build
+          dotnet test --project tests/AgentPlatform.Tests --configuration Release --no-build
           --coverage --coverage-output-format cobertura --results-directory ./TestResults
       - name: "Upload coverage"
         if: "!cancelled()"
@@ -44,3 +44,31 @@ jobs:
           name: "coverage"
           path: "TestResults/**/*.cobertura.xml"
           if-no-files-found: "warn"
+  integration:
+    name: "Integration tests"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 15
+    permissions:
+      contents: "read"
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - name: "Harden Runner"
+        uses: "step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25" # v2.22.1
+        with:
+          egress-policy: "audit"
+      - name: "Checkout"
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: "Setup .NET"
+        uses: "actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68" # v6.0.0
+        with:
+          global-json-file: "global.json"
+      - name: "Restore"
+        run: "dotnet restore tests/AgentPlatform.IntegrationTests"
+      - name: "Build"
+        run: "dotnet build tests/AgentPlatform.IntegrationTests --configuration Release --no-restore"
+      - name: "Test"
+        run: "dotnet test --project tests/AgentPlatform.IntegrationTests --configuration Release --no-build"
