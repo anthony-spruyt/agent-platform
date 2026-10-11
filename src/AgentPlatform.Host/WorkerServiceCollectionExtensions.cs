@@ -1,5 +1,6 @@
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Gateway;
+using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
 using k8s;
@@ -25,6 +26,7 @@ public static class WorkerServiceCollectionExtensions
             .AddHostedTemporalWorker(temporal.Address, temporal.Namespace, TaskQueues.AgentPlatform)
             .AddWorkflow<PingWorkflow>()
             .AddWorkflow<SpikeWorkflow>()
+            .AddWorkflow<RenovateTriageWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<RunDataActivities>()
             .AddScopedActivities<AgentPodActivities>();
@@ -35,6 +37,7 @@ public static class WorkerServiceCollectionExtensions
             .AddScopedActivities<AgentPodActivities>();
 
         services.AddRunData(configuration);
+        services.AddGitHubAppClient(configuration);
         services.AddSingleton(pods);
         services.AddSingleton(new AgentSessionTokens(gateway.SessionTokenKey));
         services.AddSingleton<AgentPodSpecBuilder>();

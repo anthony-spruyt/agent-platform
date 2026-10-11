@@ -1,7 +1,12 @@
+using System.Security.Cryptography;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 const string LocalSessionTokenKey = "local-development-only-session-key";
+const string LocalWebhookSecret = "local-development-only-webhook-secret";
 const string TemporalNamespace = "agent-platform";
+
+using var githubAppKey = RSA.Create(2048);
 
 var rundata = builder.AddPostgres("postgres").AddDatabase("rundata");
 
@@ -22,6 +27,7 @@ builder.AddProject<Projects.AgentPlatform_Host>("web")
     .WithEnvironment("AgentPlatform__Role", "Web")
     .WithEnvironment("Temporal__Namespace", TemporalNamespace)
     .WithEnvironment("AgentGateway__SessionTokenKey", LocalSessionTokenKey)
+    .WithEnvironment("GitHub__WebhookSecret", LocalWebhookSecret)
     .WithEnvironment("Temporal__Address", temporalAddress)
     .WithHttpEndpoint(targetPort: 8080, name: "webhooks")
     .WithHttpEndpoint(targetPort: 8081, name: "mcp")
@@ -31,6 +37,8 @@ builder.AddProject<Projects.AgentPlatform_Host>("web")
 builder.AddProject<Projects.AgentPlatform_Host>("worker")
     .WithEnvironment("AgentPlatform__Role", "Worker")
     .WithEnvironment("AgentGateway__SessionTokenKey", LocalSessionTokenKey)
+    .WithEnvironment("GitHub__AppId", "1")
+    .WithEnvironment("GitHub__PrivateKey", githubAppKey.ExportRSAPrivateKeyPem())
     .WithEnvironment("Temporal__Address", temporalAddress)
     .WithEnvironment("Temporal__Namespace", TemporalNamespace)
     .WithReference(rundata)

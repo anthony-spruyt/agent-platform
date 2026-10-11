@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using AgentPlatform.Host;
+using AgentPlatform.Tests.Support;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -66,6 +67,8 @@ public class WorkerFaultExitTests
             builder.UseSetting("AgentPlatform:Role", "Worker");
             builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
             builder.UseSetting("ConnectionStrings:rundata", "Host=localhost;Database=agent_platform");
+            builder.UseSetting("GitHub:AppId", "12345");
+            builder.UseSetting("GitHub:PrivateKey", GitHubPayloads.PrivateKeyPem);
             builder.UseSetting("Temporal:Address", temporal.Address);
             builder.ConfigureTestServices(services => services.AddSingleton<IExitCodeSetter>(exitCode));
         });
@@ -87,6 +90,8 @@ public class WorkerFaultExitTests
             builder.UseSetting("AgentPlatform:Role", "Worker");
             builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
             builder.UseSetting("ConnectionStrings:rundata", "Host=localhost;Database=agent_platform");
+            builder.UseSetting("GitHub:AppId", "12345");
+            builder.UseSetting("GitHub:PrivateKey", GitHubPayloads.PrivateKeyPem);
             builder.UseSetting("Temporal:Address", env.Client.Connection.Options.TargetHost);
             builder.ConfigureTestServices(services => services.AddSingleton<IExitCodeSetter>(exitCode));
         });

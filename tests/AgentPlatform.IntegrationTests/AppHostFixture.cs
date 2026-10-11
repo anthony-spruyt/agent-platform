@@ -26,6 +26,7 @@ public sealed class AppHostFixture : IAsyncLifetime
         _app = await appHost.BuildAsync(ct);
         await _app.StartAsync(ct);
         await _app.ResourceNotifications.WaitForResourceHealthyAsync("worker", ct);
+        await _app.ResourceNotifications.WaitForResourceHealthyAsync("web", ct);
     }
 
     public async ValueTask DisposeAsync()

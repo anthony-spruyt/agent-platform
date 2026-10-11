@@ -4,11 +4,11 @@ Temporal workers and webhook intake for homelab agents, in .NET.
 
 One .NET 10 image runs as three roles. The role is chosen by configuration:
 
-| Role      | Does                                                                          | Ports                                                  |
-| --------- | ----------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `Web`     | ASP.NET minimal API (health endpoints) and AgentGateway, the MCP server       | `8080` webhooks, `8081` MCP, set by the Web deployment |
-| `Worker`  | Temporal workers on task queues `agent-platform` (workflows) and `agent-pods` | `8080` health only                                     |
-| `Migrate` | Applies the run-data database migrations, then exits                          | none                                                   |
+| Role      | Does                                                                                           | Ports                                                  |
+| --------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `Web`     | ASP.NET minimal API (health endpoints, GitHub webhook intake) and AgentGateway, the MCP server | `8080` webhooks, `8081` MCP, set by the Web deployment |
+| `Worker`  | Temporal workers on task queues `agent-platform` (workflows) and `agent-pods`                  | `8080` health only                                     |
+| `Migrate` | Applies the run-data database migrations, then exits                                           | none                                                   |
 
 The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPlatform.ServiceDefaults`, which also wires OpenTelemetry and HTTP resilience.
 
@@ -22,6 +22,9 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `AgentGateway:SessionTokenKey`            | none, required                                                        | At least 32 characters, identical on both roles; signs the per-run MCP session tokens, which expire shortly after the pod deadline                          |
 | `AgentGateway:Port`                       | `8081`                                                                | Web role. The gateway port serves only `/mcp`, and `/mcp` answers only there; startup fails when it is outside 1-65535 or equals `AgentGateway:WebhookPort` |
 | `AgentGateway:WebhookPort`                | `8080`                                                                | Web role. The port that serves health and webhooks; must match the Web deployment                                                                           |
+| `GitHub:WebhookSecret`                    | none, required                                                        | Web role. The secret that signs GitHub webhook deliveries                                                                                                   |
+| `GitHub:AppId`                            | none, required                                                        | Worker role. The id of the GitHub App                                                                                                                       |
+| `GitHub:PrivateKey`                       | none, required                                                        | Worker role. The App's RSA private key in PEM format; the Web role never reads it                                                                           |
 | `AgentPods:MaxConcurrentActivities`       | `2`                                                                   | Worker role. The global cap on concurrent agent pods                                                                                                        |
 | `AgentPods:HeartbeatInterval`             | `00:00:15`                                                            | Worker role. Must be less than half of the 60 second heartbeat timeout of the `RunAgentPod` activity                                                        |
 | `AgentPods:Namespace`                     | `agent-platform-agents`                                               | Worker role                                                                                                                                                 |
@@ -69,6 +72,23 @@ kubectl -n temporal-system exec deploy/temporal-admintools -- temporal workflow 
 
 `tier` is `read` or `cluster-read`; the `cluster-read` tier needs `AgentPods:ClusterReadServiceAccountName`. Read the outcome with `temporal workflow show --address temporal-frontend:7233 --workflow-id <id>` through the same pod, or in the Temporal UI.
 
+## GitHub webhook intake and App client
+
+The Web role serves `POST /webhooks/github` on the webhook port only (`/mcp` stays on the gateway port). The handler checks the `X-Hub-Signature-256` HMAC-SHA256 over the raw body with a constant-time compare before it parses anything; a missing or wrong signature gets `401` and no body is logged. Bodies over 1 MiB get `413`.
+
+| Event                                                                                                                    | Result                                                   |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `ping`                                                                                                                   | `200`                                                    |
+| `check_suite` `completed`, branch `renovate/*` except `renovate/configure`, with pull requests whose head is in the repo | `202`, one `CheckSuiteCompleted` signal per pull request |
+| any other event or action, or a suite that fails a filter                                                                | `200`, dropped, so GitHub never redelivers               |
+| `check_suite` with a malformed body                                                                                      | `400`                                                    |
+
+A check suite from any app is forwarded, so the workflow hears about every suite that finishes. Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`, ID `renovate-triage/{owner}/{repo}/{pr}`, task queue `agent-platform`, signal `CheckSuiteCompleted` with the repository, pull request number, head sha, check suite id, app slug, conclusion and `X-GitHub-Delivery` id.
+`RenovateTriageWorkflow` is a placeholder that records the signals it receives.
+
+The Worker role reads GitHub through `IGitHubApiClient`: pull request, all check runs of a sha, reviews and labels, all paged, read-only. Each call mints an installation token for one repository with only the permission that call needs (`pull_requests: read` or `checks: read`), authenticated by a short-lived App JWT signed with `GitHub:PrivateKey`. The installation is looked up per repository, and
+a token is reused until five minutes before it expires.
+
 ## Run data
 
 Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF Core, so runs can be measured, compared and replayed later.
@@ -109,8 +129,8 @@ Needs the .NET SDK pinned in `global.json` and a container runtime for the Tempo
 dotnet run --project src/AgentPlatform.AppHost
 ```
 
-The AppHost starts a Temporal dev server (`temporalio/temporal`, CLI `1.9.x`, which embeds Temporal server 1.32 like the cluster) in the `agent-platform` namespace, a PostgreSQL container with the `rundata` database, the `Migrate` role (the Worker waits for it to finish) and the Host as Web and
-Worker, and opens the Aspire dashboard at `http://localhost:15170`. The dev server UI is at `http://localhost:8233`. With Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.
+The AppHost starts a Temporal dev server (`temporalio/temporal`, CLI `1.9.x`, which embeds Temporal server 1.32 like the cluster) in the `agent-platform` namespace, a PostgreSQL container with the `rundata` database, the `Migrate` role (the Worker waits for it to finish) and the Host as Web and Worker, and opens the Aspire dashboard at `http://localhost:15170`. The dev server UI is at
+`http://localhost:8233`. With Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.
 
 ## Build and test
 
@@ -126,7 +146,8 @@ The workflow tests run against Temporal's time-skipping test server, which the S
 The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
 time-skipping tests.
 
-The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row and check that the Migrate role finished with exit code 0. They need a container runtime, which GitHub's ubuntu runners have.
+The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row, check that the Migrate role finished with exit code 0 and post a signed `check_suite` delivery to the Web role to see the triage workflow run on the Worker. They need a container runtime, which GitHub's
+ubuntu runners have.
 
 ## Image
 
