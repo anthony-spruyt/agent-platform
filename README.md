@@ -67,12 +67,13 @@ kubectl -n temporal-system exec deploy/temporal-admintools -- temporal workflow 
 
 ## Layout
 
-| Path                                | Purpose                                                                          |
-| ----------------------------------- | -------------------------------------------------------------------------------- |
-| `src/AgentPlatform.Host`            | The executable: role selection, AgentGateway, Temporal workers, agent-pod runner |
-| `src/AgentPlatform.ServiceDefaults` | Shared OpenTelemetry, health checks and resilience                               |
-| `src/AgentPlatform.AppHost`         | Aspire AppHost for local development only                                        |
-| `tests/AgentPlatform.Tests`         | xUnit tests                                                                      |
+| Path                                   | Purpose                                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| `src/AgentPlatform.Host`               | The executable: role selection, AgentGateway, Temporal workers, agent-pod runner |
+| `src/AgentPlatform.ServiceDefaults`    | Shared OpenTelemetry, health checks and resilience                               |
+| `src/AgentPlatform.AppHost`            | Aspire AppHost for local development only                                        |
+| `tests/AgentPlatform.Tests`            | xUnit unit, time-skipping workflow and replay tests                              |
+| `tests/AgentPlatform.IntegrationTests` | Aspire integration tests against the AppHost                                     |
 
 ## Run locally
 
@@ -88,11 +89,17 @@ The AppHost starts a Temporal dev server (`temporalio/temporal`, CLI `1.9.x`, wh
 
 ```bash
 dotnet build
-dotnet test --solution AgentPlatform.slnx
+dotnet test --project tests/AgentPlatform.Tests
+dotnet test --project tests/AgentPlatform.IntegrationTests
 dotnet format AgentPlatform.slnx --verify-no-changes
 ```
 
-The workflow test runs against Temporal's time-skipping test server, which the SDK downloads on first use.
+The workflow tests run against Temporal's time-skipping test server, which the SDK downloads on first use.
+
+The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
+time-skipping tests.
+
+The integration tests start the AppHost (Temporal dev server plus both Host roles) through `Aspire.Hosting.Testing` and run `PingWorkflow` end to end. They need a container runtime, which GitHub's ubuntu runners have.
 
 ## Image
 
