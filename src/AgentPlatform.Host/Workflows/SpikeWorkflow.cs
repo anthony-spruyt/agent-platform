@@ -84,33 +84,40 @@ public partial class SpikeWorkflow
                 status = arrived ? SpikeStatus.Succeeded : SpikeStatus.ResultTimeout;
             }
 
-            var usage = agent.Usage;
-            await RunRecorder.RecordStepAsync(new RecordStepInput(
-                run.RunId,
-                1,
-                AgentStep,
-                LadderRung.Claude,
-                StopReason(status, agent.Outcome),
-                agentStarted,
-                RunRecorder.ElapsedMs(agentStarted),
-                Input: RunRecorder.ToJson(new { tier = input.Tier }),
-                Output: RunRecorder.ToJson(new { outcome = agent.Outcome, resultText = agent.ResultText, detail = agent.Detail, submitted = _result }),
-                PromptHash: run.PromptHash,
-                Model: agent.Model,
-                InputTokens: usage?.InputTokens,
-                OutputTokens: usage?.OutputTokens,
-                CostUsd: usage?.CostUsd is { } cost ? (decimal)cost : null));
-            await RunRecorder.CompleteAsync(new CompleteRunInput(
-                run.RunId,
-                status == SpikeStatus.Succeeded ? RunStatus.Succeeded : RunStatus.Failed,
-                Workflow.UtcNow,
-                agent.Model));
+            if (run is not null)
+            {
+                var usage = agent.Usage;
+                await RunRecorder.RecordStepAsync(new RecordStepInput(
+                    run.RunId,
+                    1,
+                    AgentStep,
+                    LadderRung.Claude,
+                    StopReason(status, agent.Outcome),
+                    agentStarted,
+                    RunRecorder.ElapsedMs(agentStarted),
+                    Input: RunRecorder.ToJson(new { tier = input.Tier }),
+                    Output: RunRecorder.ToJson(new { outcome = agent.Outcome, resultText = agent.ResultText, detail = agent.Detail, submitted = _result }),
+                    PromptHash: run.PromptHash,
+                    Model: agent.Model,
+                    InputTokens: usage?.InputTokens,
+                    OutputTokens: usage?.OutputTokens,
+                    CostUsd: usage?.CostUsd is { } cost ? (decimal)cost : null));
+                await RunRecorder.CompleteAsync(new CompleteRunInput(
+                    run.RunId,
+                    status == SpikeStatus.Succeeded ? RunStatus.Succeeded : RunStatus.Failed,
+                    Workflow.UtcNow,
+                    agent.Model));
+            }
 
             return new SpikeResult(status, _result, agent, input.Tier, info.WorkflowId, info.RunId);
         }
         catch (Exception ex) when (ex is ActivityFailureException or OperationCanceledException)
         {
-            await RunRecorder.CompleteAfterFailureAsync(run.RunId);
+            if (run is not null)
+            {
+                await RunRecorder.CompleteAfterFailureAsync(run.RunId);
+            }
+
             throw;
         }
     }

@@ -24,14 +24,42 @@ internal static partial class RunRecorder
 
     public static JsonElement ToJson<T>(T value) => JsonSerializer.SerializeToElement(value, _jsonOptions);
 
-    public static Task<BeginRunResult> BeginAsync(BeginRunInput input) =>
-        Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.BeginRunAsync(input), _options);
+    public static async Task<BeginRunResult?> BeginAsync(BeginRunInput input)
+    {
+        try
+        {
+            return await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.BeginRunAsync(input), _options);
+        }
+        catch (ActivityFailureException ex)
+        {
+            LogRecordingFailed(Workflow.Logger, ex, RunDataActivities.BeginRunName);
+            return null;
+        }
+    }
 
-    public static Task RecordStepAsync(RecordStepInput input) =>
-        Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.RecordStepAsync(input), _options);
+    public static async Task RecordStepAsync(RecordStepInput input)
+    {
+        try
+        {
+            await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.RecordStepAsync(input), _options);
+        }
+        catch (ActivityFailureException ex)
+        {
+            LogRecordingFailed(Workflow.Logger, ex, RunDataActivities.RecordStepName);
+        }
+    }
 
-    public static Task CompleteAsync(CompleteRunInput input) =>
-        Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.CompleteRunAsync(input), _options);
+    public static async Task CompleteAsync(CompleteRunInput input)
+    {
+        try
+        {
+            await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.CompleteRunAsync(input), _options);
+        }
+        catch (ActivityFailureException ex)
+        {
+            LogRecordingFailed(Workflow.Logger, ex, RunDataActivities.CompleteRunName);
+        }
+    }
 
     public static async Task CompleteAfterFailureAsync(Guid runId, string? model = null)
     {
@@ -49,12 +77,12 @@ internal static partial class RunRecorder
         }
         catch (ActivityFailureException ex)
         {
-            LogCompleteFailed(Workflow.Logger, ex);
+            LogRecordingFailed(Workflow.Logger, ex, RunDataActivities.CompleteRunName);
         }
     }
 
     public static long ElapsedMs(DateTime since) => Math.Max(0, (long)(Workflow.UtcNow - since).TotalMilliseconds);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not mark the run as failed in the run-data store.")]
-    private static partial void LogCompleteFailed(ILogger logger, Exception exception);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not write run data ({Activity}); the workflow carries on without it.")]
+    private static partial void LogRecordingFailed(ILogger logger, Exception exception, string activity);
 }
