@@ -1,9 +1,11 @@
 using System.Net;
 using System.Text.Json;
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Replay;
 using AgentPlatform.Tests.Support;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Activities;
 using Temporalio.Api.Enums.V1;
@@ -54,19 +56,23 @@ public class SpikeWorkflowTests
     }
 
     private static AgentRunResult Succeeded() =>
-        new(AgentRunOutcome.Succeeded, "pod-1", 0, "all good", null, new AgentRunUsage(1, 2, 0.1, 3, 4, "s"));
+        new(AgentRunOutcome.Succeeded, "pod-1", 0, "all good", null, new AgentRunUsage(1, 2, 0.1, 3, 4, "s"), "sonnet-test");
 
     private static async Task<T> InWorkersAsync<T, TPod, TCleanup>(
         WorkflowEnvironment env,
         TPod podActivities,
         TCleanup cleanup,
-        Func<Task<T>> body)
+        Func<Task<T>> body,
+        InMemoryRunData? data = null)
         where TPod : class
         where TCleanup : class
     {
         using var workflows = new TemporalWorker(
             env.Client,
-            new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<SpikeWorkflow>().AddAllActivities(cleanup));
+            new TemporalWorkerOptions(TaskQueues.AgentPlatform)
+                .AddWorkflow<SpikeWorkflow>()
+                .AddAllActivities(cleanup)
+                .AddAllActivities((data ?? InMemoryRunData.Create()).Activities));
         using var pods = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPods).AddAllActivities(podActivities));
@@ -352,6 +358,134 @@ public class SpikeWorkflowTests
         Assert.Equal(2, api.PodCreateAttempts);
         Assert.Equal(1, api.PodsCreated);
         Assert.Empty(api.Pods);
+    }
+
+    [Fact]
+    public async Task HappyPath_RecordsASucceededRunWithItsPromptAndClaudeStep()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var data = InMemoryRunData.Create();
+
+        await InWorkersAsync(env, new ScriptedActivities(), new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env, new SpikeInput("check the repo", AgentTier.Read));
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            return await handle.GetResultAsync();
+        }, data);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var run = await db.Runs.SingleAsync(Ct);
+        Assert.Equal("SpikeWorkflow", run.WorkflowType);
+        Assert.Equal(RunStatus.Succeeded, run.Status);
+        Assert.Equal("sonnet-test", run.Model);
+        Assert.Equal(PromptHashing.Compute("check the repo"), run.PromptHash);
+        Assert.Equal("check the repo", (await db.Prompts.SingleAsync(Ct)).Body);
+        Assert.Equal("read", JsonDocument.Parse(run.InputEvent).RootElement.GetProperty("tier").GetString());
+
+        var step = await db.RunSteps.SingleAsync(Ct);
+        Assert.Equal(LadderRung.Claude, step.Rung);
+        Assert.Equal("submitted", step.StopReason);
+        Assert.Equal("sonnet-test", step.Model);
+        Assert.Equal(run.PromptHash, step.PromptHash);
+        Assert.Equal(1, step.InputTokens);
+        Assert.Equal(2, step.OutputTokens);
+        Assert.Equal(0.1m, step.CostUsd);
+        Assert.Equal("Looks fine", JsonDocument.Parse(step.Output!).RootElement.GetProperty("submitted").GetProperty("summary").GetString());
+        Assert.Equal(1, run.InputTokens);
+        Assert.Equal(0.1m, run.CostUsd);
+    }
+
+    [Fact]
+    public async Task WhenNoResultArrives_RecordsAFailedRunStoppedByTheResultTimeout()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var data = InMemoryRunData.Create();
+
+        await InWorkersAsync(env, new ScriptedActivities(), new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            return await handle.GetResultAsync();
+        }, data);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(RunStatus.Failed, (await db.Runs.SingleAsync(Ct)).Status);
+        Assert.Equal("result_timeout", (await db.RunSteps.SingleAsync(Ct)).StopReason);
+    }
+
+    [Fact]
+    public async Task WhenTheAgentRunFails_RecordsAFailedRunStoppedByTheOutcome()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var data = InMemoryRunData.Create();
+        var activities = new ScriptedActivities
+        {
+            OnRun = _ => Task.FromResult(new AgentRunResult(AgentRunOutcome.UsageLimit, "pod-1", 1, null, "limit", null)),
+        };
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            return await handle.GetResultAsync();
+        }, data);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(RunStatus.Failed, (await db.Runs.SingleAsync(Ct)).Status);
+        var step = await db.RunSteps.SingleAsync(Ct);
+        Assert.Equal("usage_limit", step.StopReason);
+        Assert.Null(step.InputTokens);
+    }
+
+    [Fact]
+    public async Task WhenTheActivityFailsForGood_RecordsAFailedRunWithoutAStep()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var data = InMemoryRunData.Create();
+        var activities = new ScriptedActivities
+        {
+            OnRun = _ => throw new ApplicationFailureException("boom", nonRetryable: true),
+        };
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            return 0;
+        }, data);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(RunStatus.Failed, (await db.Runs.SingleAsync(Ct)).Status);
+        Assert.Empty(db.RunSteps);
+    }
+
+    [Fact]
+    public async Task WhenTheWorkflowIsCancelled_RecordsAFailedRun()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var data = InMemoryRunData.Create();
+        var activities = new ScriptedActivities
+        {
+            OnRun = async _ =>
+            {
+                var context = ActivityExecutionContext.Current;
+                while (true)
+                {
+                    context.Heartbeat();
+                    await Task.Delay(50, context.CancellationToken);
+                }
+            },
+        };
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await WaitUntilAsync(() => activities.Inputs.Count == 1);
+            await handle.CancelAsync();
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            return 0;
+        }, data);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(RunStatus.Failed, (await db.Runs.SingleAsync(Ct)).Status);
     }
 
     [Fact]

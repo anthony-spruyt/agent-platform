@@ -4,4 +4,5 @@ public enum AgentPlatformRole
 {
     Web,
     Worker,
+    Migrate,
 }

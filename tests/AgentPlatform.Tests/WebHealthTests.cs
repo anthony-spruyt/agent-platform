@@ -1,5 +1,8 @@
 using System.Net;
+using AgentPlatform.Host.RunData;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentPlatform.Tests;
 
@@ -13,6 +16,15 @@ public class WebHealthTests : IClassFixture<WebApplicationFactory<Program>>
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
         });
+
+    [Fact]
+    public void WebRole_HasNoAccessToTheRunDataStore()
+    {
+        using var scope = _factory.Services.CreateScope();
+
+        Assert.Null(scope.ServiceProvider.GetService<IDbContextFactory<RunDataDbContext>>());
+        Assert.Null(scope.ServiceProvider.GetService<RunDataStore>());
+    }
 
     [Theory]
     [InlineData("/health")]
