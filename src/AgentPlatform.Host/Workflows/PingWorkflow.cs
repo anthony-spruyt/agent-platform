@@ -18,23 +18,31 @@ public class PingWorkflow
                 (PingActivities activities) => activities.Ping(name),
                 new ActivityOptions { StartToCloseTimeout = TimeSpan.FromSeconds(10) });
 
-            await RunRecorder.RecordStepAsync(new RecordStepInput(
-                run.RunId,
-                1,
-                "ping",
-                LadderRung.Rule,
-                "deterministic",
-                started,
-                RunRecorder.ElapsedMs(started),
-                Input: RunRecorder.ToJson(new { name }),
-                Output: RunRecorder.ToJson(new { result }),
-                Confidence: 1));
-            await RunRecorder.CompleteAsync(new CompleteRunInput(run.RunId, RunStatus.Succeeded, Workflow.UtcNow));
+            if (run is not null)
+            {
+                await RunRecorder.RecordStepAsync(new RecordStepInput(
+                    run.RunId,
+                    1,
+                    "ping",
+                    LadderRung.Rule,
+                    "deterministic",
+                    started,
+                    RunRecorder.ElapsedMs(started),
+                    Input: RunRecorder.ToJson(new { name }),
+                    Output: RunRecorder.ToJson(new { result }),
+                    Confidence: 1));
+                await RunRecorder.CompleteAsync(new CompleteRunInput(run.RunId, RunStatus.Succeeded, Workflow.UtcNow));
+            }
+
             return result;
         }
         catch (Exception ex) when (ex is ActivityFailureException or OperationCanceledException)
         {
-            await RunRecorder.CompleteAfterFailureAsync(run.RunId);
+            if (run is not null)
+            {
+                await RunRecorder.CompleteAfterFailureAsync(run.RunId);
+            }
+
             throw;
         }
     }

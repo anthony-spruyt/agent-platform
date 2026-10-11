@@ -63,16 +63,18 @@ public class SpikeWorkflowTests
         TPod podActivities,
         TCleanup cleanup,
         Func<Task<T>> body,
-        InMemoryRunData? data = null)
+        InMemoryRunData? data = null,
+        object? runDataActivities = null)
         where TPod : class
         where TCleanup : class
     {
+        var recording = runDataActivities ?? (data ?? InMemoryRunData.Create()).Activities;
         using var workflows = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<SpikeWorkflow>()
                 .AddAllActivities(cleanup)
-                .AddAllActivities((data ?? InMemoryRunData.Create()).Activities));
+                .AddAllActivities(recording.GetType(), recording));
         using var pods = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPods).AddAllActivities(podActivities));
@@ -486,6 +488,76 @@ public class SpikeWorkflowTests
 
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         Assert.Equal(RunStatus.Failed, (await db.Runs.SingleAsync(Ct)).Status);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task WhenRecordingTheRunFails_StillReturnsTheSubmittedResultAfterOneAgentRun(bool beginSucceeds, bool retryable)
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var runData = new FailingRunData(beginSucceeds, retryable);
+        var activities = new ScriptedActivities();
+
+        var result = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            return await handle.GetResultAsync();
+        }, runDataActivities: runData);
+
+        Assert.Equal(SpikeStatus.Succeeded, result.Status);
+        Assert.Equal("Looks fine", result.Result!.Summary);
+        Assert.Single(activities.Inputs);
+        Assert.True(runData.BeginCalls >= 1);
+        if (beginSucceeds)
+        {
+            Assert.True(runData.RecordStepCalls >= 1);
+            Assert.True(runData.CompleteCalls >= 1);
+        }
+        else
+        {
+            Assert.Equal(0, runData.RecordStepCalls);
+            Assert.Equal(0, runData.CompleteCalls);
+        }
+    }
+
+    [Fact]
+    public async Task WhenCancelledWhileCompletingTheRun_EndsCanceled()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var runData = new BlockingCompleteRunData();
+
+        var status = await InWorkersAsync(env, new ScriptedActivities(), new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            await runData.Blocked.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+            await handle.CancelAsync();
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            return (await handle.DescribeAsync()).Status;
+        }, runDataActivities: runData);
+
+        Assert.Equal(WorkflowExecutionStatus.Canceled, status);
+    }
+
+    [Fact]
+    public async Task WhenTheAgentRunFailsAndRecordingFails_StillFailsWithTheAgentFailure()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities
+        {
+            OnRun = _ => throw new ApplicationFailureException("boom", nonRetryable: true),
+        };
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            return 0;
+        }, runDataActivities: new FailingRunData(true, false));
     }
 
     [Fact]

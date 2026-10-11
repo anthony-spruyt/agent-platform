@@ -5,6 +5,7 @@ using AgentPlatform.Tests.Replay;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
 using Temporalio.Activities;
+using Temporalio.Api.Enums.V1;
 using Temporalio.Client;
 using Temporalio.Exceptions;
 using Temporalio.Testing;
@@ -18,12 +19,17 @@ public class PingWorkflowTests
 
     private static TemporalWorker NewWorker<T>(WorkflowEnvironment env, InMemoryRunData data, T pingActivities)
         where T : class =>
+        NewWorker(env, data.Activities, pingActivities);
+
+    private static TemporalWorker NewWorker<TRunData, TPing>(WorkflowEnvironment env, TRunData runData, TPing pingActivities)
+        where TRunData : class
+        where TPing : class =>
         new(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<PingWorkflow>()
                 .AddAllActivities(pingActivities)
-                .AddAllActivities(data.Activities));
+                .AddAllActivities(runData));
 
     [Fact]
     public async Task RunAsync_ReturnsPongFromActivity()
@@ -111,5 +117,96 @@ public class PingWorkflowTests
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         Assert.Equal(RunStatus.Failed, (await db.Runs.SingleAsync(Ct)).Status);
         Assert.Empty(db.RunSteps);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task RunAsync_WhenRecordingTheRunFails_StillReturnsPong(bool beginSucceeds, bool retryable)
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var runData = new FailingRunData(beginSucceeds, retryable);
+        var ping = new CountingPing();
+        using var worker = NewWorker(env, runData, ping);
+
+        var result = await worker.ExecuteAsync(
+            async () =>
+            {
+                var handle = await env.Client.StartWorkflowAsync(
+                    (PingWorkflow wf) => wf.RunAsync("platform"),
+                    new WorkflowOptions($"ping-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
+                return await handle.GetResultAsync();
+            },
+            Ct);
+
+        Assert.Equal("pong: platform", result);
+        Assert.Equal(1, ping.Calls);
+        Assert.True(runData.BeginCalls >= 1);
+        if (beginSucceeds)
+        {
+            Assert.True(runData.RecordStepCalls >= 1);
+            Assert.True(runData.CompleteCalls >= 1);
+        }
+        else
+        {
+            Assert.Equal(0, runData.RecordStepCalls);
+            Assert.Equal(0, runData.CompleteCalls);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenThePingFailsAndRecordingFails_StillFailsWithThePingFailure()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        using var worker = NewWorker(env, new FailingRunData(true, false), new FailingPing());
+
+        await worker.ExecuteAsync(
+            async () =>
+            {
+                var handle = await env.Client.StartWorkflowAsync(
+                    (PingWorkflow wf) => wf.RunAsync("platform"),
+                    new WorkflowOptions($"ping-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
+                var failure = await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+                Assert.Equal("boom", Assert.IsType<ActivityFailureException>(failure.InnerException).InnerException!.Message);
+                return 0;
+            },
+            Ct);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenCancelledWhileCompletingTheRun_EndsCanceled()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var runData = new BlockingCompleteRunData();
+        using var worker = NewWorker(env, runData, new PingActivities());
+
+        var status = await worker.ExecuteAsync(
+            async () =>
+            {
+                var handle = await env.Client.StartWorkflowAsync(
+                    (PingWorkflow wf) => wf.RunAsync("platform"),
+                    new WorkflowOptions($"ping-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
+                await runData.Blocked.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+                await handle.CancelAsync();
+                await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+                return (await handle.DescribeAsync()).Status;
+            },
+            Ct);
+
+        Assert.Equal(WorkflowExecutionStatus.Canceled, status);
+    }
+
+    private sealed class CountingPing
+    {
+        public int Calls { get; private set; }
+
+        [Activity("Ping")]
+        public string Ping(string name)
+        {
+            Calls++;
+            return $"pong: {name}";
+        }
     }
 }
