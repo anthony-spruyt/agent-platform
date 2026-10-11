@@ -15,6 +15,8 @@ public class RoleSelectionTests
     [Theory]
     [InlineData("Web", AgentPlatformRole.Web)]
     [InlineData("Worker", AgentPlatformRole.Worker)]
+    [InlineData("Migrate", AgentPlatformRole.Migrate)]
+    [InlineData("migrate", AgentPlatformRole.Migrate)]
     [InlineData("web", AgentPlatformRole.Web)]
     [InlineData("WORKER", AgentPlatformRole.Worker)]
     public void Resolve_ReturnsConfiguredRole(string value, AgentPlatformRole expected) =>

@@ -1,5 +1,7 @@
 using AgentPlatform.Host;
+using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -11,8 +13,11 @@ public class WorkerConfigurationTests
 {
     private const string Key = "0123456789abcdef0123456789abcdef";
 
+    private const string Connection = "Host=localhost;Database=agent_platform";
+
     private static ServiceProvider Build(Dictionary<string, string?> settings)
     {
+        settings.TryAdd("ConnectionStrings:rundata", Connection);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddLogging();
@@ -69,6 +74,42 @@ public class WorkerConfigurationTests
         var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
 
         Assert.Contains(typeof(SpikeWorkflow), options.Workflows.Select(w => w.Type));
+    }
+
+    [Fact]
+    public void AgentPlatformWorker_RegistersTheRunDataStore()
+    {
+        using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
+
+        Assert.NotNull(provider.GetService<RunDataStore>());
+        Assert.NotNull(provider.GetService<IDbContextFactory<RunDataDbContext>>());
+    }
+
+    [Fact]
+    public void AgentPlatformWorker_UsesTheRunDataConnectionString()
+    {
+        using var provider = Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["ConnectionStrings:rundata"] = "Host=db.example;Database=agent_platform",
+        });
+
+        using var db = provider.GetRequiredService<IDbContextFactory<RunDataDbContext>>().CreateDbContext();
+
+        Assert.Contains("db.example", db.Database.GetConnectionString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void MissingRunDataConnectionString_FailsAtStartup(string? connection)
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["ConnectionStrings:rundata"] = connection,
+        }));
     }
 
     [Theory]

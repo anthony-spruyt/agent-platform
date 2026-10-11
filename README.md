@@ -2,12 +2,13 @@
 
 Temporal workers and webhook intake for homelab agents, in .NET.
 
-One .NET 10 image runs as two deployments. The role is chosen by configuration:
+One .NET 10 image runs as three roles. The role is chosen by configuration:
 
-| Role     | Does                                                                          | Ports                                                  |
-| -------- | ----------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `Web`    | ASP.NET minimal API (health endpoints) and AgentGateway, the MCP server       | `8080` webhooks, `8081` MCP, set by the Web deployment |
-| `Worker` | Temporal workers on task queues `agent-platform` (workflows) and `agent-pods` | `8080` health only                                     |
+| Role      | Does                                                                          | Ports                                                  |
+| --------- | ----------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `Web`     | ASP.NET minimal API (health endpoints) and AgentGateway, the MCP server       | `8080` webhooks, `8081` MCP, set by the Web deployment |
+| `Worker`  | Temporal workers on task queues `agent-platform` (workflows) and `agent-pods` | `8080` health only                                     |
+| `Migrate` | Applies the run-data database migrations, then exits                          | none                                                   |
 
 Both roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPlatform.ServiceDefaults`, which also wires OpenTelemetry and HTTP resilience.
 
@@ -15,7 +16,7 @@ Both roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPl
 
 | Key                                       | Default                                                               | Notes                                                                                                                                                       |
 | ----------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AgentPlatform:Role`                      | none, required                                                        | `Web` or `Worker`; startup fails on anything else                                                                                                           |
+| `AgentPlatform:Role`                      | none, required                                                        | `Web`, `Worker` or `Migrate`; startup fails on anything else                                                                                                |
 | `Temporal:Address`                        | `localhost:7233`                                                      | Both roles                                                                                                                                                  |
 | `Temporal:Namespace`                      | `default`                                                             | Both roles                                                                                                                                                  |
 | `AgentGateway:SessionTokenKey`            | none, required                                                        | At least 32 characters, identical on both roles; signs the per-run MCP session tokens, which expire shortly after the pod deadline                          |
@@ -30,10 +31,13 @@ Both roles serve `/health` (all checks) and `/alive` (liveness) through `AgentPl
 | `AgentPods:AgentGatewayUrl`               | `http://agent-platform-web.agent-platform.svc.cluster.local:8081/mcp` | Worker role. The MCP endpoint written into agent pods                                                                                                       |
 | `AgentPods:ServiceAccountName`            | `agent-runner`                                                        | Worker role                                                                                                                                                 |
 | `AgentPods:ClusterReadServiceAccountName` | unset                                                                 | Worker role. Required to run the `cluster-read` tier                                                                                                        |
+| `ConnectionStrings:rundata`               | none, required                                                        | Worker and Migrate roles. The Npgsql connection string of the run-data database                                                                             |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`             | unset                                                                 | Enables the OTLP exporter when set                                                                                                                          |
 | `ASPNETCORE_HTTP_PORTS`                   | `8080`                                                                | Image default; the Web deployment sets `8080;8081`                                                                                                          |
 
 Environment variables use `__` as the separator, for example `AgentPlatform__Role=Worker`.
+
+In the cluster the run-data connection string uses `SSL Mode=VerifyFull` with `Root Certificate=/etc/agent-platform/rundata-ca/ca.crt`, the mounted CA of the database cluster.
 
 ## Agent pods and the spike workflow
 
@@ -65,15 +69,39 @@ kubectl -n temporal-system exec deploy/temporal-admintools -- temporal workflow 
 
 `tier` is `read` or `cluster-read`; the `cluster-read` tier needs `AgentPods:ClusterReadServiceAccountName`. Read the outcome with `temporal workflow show --address temporal-frontend:7233 --workflow-id <id>` through the same pod, or in the Temporal UI.
 
+## Run data
+
+Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF Core, so runs can be measured, compared and replayed later.
+
+| Table       | One row per     | Key columns                                                                                                                                                                                                          |
+| ----------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs`      | workflow run    | `workflow_id` + `workflow_run_id` (unique), `workflow_type`, `status`, `input_event` and `context` (jsonb), `prompt_hash`, `model`, timings, token and cost totals, nullable `outcome` fields for later ground truth |
+| `run_steps` | step of a run   | `run_id` + `seq` (unique), `name`, `rung` (`Rule`, `Jev`, `Claude`), `input` and `output` (jsonb), `confidence`, `stop_reason`, `prompt_hash`, `model`, tokens, `cost_usd`, timings                                  |
+| `prompts`   | distinct prompt | `hash` (SHA-256 of the body, primary key), `name`, `body`                                                                                                                                                            |
+
+Only activities write to the database, so workflow code stays deterministic. `BeginRun`, `RecordStep` and `CompleteRun` run on the `agent-platform` queue and are idempotent on the unique keys above, so a retried activity never duplicates a row. A failed or cancelled run is completed as `Failed`.
+
+Run data is readable through a read-only tool, so it never holds credential material: only prompts, model inputs and outputs, and metrics are stored. `JsonRedactor` replaces the value of every credential-named JSON property (token, secret, password, authorization, cookie, signature, API or private
+key) and every credential-shaped string (GitHub, API and cloud keys, bearer values, JWTs and the per-run session tokens) with `[redacted]` in every jsonb column before it is written. Token-count metrics such as `input_tokens` are kept. Callers still pass only the fields they need from an input
+event, never raw headers.
+
+The `Migrate` role applies the EF Core migrations in `src/AgentPlatform.Host/RunData/Migrations` and exits `0` on success or non-zero on failure, so the Worker never migrates. Add a migration with the local tool (`dotnet tool restore` first):
+
+```bash
+dotnet ef migrations add <Name> --project src/AgentPlatform.Host --output-dir RunData/Migrations
+```
+
+CI fails when the model and the migrations differ (`dotnet ef migrations has-pending-model-changes`).
+
 ## Layout
 
-| Path                                   | Purpose                                                                          |
-| -------------------------------------- | -------------------------------------------------------------------------------- |
-| `src/AgentPlatform.Host`               | The executable: role selection, AgentGateway, Temporal workers, agent-pod runner |
-| `src/AgentPlatform.ServiceDefaults`    | Shared OpenTelemetry, health checks and resilience                               |
-| `src/AgentPlatform.AppHost`            | Aspire AppHost for local development only                                        |
-| `tests/AgentPlatform.Tests`            | xUnit unit, time-skipping workflow and replay tests                              |
-| `tests/AgentPlatform.IntegrationTests` | Aspire integration tests against the AppHost                                     |
+| Path                                   | Purpose                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `src/AgentPlatform.Host`               | The executable: role selection, AgentGateway, Temporal workers, agent-pod runner, run data |
+| `src/AgentPlatform.ServiceDefaults`    | Shared OpenTelemetry, health checks and resilience                                         |
+| `src/AgentPlatform.AppHost`            | Aspire AppHost for local development only                                                  |
+| `tests/AgentPlatform.Tests`            | xUnit unit, time-skipping workflow and replay tests                                        |
+| `tests/AgentPlatform.IntegrationTests` | Aspire integration tests against the AppHost                                               |
 
 ## Run locally
 
@@ -83,7 +111,8 @@ Needs the .NET SDK pinned in `global.json` and a container runtime for the Tempo
 dotnet run --project src/AgentPlatform.AppHost
 ```
 
-The AppHost starts a Temporal dev server (`temporalio/temporal`, CLI `1.9.x`, which embeds Temporal server 1.32 like the cluster) plus the Host twice, once per role, and opens the Aspire dashboard at `http://localhost:15170`. The dev server UI is at `http://localhost:8233`. With Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.
+The AppHost starts a Temporal dev server (`temporalio/temporal`, CLI `1.9.x`, which embeds Temporal server 1.32 like the cluster) in the `agent-platform` namespace, a PostgreSQL container with the `rundata` database, the `Migrate` role (the Worker waits for it to finish) and the Host as Web and
+Worker, and opens the Aspire dashboard at `http://localhost:15170`. The dev server UI is at `http://localhost:8233`. With Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.
 
 ## Build and test
 
@@ -99,7 +128,7 @@ The workflow tests run against Temporal's time-skipping test server, which the S
 The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
 time-skipping tests.
 
-The integration tests start the AppHost (Temporal dev server plus both Host roles) through `Aspire.Hosting.Testing` and run `PingWorkflow` end to end. They need a container runtime, which GitHub's ubuntu runners have.
+The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row and check that the Migrate role finished with exit code 0. They need a container runtime, which GitHub's ubuntu runners have.
 
 ## Image
 

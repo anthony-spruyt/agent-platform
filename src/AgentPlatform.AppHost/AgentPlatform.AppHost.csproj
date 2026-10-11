@@ -5,6 +5,9 @@
     <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\AgentPlatform.Host\AgentPlatform.Host.csproj" />
   </ItemGroup>
 </Project>

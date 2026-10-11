@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Gateway;
 using AgentPlatform.Host.Workflows;
+using AgentPlatform.Tests.Support;
 using Temporalio.Activities;
 using Temporalio.Client;
 using Temporalio.Testing;
@@ -43,7 +44,7 @@ public class TemporalWorkflowResultSubmitterTests
         var activities = new HoldingActivities(release);
         using var workflows = new TemporalWorker(
             env.Client,
-            new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<SpikeWorkflow>().AddAllActivities(activities));
+            new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<SpikeWorkflow>().AddAllActivities(activities).AddAllActivities(InMemoryRunData.Create().Activities));
         using var pods = new TemporalWorker(env.Client, new TemporalWorkerOptions(TaskQueues.AgentPods).AddAllActivities(activities));
 
         return await workflows.ExecuteAsync(() => pods.ExecuteAsync(
