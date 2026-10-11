@@ -24,6 +24,7 @@ public class WorkerFaultExitTests
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("AgentPlatform:Role", "Worker");
+            builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
             builder.UseSetting("Temporal:Address", "127.0.0.1:1");
             builder.ConfigureTestServices(services => services.AddSingleton<IExitCodeSetter>(exitCode));
         });
@@ -42,6 +43,7 @@ public class WorkerFaultExitTests
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("AgentPlatform:Role", "Worker");
+            builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
             builder.UseSetting("Temporal:Address", env.Client.Connection.Options.TargetHost);
             builder.ConfigureTestServices(services => services.AddSingleton<IExitCodeSetter>(exitCode));
         });
