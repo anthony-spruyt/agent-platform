@@ -28,23 +28,24 @@ public static partial class GitHubWebhookEndpoint
         CancellationToken cancellationToken)
     {
         var delivery = request.Headers[DeliveryHeader].ToString();
+        var loggedDelivery = Guid.TryParse(delivery, out var deliveryGuid) ? deliveryGuid.ToString() : "unknown";
         var signature = request.Headers[WebhookSignature.HeaderName].ToString();
         if (signature.Length == 0)
         {
-            LogRejected(logger, delivery);
+            LogRejected(logger, loggedDelivery);
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
         }
 
         var body = await ReadBodyAsync(request.Body, cancellationToken).ConfigureAwait(false);
         if (body is null)
         {
-            LogTooLarge(logger, delivery);
+            LogTooLarge(logger, loggedDelivery);
             return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
         }
 
         if (!WebhookSignature.IsValid(body, signature, options.Value.WebhookSecret))
         {
-            LogRejected(logger, delivery);
+            LogRejected(logger, loggedDelivery);
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
         }
 
@@ -61,14 +62,14 @@ public static partial class GitHubWebhookEndpoint
         }
         catch (JsonException)
         {
-            LogMalformed(logger, delivery);
+            LogMalformed(logger, loggedDelivery);
             return Results.StatusCode(StatusCodes.Status400BadRequest);
         }
 
         foreach (var signal in signals)
         {
             await signaler.SignalAsync(signal, cancellationToken).ConfigureAwait(false);
-            LogForwarded(logger, signal.Repo, signal.PrNumber, delivery);
+            LogForwarded(logger, signal.Repo, signal.PrNumber, loggedDelivery);
         }
 
         return signals.Count > 0 ? Results.StatusCode(StatusCodes.Status202Accepted) : Results.Ok();
@@ -92,7 +93,7 @@ public static partial class GitHubWebhookEndpoint
         return buffer.ToArray();
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub webhook delivery {DeliveryId} rejected: signature missing or invalid.")]
+    [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub webhook delivery {DeliveryId} rejected: signature missing or invalid.")]
     private static partial void LogRejected(ILogger logger, string deliveryId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub webhook delivery {DeliveryId} rejected: body over the size limit.")]

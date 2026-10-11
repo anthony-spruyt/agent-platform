@@ -33,7 +33,7 @@ public class GitHubWebhookIntegrationTests(AppHostFixture fixture)
                 head_sha = "0123456789abcdef0123456789abcdef01234567",
                 conclusion = "success",
                 app = new { slug = "github-actions" },
-                pull_requests = new[] { new { number = pr, head = new { repo = new { id = 9 } } } },
+                pull_requests = new[] { new { number = pr, head = new { repo = new { id = 9 } }, @base = new { repo = new { id = 9 } } } },
             },
             repository = new { id = 9, full_name = "octo/widgets" },
         });

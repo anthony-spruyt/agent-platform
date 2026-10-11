@@ -12,9 +12,11 @@ public sealed record CheckSuiteEvent(string? Action, CheckSuiteEvent.Suite? Chec
 
     public sealed record AppInfo(string? Slug);
 
-    public sealed record PullRequestInfo(int Number, HeadInfo? Head);
+    public sealed record PullRequestInfo(int Number, HeadInfo? Head, BaseInfo? Base);
 
     public sealed record HeadInfo(HeadRepositoryInfo? Repo);
+
+    public sealed record BaseInfo(HeadRepositoryInfo? Repo);
 
     public sealed record HeadRepositoryInfo(long Id);
 
@@ -41,7 +43,9 @@ public sealed record CheckSuiteEvent(string? Action, CheckSuiteEvent.Suite? Chec
 
         foreach (var pullRequest in pullRequests)
         {
-            if (pullRequest is { Number: > 0, Head.Repo: { } headRepo } && headRepo.Id == repository.Id)
+            if (pullRequest is { Number: > 0, Head.Repo: { } headRepo, Base.Repo: { } baseRepo }
+                && headRepo.Id == repository.Id
+                && baseRepo.Id == repository.Id)
             {
                 signals.Add(new CheckSuiteCompletedSignal(
                     fullName,

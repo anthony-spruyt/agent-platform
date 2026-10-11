@@ -88,6 +88,24 @@ public class CheckSuiteEventTests
     }
 
     [Fact]
+    public void APullRequestWhoseBaseIsAnotherRepository_IsDropped()
+    {
+        Assert.Empty(Extract(GitHubPayloads.CheckSuite(pullRequests: [GitHubPayloads.PullRequest(7, baseRepoId: 1)])));
+    }
+
+    [Fact]
+    public void APullRequestWithoutABaseRepository_IsDropped()
+    {
+        var body = """
+            {"action":"completed","check_suite":{"id":1,"head_branch":"renovate/foo","head_sha":"abc",
+            "pull_requests":[{"number":3,"head":{"ref":"renovate/foo","sha":"abc","repo":{"id":4242}},"base":{"ref":"main","repo":null}}]},
+            "repository":{"id":4242,"full_name":"octo/widgets"}}
+            """;
+
+        Assert.Empty(Extract(body));
+    }
+
+    [Fact]
     public void OnlyTheSameRepositoryPullRequestsOfASuiteAreForwarded()
     {
         var signals = Extract(GitHubPayloads.CheckSuite(pullRequests:
@@ -95,6 +113,7 @@ public class CheckSuiteEventTests
             GitHubPayloads.PullRequest(7),
             GitHubPayloads.PullRequest(8, headRepoId: 1),
             GitHubPayloads.PullRequest(9),
+            GitHubPayloads.PullRequest(10, baseRepoId: 1),
         ]));
 
         Assert.Equal([7, 9], signals.Select(s => s.PrNumber));
@@ -105,7 +124,7 @@ public class CheckSuiteEventTests
     {
         var body = """
             {"action":"completed","check_suite":{"id":1,"head_branch":"renovate/foo","head_sha":"abc",
-            "pull_requests":[{"number":3,"head":{"ref":"renovate/foo","sha":"abc","repo":null}}]},
+            "pull_requests":[{"number":3,"head":{"ref":"renovate/foo","sha":"abc","repo":null},"base":{"repo":{"id":4242}}}]},
             "repository":{"id":4242,"full_name":"octo/widgets"}}
             """;
 

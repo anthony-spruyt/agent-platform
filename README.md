@@ -76,12 +76,12 @@ kubectl -n temporal-system exec deploy/temporal-admintools -- temporal workflow 
 
 The Web role serves `POST /webhooks/github` on the webhook port only (`/mcp` stays on the gateway port). The handler checks the `X-Hub-Signature-256` HMAC-SHA256 over the raw body with a constant-time compare before it parses anything; a missing or wrong signature gets `401` and no body is logged. Bodies over 1 MiB get `413`.
 
-| Event                                                                                                                    | Result                                                   |
-| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| `ping`                                                                                                                   | `200`                                                    |
-| `check_suite` `completed`, branch `renovate/*` except `renovate/configure`, with pull requests whose head is in the repo | `202`, one `CheckSuiteCompleted` signal per pull request |
-| any other event or action, or a suite that fails a filter                                                                | `200`, dropped, so GitHub never redelivers               |
-| `check_suite` with a malformed body                                                                                      | `400`                                                    |
+| Event                                                                                                                              | Result                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `ping`                                                                                                                             | `200`                                                    |
+| `check_suite` `completed`, branch `renovate/*` except `renovate/configure`, with pull requests whose head and base are in the repo | `202`, one `CheckSuiteCompleted` signal per pull request |
+| any other event or action, or a suite that fails a filter                                                                          | `200`, dropped, so GitHub never redelivers               |
+| `check_suite` with a malformed body                                                                                                | `400`                                                    |
 
 A check suite from any app is forwarded, so the workflow hears about every suite that finishes. Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`, ID `renovate-triage/{owner}/{repo}/{pr}`, task queue `agent-platform`, signal `CheckSuiteCompleted` with the repository, pull request number, head sha, check suite id, app slug, conclusion and `X-GitHub-Delivery` id.
 `RenovateTriageWorkflow` is a placeholder that records the signals it receives.

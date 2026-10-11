@@ -12,11 +12,11 @@ internal static class GitHubPayloads
     public const long RepoId = 4242;
     public const string HeadSha = "0123456789abcdef0123456789abcdef01234567";
 
-    public static object PullRequest(int number, long headRepoId = RepoId) => new
+    public static object PullRequest(int number, long headRepoId = RepoId, long baseRepoId = RepoId) => new
     {
         number,
         head = new { @ref = "renovate/foo", sha = HeadSha, repo = new { id = headRepoId, name = "widgets" } },
-        @base = new { @ref = "main", sha = "base", repo = new { id = RepoId, name = "widgets" } },
+        @base = new { @ref = "main", sha = "base", repo = new { id = baseRepoId, name = "widgets" } },
     };
 
     public static string CheckSuite(

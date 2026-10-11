@@ -29,6 +29,7 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
             builder.UseSetting("GitHub:WebhookSecret", GitHubPayloads.Secret);
+            builder.UseSetting("Logging:LogLevel:Default", "Debug");
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IRenovateTriageSignaler>(_signaler);
@@ -54,6 +55,8 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
     {
         public List<string> Messages { get; } = [];
 
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
         public ILogger CreateLogger(string categoryName) => this;
 
         public IDisposable? BeginScope<TState>(TState state)
@@ -65,7 +68,9 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
         {
             lock (Messages)
             {
-                Messages.Add(formatter(state, exception));
+                var message = formatter(state, exception);
+                Messages.Add(message);
+                Entries.Add((logLevel, message));
             }
         }
 
@@ -242,6 +247,39 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
         lock (_logs.Messages)
         {
             Assert.DoesNotContain(_logs.Messages, message => message.Contains(BodyMarker, StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public async Task ARejectedDelivery_IsLoggedAtDebug()
+    {
+        var delivery = Guid.NewGuid().ToString();
+
+        using var response = await PostAsync(GitHubPayloads.CheckSuite(), "check_suite", null, delivery);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        lock (_logs.Messages)
+        {
+            var entry = Assert.Single(_logs.Entries, e => e.Message.Contains(delivery, StringComparison.Ordinal));
+            Assert.Equal(LogLevel.Debug, entry.Level);
+        }
+    }
+
+    [Theory]
+    [InlineData("forged INFO fake log line")]
+    [InlineData("not-a-guid")]
+    [InlineData("")]
+    public async Task ADeliveryIdThatIsNotAGuid_IsNotLogged(string delivery)
+    {
+        using var response = await PostAsync(GitHubPayloads.CheckSuite(), "check_suite", null, delivery);
+        using var signed = await PostSignedAsync("{not json", "check_suite", delivery);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, signed.StatusCode);
+        lock (_logs.Messages)
+        {
+            Assert.NotEmpty(_logs.Entries);
+            Assert.DoesNotContain(_logs.Entries, e => delivery.Length > 0 && e.Message.Contains(delivery, StringComparison.Ordinal));
         }
     }
 
