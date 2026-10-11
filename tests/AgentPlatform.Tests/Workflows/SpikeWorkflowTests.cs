@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Workflows;
+using AgentPlatform.Tests.Replay;
 using AgentPlatform.Tests.Support;
 using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Activities;
@@ -99,7 +100,9 @@ public class SpikeWorkflowTests
             await running.Task;
             await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
             release.SetResult();
-            return await handle.GetResultAsync();
+            var output = await handle.GetResultAsync();
+            await HistoryStore.RecordAsync(handle, "spike-happy-path");
+            return output;
         });
 
         Assert.Equal(SpikeStatus.Succeeded, result.Status);
