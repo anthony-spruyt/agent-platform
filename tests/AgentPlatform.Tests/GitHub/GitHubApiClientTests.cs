@@ -385,4 +385,127 @@ public class GitHubApiClientTests
         Assert.Empty(handler.Requests);
         Assert.Empty(tokens.Requests);
     }
+
+    private static readonly Dictionary<string, string> _pullRequestsWrite = new() { ["pull_requests"] = "write" };
+
+    [Fact]
+    public async Task ApproveAsync_PostsAnApprovingReviewPinnedToTheCommit()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"id":9,"state":"APPROVED"}"""));
+
+        await client.ApproveAsync("octo/widgets", 7, Sha, "**Auto-approved:** digest bump.", Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/repos/octo/widgets/pulls/7/reviews", request.Uri.AbsolutePath);
+        Assert.Equal("Bearer ghs_install_token", request.Authorization);
+        using var body = JsonDocument.Parse(request.Body!);
+        Assert.Equal("APPROVE", body.RootElement.GetProperty("event").GetString());
+        Assert.Equal(Sha, body.RootElement.GetProperty("commit_id").GetString());
+        Assert.Equal("**Auto-approved:** digest bump.", body.RootElement.GetProperty("body").GetString());
+        Assert.Equal(_pullRequestsWrite, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task DismissReviewAsync_PutsADismissalWithTheMessage()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"id":9,"state":"DISMISSED"}"""));
+
+        await client.DismissReviewAsync("octo/widgets", 7, 9, "A new commit needs review.", Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("/repos/octo/widgets/pulls/7/reviews/9/dismissals", request.Uri.AbsolutePath);
+        using var body = JsonDocument.Parse(request.Body!);
+        Assert.Equal("A new commit needs review.", body.RootElement.GetProperty("message").GetString());
+        Assert.Equal(_pullRequestsWrite, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task AddLabelsAsync_PostsTheLabelNames()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""[{"name":"agent/needs-review"}]"""));
+
+        await client.AddLabelsAsync("octo/widgets", 7, ["agent/needs-review"], Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/repos/octo/widgets/issues/7/labels", request.Uri.AbsolutePath);
+        using var body = JsonDocument.Parse(request.Body!);
+        Assert.Equal("agent/needs-review", Assert.Single(body.RootElement.GetProperty("labels").EnumerateArray()).GetString());
+        Assert.Equal(_pullRequestsWrite, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task ListIssueCommentsAsync_ReadsEveryPage()
+    {
+        var (client, handler, tokens) = Create(request => Page(request, 130, (from, count) =>
+            JsonSerializer.Serialize(Enumerable.Range(from, count).Select(i => new { id = i, body = $"comment {i}", user = new { login = "skynet-rw[bot]" } }))));
+
+        var comments = await client.ListIssueCommentsAsync("octo/widgets", 7, Ct);
+
+        Assert.Equal(130, comments.Count);
+        Assert.Equal(new GitHubIssueComment(1, "skynet-rw[bot]", "comment 1"), comments[0]);
+        Assert.All(handler.Requests, r => Assert.Equal("/repos/octo/widgets/issues/7/comments", r.Uri.AbsolutePath));
+        Assert.Equal(new Dictionary<string, string> { ["pull_requests"] = "read" }, tokens.Requests[0].Permissions);
+    }
+
+    [Fact]
+    public async Task CreateIssueCommentAsync_PostsTheBodyAndReturnsTheId()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"id":55}""", HttpStatusCode.Created));
+
+        var id = await client.CreateIssueCommentAsync("octo/widgets", 7, "hello", Ct);
+
+        Assert.Equal(55, id);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/repos/octo/widgets/issues/7/comments", request.Uri.AbsolutePath);
+        using var body = JsonDocument.Parse(request.Body!);
+        Assert.Equal("hello", body.RootElement.GetProperty("body").GetString());
+        Assert.Equal(_pullRequestsWrite, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task UpdateIssueCommentAsync_PatchesTheComment()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("""{"id":55}"""));
+
+        await client.UpdateIssueCommentAsync("octo/widgets", 55, "edited", Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        Assert.Equal("/repos/octo/widgets/issues/comments/55", request.Uri.AbsolutePath);
+        using var body = JsonDocument.Parse(request.Body!);
+        Assert.Equal("edited", body.RootElement.GetProperty("body").GetString());
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task AWriteThatFails_RaisesAnExceptionWithTheStatusCode(HttpStatusCode status)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"message":"no"}""", status));
+
+        var ex = await Assert.ThrowsAsync<GitHubApiException>(() => client.AddLabelsAsync("octo/widgets", 7, ["x"], Ct));
+
+        Assert.Equal(status, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task InvalidWriteArguments_AreRejectedBeforeAnyRequest()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.ApproveAsync("octo/widgets", 7, "../x", "b", Ct));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.ApproveAsync("octo/widgets", 0, Sha, "b", Ct));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.DismissReviewAsync("octo/widgets", 7, 0, "m", Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.AddLabelsAsync("octo/widgets", 7, [], Ct));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.UpdateIssueCommentAsync("octo/widgets", 0, "b", Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateIssueCommentAsync("not-a-repo", 7, "b", Ct));
+
+        Assert.Empty(handler.Requests);
+        Assert.Empty(tokens.Requests);
+    }
 }

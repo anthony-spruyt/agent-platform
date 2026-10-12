@@ -36,7 +36,7 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `AgentPods:ClusterReadServiceAccountName` | unset                                                                 | Worker role. Required to run the `cluster-read` tier                                                                                                        |
 | `LiteLlm:BaseUrl`                         | `http://litellm.litellm.svc.cluster.local:4000`                       | Worker role. Where the Jev (`/typesafe`) pass-through is called; an absolute http or https URL                                                              |
 | `LiteLlm:ApiKey`                          | none, required                                                        | Worker role. The LiteLLM key the Jev call authenticates with                                                                                                |
-| `RenovateTriage:Mode`                     | `Shadow`                                                              | Worker role. `Shadow` records verdicts and writes nothing to GitHub; no other mode exists yet                                                               |
+| `RenovateTriage:Mode`                     | `Shadow`                                                              | Worker role. `Shadow` records verdicts and writes nothing to GitHub; `Live` also approves, labels and comments as the App. Anything else fails startup      |
 | `ConnectionStrings:rundata`               | none, required                                                        | Worker and Migrate roles. The Npgsql connection string of the run-data database                                                                             |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`             | unset                                                                 | Enables the OTLP exporter when set                                                                                                                          |
 | `ASPNETCORE_HTTP_PORTS`                   | `8080`                                                                | Image default; the Web deployment sets `8080;8081`                                                                                                          |
@@ -89,31 +89,77 @@ The Web role serves `POST /webhooks/github` on the webhook port only (`/mcp` sta
 A check suite from any app is forwarded, so the workflow hears about every suite that finishes. Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`, ID `renovate-triage/{owner}/{repo}/{pr}`, task queue `agent-platform`, signal `CheckSuiteCompleted` with the repository, pull request number, head sha, check suite id, app slug, conclusion and `X-GitHub-Delivery` id.
 `RenovateTriageWorkflow` receives these signals; see Renovate triage below.
 
-The Worker role reads GitHub through `IGitHubApiClient`: pull request, all check runs of a sha, reviews and labels, all paged, read-only. Each call mints an installation token for one repository with only the permission that call needs (`pull_requests: read` or `checks: read`), authenticated by a short-lived App JWT signed with `GitHub:PrivateKey`. The installation is looked up per repository, and
-a token is reused until five minutes before it expires.
+The Worker role talks to GitHub through `IGitHubApiClient`. Reads: pull request, all check runs and suites of a sha, commits, files, reviews, labels and issue comments, all paged. Writes, used only by the `Live` triage path: an approving review pinned to a commit, dismissing a review, adding labels, and creating or editing an issue comment. Each call mints an installation token for one repository
+with only the permission that call needs (`pull_requests: read` or `write`, or `checks: read`), authenticated by a short-lived App JWT signed with `GitHub:PrivateKey`. The installation is looked up per repository, and a token is reused until five minutes before it expires.
 
 ## Renovate triage
 
-`RenovateTriageWorkflow` judges one Renovate pull request per workflow ID. Each pass runs three activities on the `agent-platform` queue:
+`RenovateTriageWorkflow` judges one Renovate pull request per workflow ID, for repositories owned by `anthony-spruyt` only (intake drops any other owner, and `Assess` and `Apply` refuse it). Each pass runs these activities on the `agent-platform` queue:
 
-- `Assess` reads the pull request from GitHub and applies the rules below. It returns a skip, an earlier verdict for the head sha, a decision, `Pending` (CI still running) or a request to ask Jev.
-- `Judge` reads the pull request files and sends the pull request body and the file diff to Jev in one call (the LiteLLM `/typesafe` pass-through, each capped at 32 KiB; lock files come last in the diff, and files without a patch are listed by name) and applies the answers. It re-reads the pull request first, so a moved head returns without a verdict.
-- `RecordVerdict` stores the verdict in `renovate_triage_verdicts`, once per pull request and head sha.
+- `Assess` reads the pull request from GitHub and applies the rules below. It returns a skip, an earlier verdict for the head sha, a decision, `Pending` (CI still running) or a request to ask Jev. Every result carries the mode `Assess` ran in.
+- `Judge` reads the pull request files and sends the pull request body and the file diff to Jev in one call (the LiteLLM `/typesafe` pass-through, each capped at 32 KiB; lock files come last in the diff, and files without a patch are listed by name) and applies the answers and the bump-type guard. It re-reads the pull request first, so a moved head returns without a verdict. It has its own retry
+  options: three tries over about 15 minutes. When Jev still fails, the workflow records `needs review` with reason `jev-error`.
+- `RecordVerdict` stores the verdict in `renovate_triage_verdicts`, once per pull request, head sha and mode.
+- `Apply` writes the verdict to GitHub. It runs only in `Live` mode, after `RecordVerdict`.
 
 The workflow waits for all CI: while `Assess` returns `Pending` it waits for the next `CheckSuiteCompleted` signal, for at most two hours. When the two hours end it runs `Assess` once more and records `ci-timeout` only if CI is still pending. A head sha that differs from the one judged starts a new run with the same input.
 
-In `Shadow` mode the verdict is only written to the database; nothing is written to GitHub. The live path (n8n, acting as the triage App) still runs beside it and approves or labels the pull request while CI runs, so `Shadow` ignores its output in rules 1 to 3 (marked below); otherwise every pull request would already be skipped when CI is complete.
+### Modes
 
-Rules, in order; the first that applies decides:
+Each `Assess` pass returns the mode it ran in, and the workflow passes that mode to `RecordVerdict` and `Apply`, so one verdict is never recorded in one mode and written in another when the configuration changes under a run. `Apply` also refuses to write when the configured mode is not `Live`.
 
-1. The pull request is not open, or its head or base is in another repository: skipped. In `Shadow` mode a merged pull request is not skipped (Mergify may merge it before CI is complete); one closed without merging still is.
+- `Shadow` (default): the verdict is only written to the database; nothing is written to GitHub. The existing live path (n8n, acting as the triage App) can still run beside it and approves or labels the pull request while CI runs, so `Shadow` ignores its output in rules 1 to 3 (marked below); otherwise every pull request would already be skipped when CI is complete.
+- `Live`: the rules below apply as written, and `Apply` writes the verdict as the triage App (see Writes).
+
+### Rules
+
+In order; the first that applies decides:
+
+1. The repository is not owned by `anthony-spruyt`, the pull request is not open, or its head or base is in another repository: skipped. In `Shadow` mode a merged pull request is not skipped (Mergify may merge it before CI is complete); one closed without merging still is.
 2. The author is not Renovate, or the pull request has an `agent/needs-review`, `agent/revert` or `blocked` label: skipped. In `Shadow` mode the `agent/needs-review` and `agent/auto-approved` labels are ignored.
 3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved. In `Shadow` mode reviews by the triage App are ignored.
-4. A verdict already exists for the head sha: nothing to do.
+4. A verdict already exists for the head sha and mode: nothing to do. In `Live` only a verdict that `Apply` has written counts. A `Live` verdict that was recorded but not applied is applied again on the next signal, without asking Jev again; for it the triage App's own approval and the `agent/*` labels are ignored, and `blocked`, `agent/revert` and human approvals still skip.
 5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
-6. CI must be done. All check runs of the sha and all check suites are read; a run or suite that has not completed, or no check runs at all, is pending. Mergify checks are ignored. A failed check: needs review, `ci-failed`.
-7. Jev answers a breaking-change score, a bump type and a changelog score. It judges the bump type itself from the old and new versions in the diff or the body, without trusting Renovate's labels. A breaking score of 0.66 or more, or a major, calver or other type: needs review. Digest approves. An answer that is none of the known types: needs review, `unknown-bump`.
-8. A patch or minor on an allowlisted branch approves; any other needs a changelog score of 0.7 or more. A Jev failure: needs review, `jev-error`.
+6. CI must be done. All check runs of the sha and all check suites are read; a run or suite that has not completed, or no check runs at all, is pending. Mergify checks are ignored. A failed check: needs review, `ci-failed`. The branch matching the high-risk list: needs review, `high-risk`.
+7. Jev answers a breaking-change score, a bump type and a changelog score. It judges the bump type itself from the old and new versions in the diff or the body, without trusting Renovate's labels. A breaking score of 0.66 or more, or a major, calver or other type: needs review. An answer that is none of the known types: needs review, `unknown-bump`.
+8. The bump-type guard (below) checks Jev's type against the diff.
+9. A patch or minor on an allowlisted branch approves; any other needs a changelog score of 0.7 or more. A Jev failure: needs review, `jev-error`.
+
+### Bump-type guard
+
+Jev stays the judge; the code only guards the diff.
+
+- A `digest` answer approves only when every changed line pair in the pull request diff differs in `sha256` or digest strings alone. Otherwise: needs review, `digest-mismatch`.
+- For `patch` and `minor`, the old and new versions are read from the `-` and `+` line pairs of the diff (semver-like versions). If any pair disagrees with Jev's type: needs review, `bump-type-mismatch`. When no pair is found, Jev's answer stands.
+- The parsed versions also fill the comment texts; a comment leaves them out when none were parsed.
+
+### Writes
+
+`Apply` writes with an installation token for the pull request's repository. It first re-reads the pull request and writes nothing, only logging, when the head sha is not the judged one or the pull request is not open. It has its own retry options (up to 12 tries over two hours). Errors `400`, `404`, `410` and `422` are not retried; rate limits (`403` or `429`) and `5xx` are.
+
+- Approve: an `APPROVE` review pinned to the judged commit (skipped when the App already approved that sha) and the label `agent/auto-approved`. If a sticky comment from an earlier needs-review exists, it is edited to say the new commit was auto-approved.
+- Needs review: the label `agent/needs-review`, the verdict comment, and a dismissal of the App's approvals on any other commit.
+- One sticky comment per pull request, found by the hidden marker `<!-- agent-platform:renovate-triage -->` on a comment by the App. It is created once and edited for each new head sha, never duplicated.
+- When the writes are done the verdict row gets `applied_at`.
+
+The comments:
+
+| Reason                 | Text                                                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ci-failed`            | **Needs review:** CI failed on `<short sha>`. Failed: `<check names, linked>`.                                    |
+| `high-risk`            | **Needs review:** `<matched term>` is on the high-risk list. These always get a human look.                       |
+| `breaking`             | **Needs review:** likely breaking changes (Jev score `<x>`).                                                      |
+| `major-bump`           | **Needs review:** major bump, `<old>` -> `<new>`.                                                                 |
+| `calver-bump`          | **Needs review:** calendar-versioned bump, `<old>` -> `<new>`. The version can't show whether it breaks anything. |
+| `other-bump`           | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
+| `unknown-bump`         | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
+| `no-changelog`         | **Needs review:** no changelog found for this bump.                                                               |
+| `jev-error`            | **Needs review:** the triage check couldn't run (Jev error).                                                      |
+| `bump-type-mismatch`   | **Needs review:** the versions in the diff (`<old>` -> `<new>`) don't match the bump type Jev picked (`<type>`).  |
+| `digest-mismatch`      | **Needs review:** marked as a digest bump, but more than a digest changed.                                        |
+| `non-renovate-commit`  | **Needs review:** the PR has commits that Renovate didn't make.                                                   |
+| `ci-timeout`           | **Needs review:** CI didn't finish within two hours.                                                              |
+| Approved (review body) | **Auto-approved:** digest bump, `<patch or minor>` bump with changelog, or allowlisted.                           |
 
 ## Run data
 
@@ -123,7 +169,7 @@ Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF C
 | -------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `runs`                     | workflow run          | `workflow_id` + `workflow_run_id` (unique), `workflow_type`, `status`, `input_event` and `context` (jsonb), `prompt_hash`, `model`, timings, token and cost totals, nullable `outcome` fields for later ground truth |
 | `run_steps`                | step of a run         | `run_id` + `seq` (unique), `name`, `rung` (`Rule`, `Jev`, `Claude`), `input` and `output` (jsonb), `confidence`, `stop_reason`, `prompt_hash`, `model`, tokens, `cost_usd`, timings                                  |
-| `renovate_triage_verdicts` | pull request head sha | `repo` + `pr_number` + `head_sha` (unique), `verdict` (`Approve` or `NeedsReview`), `reasons` (jsonb), `comment`, `mode`, `created_at`                                                                               |
+| `renovate_triage_verdicts` | pull request head sha | `repo` + `pr_number` + `head_sha` + `mode` (unique), `verdict` (`Approve` or `NeedsReview`), `reasons` (jsonb), `comment`, `created_at`, `applied_at` (set once a `Live` verdict is on GitHub)                       |
 | `prompts`                  | distinct prompt       | `hash` (SHA-256 of the body, primary key), `name`, `body`                                                                                                                                                            |
 
 Only activities write to the database, so workflow code stays deterministic. `BeginRun`, `RecordStep` and `CompleteRun` run on the `agent-platform` queue and are idempotent on the unique keys above, so a retried activity never duplicates a row. A failed or cancelled run is completed as `Failed`.
@@ -171,10 +217,10 @@ dotnet format AgentPlatform.slnx --verify-no-changes
 The workflow tests run against Temporal's time-skipping test server, which the SDK downloads on first use.
 
 The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
-time-skipping tests.
+time-skipping tests. The `renovate-triage-v141-*` histories were captured from release 1.4.1 while a run waited for CI or for Jev; no test records them, so they stay as committed and prove that runs started by 1.4.1 replay on the current code. Every workflow change must sit behind `Workflow.Patched` (`renovate-triage-jev-retry-v1`, `renovate-triage-live-v1`).
 
-The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row, check that the Migrate role finished with exit code 0 and post a signed `check_suite` delivery to the Web role to see the triage workflow schedule its `Assess` activity on the Worker. They need a container runtime,
-which GitHub's ubuntu runners have; with Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.
+The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row, check that the Migrate role finished with exit code 0 and post a signed `check_suite` delivery to the Web role to see the triage workflow schedule its `Assess` activity on the Worker. They need a container
+runtime, which GitHub's ubuntu runners have; with Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.
 
 ## Image
 

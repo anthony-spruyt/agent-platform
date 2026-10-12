@@ -19,4 +19,6 @@ public sealed class RenovateTriageVerdict
     public TriageMode Mode { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    public DateTimeOffset? AppliedAt { get; set; }
 }

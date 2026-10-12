@@ -15,8 +15,8 @@ namespace AgentPlatform.Tests.Workflows;
 
 public class RenovateTriageWorkflowTests
 {
-    private const string Repo = "octo/widgets";
-    private const string WorkflowId = "renovate-triage/octo/widgets/7";
+    private const string Repo = "anthony-spruyt/widgets";
+    private const string WorkflowId = "renovate-triage/anthony-spruyt/widgets/7";
     private const string ShaA = FakeGitHubApi.Sha;
     private const string ShaB = "fedcba9876543210fedcba9876543210fedcba98";
 
@@ -29,14 +29,19 @@ public class RenovateTriageWorkflowTests
         public FakeJev Jev { get; } = new();
 
         public InMemoryRunData Data { get; } = InMemoryRunData.Create();
+
+        public TriageMode Mode { get; init; } = TriageMode.Shadow;
     }
 
     private static CheckSuiteCompletedSignal Signal(string sha = ShaA, long suite = 1) =>
         new(Repo, 7, sha, suite, "github-actions", "success", $"d-{suite}");
 
-    private static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, Rig rig, Func<Task<T>> body)
+    private static Task<T> InWorkerAsync<T>(WorkflowEnvironment env, Rig rig, Func<Task<T>> body) =>
+        InWorkerAsync(env, rig, new RenovateTriageOptions { Mode = rig.Mode }, body);
+
+    private static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, Rig rig, RenovateTriageOptions options, Func<Task<T>> body)
     {
-        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, Options.Create(new RenovateTriageOptions()));
+        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, Options.Create(options));
         using var worker = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
@@ -106,7 +111,7 @@ public class RenovateTriageWorkflowTests
         Assert.Equal((Repo, 7, ShaA), (verdict.Repo, verdict.PrNumber, verdict.HeadSha));
         Assert.Equal(TriageVerdict.Approve, verdict.Verdict);
         Assert.Equal(TriageMode.Shadow, verdict.Mode);
-        Assert.Null(verdict.Comment);
+        Assert.Equal("**Auto-approved:** patch bump with changelog.", verdict.Comment);
     }
 
     [Fact]
@@ -146,7 +151,7 @@ public class RenovateTriageWorkflowTests
 
         Assert.Equal(TriageVerdict.NeedsReview, result.Verdict);
         var verdict = Assert.Single(await VerdictsAsync(rig));
-        Assert.Equal("Flagged for review as CI failed.", verdict.Comment);
+        Assert.Equal(TriageRules.CiFailedDecision(Repo, ShaA, [rig.Github.Checks[1]]).Comment, verdict.Comment);
         Assert.Empty(rig.Jev.Bodies);
     }
 
@@ -163,12 +168,12 @@ public class RenovateTriageWorkflowTests
             return await RunToResultAsync(handle);
         });
 
-        Assert.Equal("This is a high risk dependency bump and requires review.", Assert.Single(await VerdictsAsync(rig)).Comment);
+        Assert.Equal(TriageRules.HighRiskDecision("cilium").Comment, Assert.Single(await VerdictsAsync(rig)).Comment);
         Assert.Empty(rig.Jev.Bodies);
     }
 
     [Fact]
-    public async Task AJevError_IsNeedsReviewWithoutAComment()
+    public async Task AJevError_IsNeedsReviewWithTheJevErrorComment()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
@@ -181,7 +186,7 @@ public class RenovateTriageWorkflowTests
         });
 
         Assert.Equal(TriageVerdict.NeedsReview, result.Verdict);
-        Assert.Null(Assert.Single(await VerdictsAsync(rig)).Comment);
+        Assert.Equal(TriageRules.JevErrorComment, Assert.Single(await VerdictsAsync(rig)).Comment);
     }
 
     [Fact]
@@ -207,7 +212,7 @@ public class RenovateTriageWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
-        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, TriageRules.CiFailedDecision(), TriageMode.Shadow, Ct);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, TriageRules.CiFailedDecision(Repo, ShaA, []), TriageMode.Shadow, Ct);
 
         var result = await InWorkerAsync(env, rig, async () =>
         {
@@ -257,7 +262,7 @@ public class RenovateTriageWorkflowTests
 
         Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.CiTimeout, TriageVerdict.NeedsReview), result);
         var verdict = Assert.Single(await VerdictsAsync(rig));
-        Assert.Null(verdict.Comment);
+        Assert.Equal(TriageRules.CiTimeoutComment, verdict.Comment);
         Assert.Empty(rig.Jev.Bodies);
         Assert.Equal(2, rig.Github.Calls.Count(c => c.StartsWith("checks", StringComparison.Ordinal)));
     }
@@ -314,7 +319,7 @@ public class RenovateTriageWorkflowTests
         });
 
         Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.NonRenovateCommit, TriageVerdict.NeedsReview), result);
-        Assert.Equal("This dependency bump has commits not made by Renovate and requires review.", Assert.Single(await VerdictsAsync(rig)).Comment);
+        Assert.Equal(TriageRules.NonRenovateCommitComment, Assert.Single(await VerdictsAsync(rig)).Comment);
         Assert.Empty(rig.Jev.Bodies);
     }
 
@@ -466,4 +471,200 @@ public class RenovateTriageWorkflowTests
         Assert.Equal(ShaB, result.HeadSha);
         Assert.Equal(ShaB, Assert.Single(await VerdictsAsync(rig)).HeadSha);
     }
+
+    [Fact]
+    public async Task ShadowMode_NeverWritesToGitHub()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var approved = new Rig();
+        var flagged = new Rig();
+        flagged.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+
+        await InWorkerAsync(env, approved, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+        await InWorkerAsync(env, flagged, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(TriageVerdict.Approve, Assert.Single(await VerdictsAsync(approved)).Verdict);
+        Assert.Equal(TriageVerdict.NeedsReview, Assert.Single(await VerdictsAsync(flagged)).Verdict);
+        Assert.Empty(approved.Github.Writes);
+        Assert.Empty(flagged.Github.Writes);
+        Assert.All(await VerdictsAsync(approved), v => Assert.Null(v.AppliedAt));
+    }
+
+    [Fact]
+    public async Task LiveMode_ApprovesTheJudgedCommit_LabelsIt_AndMarksTheVerdictApplied()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle, "renovate-triage-live-approve");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), result);
+        Assert.Equal([(ShaA, "**Auto-approved:** patch bump with changelog.")], rig.Github.Approvals);
+        Assert.Equal([TriageRules.AutoApprovedLabel], rig.Github.AddedLabels);
+        var verdict = Assert.Single(await VerdictsAsync(rig));
+        Assert.Equal(TriageMode.Live, verdict.Mode);
+        Assert.NotNull(verdict.AppliedAt);
+        await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+        var run = await db.Runs.Include(r => r.Steps).SingleAsync(Ct);
+        Assert.Equal(["assess", "jev", "verdict", "apply"], run.Steps.OrderBy(s => s.Seq).Select(s => s.Name));
+    }
+
+    [Fact]
+    public async Task LiveMode_FlagsAFailedPr_WithTheNeedsReviewLabelAndAStickyComment()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+
+        await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle, "renovate-triage-live-needs-review");
+        });
+
+        Assert.Empty(rig.Github.Approvals);
+        Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+        var comment = Assert.Single(rig.Github.Comments);
+        Assert.StartsWith(TriageRules.StickyMarker, comment.Body, StringComparison.Ordinal);
+        Assert.Contains("CI failed on `0123456`", comment.Body, StringComparison.Ordinal);
+        Assert.NotNull(Assert.Single(await VerdictsAsync(rig)).AppliedAt);
+    }
+
+    [Fact]
+    public async Task LiveMode_WhenTheHeadMovedBeforeTheWrite_WritesNothingAndLeavesTheVerdictUnapplied()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+        rig.Github.OnPullRequestRead = () =>
+        {
+            if (rig.Github.Calls.Count(c => c == "pr") == 2)
+            {
+                rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: ShaB);
+            }
+        };
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(RenovateTriageOutcome.Judged, result.Outcome);
+        Assert.Empty(rig.Github.Writes);
+        Assert.Null(Assert.Single(await VerdictsAsync(rig)).AppliedAt);
+    }
+
+    [Fact]
+    public async Task LiveMode_AVerdictThatWasNotApplied_IsAppliedOnTheNextSignal()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.WriteFailure = new GitHubApiException("unprocessable", System.Net.HttpStatusCode.UnprocessableEntity);
+
+        await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => RunToResultAsync(handle));
+            Assert.Null(Assert.Single(await VerdictsAsync(rig)).AppliedAt);
+
+            rig.Github.WriteFailure = null;
+            var second = await StartAsync(env, Signal(suite: 2));
+            return await RunToResultAsync(second);
+        });
+
+        var verdict = Assert.Single(await VerdictsAsync(rig));
+        Assert.NotNull(verdict.AppliedAt);
+        Assert.Equal([ShaA], rig.Github.Approvals.Select(a => a.CommitId));
+        Assert.Single(rig.Jev.Bodies);
+    }
+
+    [Fact]
+    public async Task AnAppliedLiveVerdict_IsNotWrittenAgainOnALaterSignal()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+
+        await InWorkerAsync(env, rig, async () =>
+        {
+            await RunToResultAsync(await StartAsync(env, Signal()));
+            rig.Github.Writes.Clear();
+            return await RunToResultAsync(await StartAsync(env, Signal(suite: 2)));
+        });
+
+        Assert.Empty(rig.Github.Writes);
+        Assert.Single(await VerdictsAsync(rig));
+    }
+
+    [Fact]
+    public async Task TheModeIsPinnedAtAssess_ALaterSwitchToLiveDoesNotWriteInThatRun()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Shadow };
+        var options = new RenovateTriageOptions { Mode = TriageMode.Shadow };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+        rig.Github.OnPullRequestRead = () => options.Mode = TriageMode.Live;
+
+        var result = await InWorkerAsync(env, rig, options, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(RenovateTriageOutcome.Judged, result.Outcome);
+        Assert.Empty(rig.Github.Writes);
+        var verdict = Assert.Single(await VerdictsAsync(rig));
+        Assert.Equal(TriageMode.Shadow, verdict.Mode);
+        Assert.Null(verdict.AppliedAt);
+    }
+
+    [Fact]
+    public async Task TheModeIsPinnedAtAssess_ALaterSwitchToShadowDoesNotWriteInThatRun()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        var options = new RenovateTriageOptions { Mode = TriageMode.Live };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+        rig.Github.OnPullRequestRead = () => options.Mode = TriageMode.Shadow;
+
+        await InWorkerAsync(env, rig, options, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Empty(rig.Github.Writes);
+        var verdict = Assert.Single(await VerdictsAsync(rig));
+        Assert.Equal(TriageMode.Live, verdict.Mode);
+        Assert.Null(verdict.AppliedAt);
+    }
+
+    [Fact]
+    public async Task AJevError_IsRetriedThreeTimes_ThenBecomesNeedsReview()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Jev.Failure = new JevException("Jev answered with status 502.");
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle, "renovate-triage-jev-error-retried");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.JevError, TriageVerdict.NeedsReview), result);
+        Assert.Equal(3, rig.Jev.Bodies.Count);
+        await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+        var run = await db.Runs.Include(r => r.Steps).SingleAsync(Ct);
+        Assert.Equal("error", run.Steps.Single(s => s.Name == "jev").StopReason);
+        Assert.Equal(RunStatus.Succeeded, run.Status);
+    }
+
+    [Fact]
+    public async Task AJevErrorThatClears_IsJudgedOnTheRetry()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Jev.Failure = new JevException("Jev answered with status 502.");
+        rig.Jev.FailuresBeforeAnswer = 1;
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(TriageRules.ChangelogPresent, result.Reason);
+        Assert.Equal(2, rig.Jev.Bodies.Count);
+    }
+
 }
