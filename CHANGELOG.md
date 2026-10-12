@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.2.1...v1.3.0) (2026-10-12)
+
+
+### Features
+
+* add GitHub webhook intake and App client ([#21](https://github.com/anthony-spruyt/agent-platform/issues/21)) ([278f0bf](https://github.com/anthony-spruyt/agent-platform/commit/278f0bf8843bc1f179b44cb42ea904a18758e4a9))
+
 ## [1.2.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.2.0...v1.2.1) (2026-10-11)
 
 
