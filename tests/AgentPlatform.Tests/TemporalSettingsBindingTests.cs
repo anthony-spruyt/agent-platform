@@ -1,5 +1,6 @@
 using AgentPlatform.Host;
 using AgentPlatform.Host.Workflows;
+using AgentPlatform.Tests.Support;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -13,6 +14,7 @@ public class TemporalSettingsBindingTests
     {
         settings["AgentGateway:SessionTokenKey"] = "0123456789abcdef0123456789abcdef";
         settings["ConnectionStrings:rundata"] = "Host=localhost;Database=agent_platform";
+        GitHubPayloads.AddWorkerSettings(settings);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddLogging();

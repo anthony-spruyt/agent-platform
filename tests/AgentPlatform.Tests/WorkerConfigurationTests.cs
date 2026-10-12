@@ -1,6 +1,7 @@
 using AgentPlatform.Host;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
+using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,6 +19,7 @@ public class WorkerConfigurationTests
     private static ServiceProvider Build(Dictionary<string, string?> settings)
     {
         settings.TryAdd("ConnectionStrings:rundata", Connection);
+        GitHubPayloads.AddWorkerSettings(settings);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection();
         services.AddLogging();
