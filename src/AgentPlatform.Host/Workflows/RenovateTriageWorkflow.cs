@@ -74,6 +74,7 @@ public class RenovateTriageWorkflow
         var seq = 0;
         string? judgedSha = null;
         DateTime? pendingSince = null;
+        var timedOut = false;
 
         while (true)
         {
@@ -102,9 +103,15 @@ public class RenovateTriageWorkflow
                     return new RenovateTriageResult(RenovateTriageOutcome.AlreadyJudged, assess.HeadSha, null, null);
                 case AssessStatus.Pending:
                     pendingSince ??= Workflow.UtcNow;
-                    var remaining = pendingSince.Value + CiTimeout - Workflow.UtcNow;
-                    if (remaining > TimeSpan.Zero && await Workflow.WaitConditionAsync(() => _signalCount > seen, remaining))
+                    if (!timedOut)
                     {
+                        var remaining = pendingSince.Value + CiTimeout - Workflow.UtcNow;
+                        if (remaining > TimeSpan.Zero && await Workflow.WaitConditionAsync(() => _signalCount > seen, remaining))
+                        {
+                            continue;
+                        }
+
+                        timedOut = true;
                         continue;
                     }
 
@@ -118,7 +125,7 @@ public class RenovateTriageWorkflow
                     var judge = await Workflow.ExecuteActivityAsync(
                         (RenovateTriageActivities activities) => activities.JudgeAsync(new JudgeInput(input.Repo, input.PrNumber, assess.HeadSha)),
                         _activityOptions);
-                    await RecordStepAsync(run, ++seq, "jev", LadderRung.Jev, judge.HeadMoved ? "head_moved" : judge.JevError is null ? "answered" : "error", stepStarted, judge);
+                    await RecordStepAsync(run, ++seq, "jev", LadderRung.Jev, JudgeStopReason(judge), stepStarted, judge);
                     if (judge.HeadMoved)
                     {
                         continue;
@@ -131,6 +138,14 @@ public class RenovateTriageWorkflow
             return await RecordVerdictAsync(input, run, ++seq, assess.HeadSha, decision!);
         }
     }
+
+    private static string JudgeStopReason(JudgeResult judge) => judge switch
+    {
+        { HeadMoved: true } => "head_moved",
+        { JevError: not null } => "error",
+        { Jev: null } => "skipped",
+        _ => "answered",
+    };
 
     private static async Task<RenovateTriageResult> RecordVerdictAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageDecision decision)
     {

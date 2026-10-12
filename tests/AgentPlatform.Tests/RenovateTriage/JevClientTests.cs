@@ -1,9 +1,12 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Options;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Tests.RenovateTriage;
 
@@ -135,5 +138,95 @@ public class JevClientTests
         var (client, _) = Create(_ => throw new TaskCanceledException());
 
         await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+    }
+
+    [Fact]
+    public async Task Ask_TurnsAnyOtherSendFailureIntoAJevFailure()
+    {
+        var (client, _) = Create(_ => throw new InvalidOperationException("handler broke"));
+
+        var ex = await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+
+        Assert.IsType<InvalidOperationException>(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task Ask_TurnsAResilienceTimeoutIntoAJevFailure()
+    {
+        var (client, _) = Create(_ => throw new Polly.Timeout.TimeoutRejectedException("attempt timed out"));
+
+        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+    }
+
+    [Fact]
+    public async Task Ask_LeavesAPrBodyUnderTheCapUntouched()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+        var body = new string('a', JevClient.MaxPrBodyBytes);
+
+        await client.AskAsync(body, Ct);
+
+        Assert.Equal(body, (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_body"]);
+    }
+
+    [Fact]
+    public async Task Ask_CutsAnOversizedPrBodyAtTheCap_OnAUtf8Boundary()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+        var body = "head" + new string('\u20ac', 20_000);
+
+        await client.AskAsync(body, Ct);
+
+        var sent = (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_body"];
+        Assert.NotNull(sent);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(sent) <= JevClient.MaxPrBodyBytes);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(sent) > JevClient.MaxPrBodyBytes - 4);
+        Assert.StartsWith("head", sent, StringComparison.Ordinal);
+        Assert.DoesNotContain('\ufffd', sent);
+        Assert.StartsWith(sent, body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Ask_CutsAnOversizedAsciiPrBodyExactlyAtTheCap()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+
+        await client.AskAsync(new string('a', JevClient.MaxPrBodyBytes + 500), Ct);
+
+        var sent = (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_body"];
+        Assert.Equal(JevClient.MaxPrBodyBytes, sent!.Length);
+    }
+
+    [Fact]
+    public async Task TheClientFromTheRealServiceCollection_WaitsForASlowJevAndSendsItOnce()
+    {
+        var attempts = 0;
+        var slow = new DelegatingStub(async (_, ct) =>
+        {
+            Interlocked.Increment(ref attempts);
+            await Task.Delay(TimeSpan.FromSeconds(12), ct);
+            return StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json"));
+        });
+        var builder = Microsoft.Extensions.Hosting.Host.CreateEmptyApplicationBuilder(null);
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LiteLlm:BaseUrl"] = "http://litellm.example.test:4000",
+            ["LiteLlm:ApiKey"] = "sk-test-virtual",
+        });
+        builder.AddServiceDefaults();
+        builder.Services.AddRenovateTriage(builder.Configuration);
+        builder.Services.AddHttpClient<IJevClient, JevClient>().ConfigurePrimaryHttpMessageHandler(() => slow);
+        using var provider = builder.Services.BuildServiceProvider();
+
+        var answers = await provider.GetRequiredService<IJevClient>().AskAsync("notes", Ct);
+
+        Assert.Equal(new JevAnswers(0.04, "patch", 0.78), answers);
+        Assert.Equal(1, attempts);
+    }
+
+    private sealed class DelegatingStub(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            send(request, cancellationToken);
     }
 }

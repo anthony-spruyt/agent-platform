@@ -6,7 +6,6 @@ namespace AgentPlatform.Host.RenovateTriage;
 public enum TriageMode
 {
     Shadow,
-    Live,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<AssessStatus>))]

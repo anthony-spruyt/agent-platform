@@ -16,8 +16,6 @@ public sealed class RenovateTriageActivities(
     public const string JudgeName = "RenovateTriageJudge";
     public const string RecordVerdictName = "RenovateTriageRecordVerdict";
 
-    public const string NotOpen = "not-open";
-
     [Activity(AssessName)]
     public Task<AssessResult> AssessAsync(AssessInput input) =>
         GuardAsync(async () =>
@@ -27,14 +25,14 @@ public sealed class RenovateTriageActivities(
             var pr = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             var sha = pr.HeadSha;
 
-            var skip = pr.State != "open" || pr.Merged ? NotOpen : TriageRules.SkipReason(pr.AuthorId, pr.Labels);
+            var skip = SkipReason(input.Repo, pr);
             if (skip is not null)
             {
                 return new AssessResult(AssessStatus.Skipped, sha, skip);
             }
 
             var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            if (TriageRules.IsApproved(reviews))
+            if (TriageRules.IsApproved(reviews, sha))
             {
                 return new AssessResult(AssessStatus.Skipped, sha, TriageRules.AlreadyApproved);
             }
@@ -44,8 +42,15 @@ public sealed class RenovateTriageActivities(
                 return new AssessResult(AssessStatus.AlreadyJudged, sha);
             }
 
+            var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+            if (!TriageRules.AreAllRenovateCommits(commits))
+            {
+                return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.NonRenovateCommitDecision());
+            }
+
             var checks = await github.ListCheckRunsAsync(input.Repo, sha, cancellationToken).ConfigureAwait(false);
-            return TriageRules.AssessChecks(checks) switch
+            var suites = await github.ListCheckSuitesAsync(input.Repo, sha, cancellationToken).ConfigureAwait(false);
+            return TriageRules.AssessChecks(checks, suites) switch
             {
                 CiState.Pending => new AssessResult(AssessStatus.Pending, sha),
                 CiState.Failed => new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.CiFailedDecision()),
@@ -67,15 +72,27 @@ public sealed class RenovateTriageActivities(
                 return new JudgeResult(HeadMoved: true);
             }
 
+            var codeType = TriageRules.UpdateTypeFromBody(pr.Body);
+            if (codeType is null)
+            {
+                return new JudgeResult(false, TriageRules.UnknownBumpDecision());
+            }
+
+            JevAnswers answers;
             try
             {
-                var answers = await jev.AskAsync(pr.Body, cancellationToken).ConfigureAwait(false);
-                return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers), answers);
+                answers = await jev.AskAsync(pr.Body, cancellationToken).ConfigureAwait(false);
             }
             catch (JevException ex)
             {
                 return new JudgeResult(false, TriageRules.JevErrorDecision(), JevError: ex.Message);
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
+            }
+
+            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers, codeType), answers);
         });
 
     [Activity(RecordVerdictName)]
@@ -89,6 +106,17 @@ public sealed class RenovateTriageActivities(
                 .ConfigureAwait(false);
             return new RecordVerdictResult(inserted, mode);
         });
+
+    private static string? SkipReason(string repo, GitHubPullRequest pr)
+    {
+        if (pr.State != "open" || pr.Merged)
+        {
+            return TriageRules.NotOpen;
+        }
+
+        return TriageRules.SkipReason(pr.AuthorId, pr.Labels)
+            ?? (TriageRules.IsSameRepo(repo, pr.HeadRepo, pr.BaseRepo) ? null : TriageRules.ForeignRepo);
+    }
 
     private static void Validate(string repo, int prNumber)
     {

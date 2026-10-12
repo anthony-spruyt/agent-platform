@@ -97,14 +97,14 @@ public class RenovateTriageActivitiesTests
 
             var result = await Assess(rig);
 
-            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, RenovateTriageActivities.NotOpen), result);
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.NotOpen), result);
         }
 
         [Fact]
         public async Task AnApprovedPr_IsSkipped()
         {
             var rig = Create();
-            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "APPROVED", Sha, null));
+            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "OWNER", "APPROVED", Sha, null));
 
             var result = await Assess(rig);
 
@@ -112,13 +112,116 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
+        public async Task AnApprovalFromTheTriageApp_IsSkipped()
+        {
+            var rig = Create();
+            rig.Github.Reviews.Add(new GitHubReview(1, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", Sha, null));
+
+            Assert.Equal(TriageRules.AlreadyApproved, (await Assess(rig)).Reason);
+        }
+
+        [Fact]
+        public async Task AnApprovalFromSomeoneWithoutWriteAccess_IsNotSkipped()
+        {
+            var rig = Create();
+            rig.Github.Reviews.Add(new GitHubReview(1, "stranger", "NONE", "APPROVED", Sha, null));
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task AnApprovalOfAnEarlierCommit_IsNotSkipped()
+        {
+            var rig = Create();
+            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "OWNER", "APPROVED", "fedcba9876543210fedcba9876543210fedcba98", null));
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
+        }
+
+        [Fact]
         public async Task ApprovedThenChangesRequested_IsNotSkipped()
         {
             var rig = Create();
-            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "APPROVED", Sha, null));
-            rig.Github.Reviews.Add(new GitHubReview(2, "owner", "CHANGES_REQUESTED", Sha, null));
+            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "OWNER", "APPROVED", Sha, null));
+            rig.Github.Reviews.Add(new GitHubReview(2, "owner", "OWNER", "CHANGES_REQUESTED", Sha, null));
 
             Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
+        }
+
+        [Theory]
+        [InlineData("fork/widgets", "octo/widgets")]
+        [InlineData("octo/widgets", "fork/widgets")]
+        [InlineData(null, "octo/widgets")]
+        [InlineData("octo/widgets", null)]
+        public async Task APrWhoseHeadAndBaseAreNotTheTriagedRepo_IsSkipped(string? headRepo, string? baseRepo)
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { HeadRepo = headRepo, BaseRepo = baseRepo };
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.ForeignRepo), result);
+            Assert.Equal(["pr"], rig.Github.Calls);
+        }
+
+        [Fact]
+        public async Task ThePrOfAnotherRepoThanTheInputRepo_IsSkipped()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { HeadRepo = "other/gadgets", BaseRepo = "other/gadgets" };
+
+            Assert.Equal(TriageRules.ForeignRepo, (await Assess(rig)).Reason);
+        }
+
+        [Fact]
+        public async Task RepoNamesAreComparedWithoutRegardToCase()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { HeadRepo = "Octo/Widgets", BaseRepo = "OCTO/widgets" };
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task ACommitNotMadeByRenovate_DecidesNeedsReviewBeforeTheChecksAreRead()
+        {
+            var rig = Create();
+            rig.Github.Commits.Add(rig.Github.Commits[0] with { AuthorLogin = "alice", AuthorId = 5 });
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: TriageRules.NonRenovateCommitDecision()), result);
+            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("checks", StringComparison.Ordinal));
+            Assert.Empty(rig.Jev.Bodies);
+        }
+
+        [Fact]
+        public async Task AnUnverifiedCommit_DecidesNeedsReview()
+        {
+            var rig = Create();
+            rig.Github.Commits[0] = rig.Github.Commits[0] with { Verified = false };
+
+            Assert.Equal(TriageRules.NonRenovateCommit, (await Assess(rig)).Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task TheCommitsAreReadAfterTheAuthorAndApprovalAndJudgedChecks()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { AuthorId = 5 };
+            await Assess(rig);
+            Assert.DoesNotContain("commits", rig.Github.Calls);
+
+            rig = Create();
+            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "OWNER", "APPROVED", Sha, null));
+            await Assess(rig);
+            Assert.DoesNotContain("commits", rig.Github.Calls);
+
+            rig = Create();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(), TriageMode.Shadow, Ct);
+            await Assess(rig);
+            Assert.DoesNotContain("commits", rig.Github.Calls);
         }
 
         [Fact]
@@ -140,6 +243,37 @@ public class RenovateTriageActivitiesTests
             rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
 
             Assert.Equal(new AssessResult(AssessStatus.Pending, Sha), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task ASuiteThatHasNotCompleted_HoldsTheJudgementEvenWhenAllRunsAreDone()
+        {
+            var rig = Create();
+            rig.Github.Suites.Add(new GitHubCheckSuite(2, "queued", null, "github-actions", 0));
+
+            Assert.Equal(new AssessResult(AssessStatus.Pending, Sha), await Assess(rig));
+            Assert.Contains($"suites:{Sha}", rig.Github.Calls);
+        }
+
+        [Fact]
+        public async Task NoCheckRunsAtAll_HoldTheJudgement()
+        {
+            var rig = Create();
+            rig.Github.Checks.Clear();
+            rig.Github.Suites.Clear();
+
+            Assert.Equal(AssessStatus.Pending, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task AMergifyCheckOrSuiteThatHasNotCompleted_NeverHoldsTheJudgement()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "Summary", "in_progress", null, "mergify"));
+            rig.Github.Suites.Add(new GitHubCheckSuite(3, "in_progress", null, "mergify", 3));
+            rig.Github.Suites.Add(new GitHubCheckSuite(4, "queued", null, "claude", 0));
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
         }
 
         [Fact]
@@ -256,11 +390,12 @@ public class RenovateTriageActivitiesTests
         public async Task JevIsAskedWithThePrBodyReadFromGitHub()
         {
             var rig = Create();
-            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: "the notes");
+            var body = FakeGitHubApi.UpdateTable("patch") + "the notes";
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: body);
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.Equal(["the notes"], rig.Jev.Bodies);
+            Assert.Equal([body], rig.Jev.Bodies);
             Assert.False(result.HeadMoved);
             Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), result.Decision);
             Assert.Equal(rig.Jev.Answers, result.Jev);
@@ -304,15 +439,58 @@ public class RenovateTriageActivitiesTests
             Assert.Null(result.Jev);
         }
 
-        [Fact]
-        public async Task ANullPrBody_IsPassedAsNull()
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("release notes without the update table")]
+        public async Task AnUpdateTypeThatCannotBeFound_IsNeedsReviewAndJevIsNotAsked(string? body)
         {
             var rig = Create();
-            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: null);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Body = body };
 
-            await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.Null(Assert.Single(rig.Jev.Bodies));
+            Assert.Equal(new JudgeResult(false, TriageRules.UnknownBumpDecision()), result);
+            Assert.Empty(rig.Jev.Bodies);
+        }
+
+        [Fact]
+        public async Task ACodeTypeOfMajor_NeedsReviewWhenJevSaysPatch()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.UpdateTable("major"));
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.9);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+
+            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.MajorBump, TriageRules.BreakingComment), result.Decision);
+            Assert.Equal(rig.Jev.Answers, result.Jev);
+        }
+
+        [Fact]
+        public async Task ADigestIsApprovedOnlyWhenTheTableAndJevBothSayDigest()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.UpdateTable("digest"));
+            rig.Jev.Answers = new JevAnswers(0.04, "digest", 0);
+
+            var approved = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0);
+            var mismatched = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+
+            Assert.Equal(TriageRules.Digest, approved.Decision!.Reason);
+            Assert.Equal(TriageRules.NoChangelog, mismatched.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task AnUnexpectedFailureAfterJevWasAsked_IsNotRetried()
+        {
+            var rig = Create();
+            rig.Jev.Failure = new InvalidOperationException("boom");
+
+            var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha))));
+
+            Assert.True(failure.NonRetryable);
         }
 
         [Fact]

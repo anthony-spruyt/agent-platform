@@ -18,6 +18,8 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
 {
     public const string Model = "jev-latest";
 
+    public const int MaxPrBodyBytes = 32 * 1024;
+
     private const string QuestionsResource = "JevQuestions.json";
 
     private static readonly Lazy<JsonNode> _questions = new(LoadQuestions);
@@ -29,7 +31,7 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
         {
             ["state"] = new JsonObject
             {
-                ["pr_body"] = prBody,
+                ["pr_body"] = CapBody(prBody),
                 ["current_date"] = time.GetUtcNow().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
             },
             ["model"] = Model,
@@ -53,14 +55,27 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             return Parse(json);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is not JevException && !(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
-            throw new JevException("Jev could not be reached.", ex);
+            throw new JevException("Jev could not be reached or did not answer in time.", ex);
         }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+    }
+
+    private static string? CapBody(string? prBody)
+    {
+        if (prBody is null || Encoding.UTF8.GetByteCount(prBody) <= MaxPrBodyBytes)
         {
-            throw new JevException("Jev did not answer in time.", ex);
+            return prBody;
         }
+
+        var bytes = Encoding.UTF8.GetBytes(prBody);
+        var length = MaxPrBodyBytes;
+        while (length > 0 && (bytes[length] & 0xC0) == 0x80)
+        {
+            length--;
+        }
+
+        return Encoding.UTF8.GetString(bytes, 0, length);
     }
 
     private static JevAnswers Parse(string json)

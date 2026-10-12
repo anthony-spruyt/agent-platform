@@ -13,17 +13,20 @@ public static class RenovateTriageServiceCollectionExtensions
 
         var litellmSection = configuration.GetSection(LiteLlmOptions.SectionName);
         var triageSection = configuration.GetSection(RenovateTriageOptions.SectionName);
-        Validate(litellmSection.Get<LiteLlmOptions>() ?? new LiteLlmOptions(), triageSection.Get<RenovateTriageOptions>() ?? new RenovateTriageOptions());
+        Validate(litellmSection.Get<LiteLlmOptions>() ?? new LiteLlmOptions());
+        _ = triageSection.Get<RenovateTriageOptions>(); // Bind eagerly so an unknown Mode fails at startup, not on first use
 
         services.Configure<LiteLlmOptions>(litellmSection);
         services.Configure<RenovateTriageOptions>(triageSection);
         services.TryAddSingleton(TimeProvider.System);
-        services.AddHttpClient<IJevClient, JevClient>(client => client.Timeout = _jevTimeout);
+#pragma warning disable EXTEXP0001 // Experimental API: the standard handler's 10s attempt timeout and retries would resend a paid POST
+        services.AddHttpClient<IJevClient, JevClient>(client => client.Timeout = _jevTimeout).RemoveAllResilienceHandlers();
+#pragma warning restore EXTEXP0001
         services.AddSingleton<TriageVerdictStore>();
         return services;
     }
 
-    private static void Validate(LiteLlmOptions litellm, RenovateTriageOptions triage)
+    private static void Validate(LiteLlmOptions litellm)
     {
         if (!Uri.TryCreate(litellm.BaseUrl, UriKind.Absolute, out var baseUrl) || baseUrl.Scheme is not ("http" or "https"))
         {
@@ -33,11 +36,6 @@ public static class RenovateTriageServiceCollectionExtensions
         if (string.IsNullOrWhiteSpace(litellm.ApiKey))
         {
             throw new InvalidOperationException("LiteLlm:ApiKey is required.");
-        }
-
-        if (triage.Mode != TriageMode.Shadow)
-        {
-            throw new InvalidOperationException("RenovateTriage:Mode must be Shadow.");
         }
     }
 }

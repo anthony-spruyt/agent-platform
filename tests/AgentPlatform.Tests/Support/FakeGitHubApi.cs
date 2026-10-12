@@ -13,14 +13,26 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public List<GitHubCheckRun> Checks { get; } = [new(1, "build", "completed", "success", "github-actions")];
 
+    public List<GitHubCheckSuite> Suites { get; } = [new(1, "completed", "success", "github-actions", 1)];
+
+    public List<GitHubCommit> Commits { get; } = [RenovateCommit()];
+
     public Exception? Failure { get; set; }
 
     public List<string> Calls { get; } = [];
 
     public Action? OnPullRequestRead { get; set; }
 
-    public static GitHubPullRequest Renovate(string branch = "renovate/czkawka", string sha = Sha, string? body = "release notes") =>
-        new(7, "Update dep", body, "open", false, false, "clean", "renovate[bot]", TriageRules.RenovateUserId, branch, sha, "octo/widgets", "main", ["dependencies"]);
+    public static GitHubCommit RenovateCommit(string sha = "c0ffee0") =>
+        new(sha, "renovate[bot]", TriageRules.RenovateUserId, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true);
+
+    public static string UpdateTable(params string[] updates) =>
+        "This PR contains the following updates:\n\n| Package | Update | Change |\n|---|---|---|\n"
+        + string.Concat(updates.Select((u, i) => $"| [dep-{i}](https://example.test/dep-{i}) | {u} | `1.0.0` -> `1.0.1` |\n"))
+        + "\n---\n\n### Release Notes\n";
+
+    public static GitHubPullRequest Renovate(string branch = "renovate/czkawka", string sha = Sha, string? body = null) =>
+        new(7, "Update dep", body ?? UpdateTable("patch"), "open", false, false, "clean", "renovate[bot]", TriageRules.RenovateUserId, branch, sha, "octo/widgets", "octo/widgets", "main", ["dependencies"]);
 
     public Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken)
     {
@@ -33,6 +45,18 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     {
         Calls.Add($"checks:{sha}");
         return Result<IReadOnlyList<GitHubCheckRun>>([.. Checks]);
+    }
+
+    public Task<IReadOnlyList<GitHubCheckSuite>> ListCheckSuitesAsync(string repo, string sha, CancellationToken cancellationToken)
+    {
+        Calls.Add($"suites:{sha}");
+        return Result<IReadOnlyList<GitHubCheckSuite>>([.. Suites]);
+    }
+
+    public Task<IReadOnlyList<GitHubCommit>> ListCommitsAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        Calls.Add("commits");
+        return Result<IReadOnlyList<GitHubCommit>>([.. Commits]);
     }
 
     public Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)

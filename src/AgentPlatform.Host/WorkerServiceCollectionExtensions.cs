@@ -30,7 +30,7 @@ public static class WorkerServiceCollectionExtensions
             .AddWorkflow<RenovateTriageWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<RunDataActivities>()
-            .AddSingletonActivities<RenovateTriageActivities>()
+            .AddScopedActivities<RenovateTriageActivities>()
             .AddScopedActivities<AgentPodActivities>();
 
         services

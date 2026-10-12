@@ -196,9 +196,35 @@ public class WorkerConfigurationTests
         Assert.Contains(options.Activities, a => a.Name == RenovateTriageActivities.AssessName);
     }
 
+    [Fact]
+    public void TheRenovateTriageActivities_AreScoped_SoTypedHttpClientsRotate()
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["ConnectionStrings:rundata"] = Connection,
+        };
+        GitHubPayloads.AddWorkerSettings(settings);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddAgentPlatformWorker(configuration);
+
+        Assert.Equal(ServiceLifetime.Scoped, services.Last(d => d.ServiceType == typeof(RenovateTriageActivities)).Lifetime);
+    }
+
+    [Fact]
+    public void TheLiteLlmBaseUrl_DefaultsToTheInClusterService()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["LiteLlm:ApiKey"] = "test-key" }).Build();
+        var services = new ServiceCollection();
+        services.AddRenovateTriage(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Equal("http://litellm.litellm.svc.cluster.local:4000", provider.GetRequiredService<IOptions<LiteLlmOptions>>().Value.BaseUrl);
+    }
+
     [Theory]
-    [InlineData("LiteLlm:BaseUrl", null)]
-    [InlineData("LiteLlm:BaseUrl", "")]
     [InlineData("LiteLlm:BaseUrl", "litellm.example")]
     [InlineData("LiteLlm:ApiKey", null)]
     [InlineData("LiteLlm:ApiKey", "  ")]

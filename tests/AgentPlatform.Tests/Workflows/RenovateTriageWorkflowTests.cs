@@ -259,6 +259,122 @@ public class RenovateTriageWorkflowTests
         var verdict = Assert.Single(await VerdictsAsync(rig));
         Assert.Null(verdict.Comment);
         Assert.Empty(rig.Jev.Bodies);
+        Assert.Equal(2, rig.Github.Calls.Count(c => c.StartsWith("checks", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ChecksThatFinishedWithoutASignal_AreJudgedWhenTheTwoHoursEnd()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "queued", null, "github-actions"));
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.Github.Calls.Any(c => c.StartsWith("checks", StringComparison.Ordinal)));
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            return await RunToResultAsync(handle, "renovate-triage-ci-timeout-reassessed");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), result);
+    }
+
+    [Fact]
+    public async Task APrApprovedWhileWaiting_IsSkippedWhenTheTwoHoursEnd()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "queued", null, "github-actions"));
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.Github.Calls.Any(c => c.StartsWith("checks", StringComparison.Ordinal)));
+            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "OWNER", "APPROVED", ShaA, null));
+            return await RunToResultAsync(handle);
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Skipped, ShaA, TriageRules.AlreadyApproved, null), result);
+        Assert.Empty(await VerdictsAsync(rig));
+    }
+
+    [Fact]
+    public async Task ACommitNotMadeByRenovate_IsNeedsReviewWithoutWaitingForChecksOrAskingJev()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.Commits.Add(rig.Github.Commits[0] with { AuthorLogin = "alice", AuthorId = 5 });
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "queued", null, "github-actions"));
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle, "renovate-triage-commit-gate");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.NonRenovateCommit, TriageVerdict.NeedsReview), result);
+        Assert.Equal("This dependency bump has commits not made by Renovate and requires review.", Assert.Single(await VerdictsAsync(rig)).Comment);
+        Assert.Empty(rig.Jev.Bodies);
+    }
+
+    [Fact]
+    public async Task AMajorBumpInTheUpdateTable_IsNeedsReviewWhenJevSaysPatch()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.UpdateTable("major"));
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle, "renovate-triage-type-mismatch");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.MajorBump, TriageVerdict.NeedsReview), result);
+        Assert.Single(rig.Jev.Bodies);
+    }
+
+    [Fact]
+    public async Task APrWithoutAReadableUpdateTable_IsNeedsReviewAndJevIsNotAsked()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.PullRequest = rig.Github.PullRequest with { Body = "no table" };
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle);
+        });
+
+        Assert.Equal(TriageRules.UnknownBump, result.Reason);
+        Assert.Empty(rig.Jev.Bodies);
+        await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+        var run = await db.Runs.Include(r => r.Steps).SingleAsync(Ct);
+        Assert.Equal("skipped", run.Steps.Single(s => s.Name == "jev").StopReason);
+    }
+
+    [Fact]
+    public async Task ASuiteThatIsStillRunning_HoldsTheJudgementUntilItCompletes()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.Suites.Add(new GitHubCheckSuite(2, "queued", null, "github-actions", 0));
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal(suite: 1));
+            await WaitForAsync(() => rig.Github.Calls.Any(c => c.StartsWith("suites", StringComparison.Ordinal)));
+            Assert.Empty(await VerdictsAsync(rig));
+
+            rig.Github.Suites[1] = new GitHubCheckSuite(2, "completed", "success", "github-actions", 3);
+            await SignalAsync(env, Signal(suite: 2));
+            return await RunToResultAsync(handle, "renovate-triage-suite-pending");
+        });
+
+        Assert.Equal(TriageVerdict.Approve, result.Verdict);
+        Assert.Single(await VerdictsAsync(rig));
     }
 
     [Fact]
