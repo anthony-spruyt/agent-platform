@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.4.0...v1.4.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* record shadow verdicts despite the live path's output ([#35](https://github.com/anthony-spruyt/agent-platform/issues/35)) ([30b7e51](https://github.com/anthony-spruyt/agent-platform/commit/30b7e518039e1ea7cc4e65479b0389d04ba097c5))
+
 ## [1.4.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.3.0...v1.4.0) (2026-10-12)
 
 
