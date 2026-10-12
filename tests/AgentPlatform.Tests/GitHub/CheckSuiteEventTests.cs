@@ -93,13 +93,21 @@ public class CheckSuiteEventTests
         Assert.Empty(Extract(GitHubPayloads.CheckSuite(pullRequests: [GitHubPayloads.PullRequest(7, baseRepoId: 1)])));
     }
 
+    [Theory]
+    [InlineData("octo/widgets")]
+    [InlineData("anthony-spruyt-fork/widgets")]
+    public void ARepositoryOfAnotherOwner_IsDropped(string repo)
+    {
+        Assert.Empty(Extract(GitHubPayloads.CheckSuite(repo: repo)));
+    }
+
     [Fact]
     public void ARepositoryWithoutAnId_DropsEveryPullRequest()
     {
         var body = """
             {"action":"completed","check_suite":{"id":1,"head_branch":"renovate/foo","head_sha":"abc",
             "pull_requests":[{"number":3,"head":{"ref":"renovate/foo","sha":"abc","repo":{"id":0}},"base":{"ref":"main","repo":{"id":0}}}]},
-            "repository":{"full_name":"octo/widgets"}}
+            "repository":{"full_name":"anthony-spruyt/widgets"}}
             """;
 
         Assert.Empty(Extract(body));
@@ -111,7 +119,7 @@ public class CheckSuiteEventTests
         var body = """
             {"action":"completed","check_suite":{"id":1,"head_branch":"renovate/foo","head_sha":"abc",
             "pull_requests":[{"number":3,"head":{"ref":"renovate/foo","sha":"abc","repo":{"id":4242}},"base":{"ref":"main","repo":null}}]},
-            "repository":{"id":4242,"full_name":"octo/widgets"}}
+            "repository":{"id":4242,"full_name":"anthony-spruyt/widgets"}}
             """;
 
         Assert.Empty(Extract(body));
@@ -137,7 +145,7 @@ public class CheckSuiteEventTests
         var body = """
             {"action":"completed","check_suite":{"id":1,"head_branch":"renovate/foo","head_sha":"abc",
             "pull_requests":[{"number":3,"head":{"ref":"renovate/foo","sha":"abc","repo":null},"base":{"repo":{"id":4242}}}]},
-            "repository":{"id":4242,"full_name":"octo/widgets"}}
+            "repository":{"id":4242,"full_name":"anthony-spruyt/widgets"}}
             """;
 
         Assert.Empty(Extract(body));

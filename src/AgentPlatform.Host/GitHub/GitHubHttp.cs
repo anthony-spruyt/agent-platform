@@ -35,16 +35,22 @@ internal static class GitHubHttp
         return request;
     }
 
+    public static async Task SendAsync(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
+    {
+        using (request)
+        {
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            EnsureSuccess(response, operation);
+        }
+    }
+
     public static async Task<T> SendAsync<T>(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
         where T : class
     {
         using (request)
         {
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new GitHubApiException($"GitHub {operation} failed with status {(int)response.StatusCode}.", response.StatusCode);
-            }
+            EnsureSuccess(response, operation);
 
             try
             {
@@ -55,6 +61,14 @@ internal static class GitHubHttp
             {
                 throw new GitHubApiException($"GitHub {operation} returned an unreadable body.", response.StatusCode, ex);
             }
+        }
+    }
+
+    private static void EnsureSuccess(HttpResponseMessage response, string operation)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new GitHubApiException($"GitHub {operation} failed with status {(int)response.StatusCode}.", response.StatusCode);
         }
     }
 }

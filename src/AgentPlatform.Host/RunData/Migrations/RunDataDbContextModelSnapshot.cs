@@ -28,6 +28,10 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("AppliedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("applied_at");
+
                     b.Property<string>("Comment")
                         .HasColumnType("text")
                         .HasColumnName("comment");
@@ -73,7 +77,7 @@ namespace AgentPlatform.Host.RunData.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Repo", "PrNumber", "HeadSha")
+                    b.HasIndex("Repo", "PrNumber", "HeadSha", "Mode")
                         .IsUnique();
 
                     b.ToTable("renovate_triage_verdicts", (string)null);

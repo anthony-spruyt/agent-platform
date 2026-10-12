@@ -1,12 +1,13 @@
 using System.Net;
 using AgentPlatform.Host.GitHub;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Temporalio.Activities;
 using Temporalio.Exceptions;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public sealed class RenovateTriageActivities(
+public sealed partial class RenovateTriageActivities(
     IGitHubApiClient github,
     IJevClient jev,
     TriageVerdictStore verdicts,
@@ -15,50 +16,79 @@ public sealed class RenovateTriageActivities(
     public const string AssessName = "RenovateTriageAssess";
     public const string JudgeName = "RenovateTriageJudge";
     public const string RecordVerdictName = "RenovateTriageRecordVerdict";
+    public const string ApplyName = "RenovateTriageApply";
+    public const string JevErrorFailureType = "JevError";
+
+    private const string NotLive = "not-live";
+    private const string HeadMoved = "head-moved";
+    private const string DismissalMessage = "A newer commit needs review.";
 
     [Activity(AssessName)]
     public Task<AssessResult> AssessAsync(AssessInput input) =>
         GuardAsync(async () =>
         {
             Validate(input.Repo, input.PrNumber);
+            var mode = options.Value.Mode;
+            if (!TriageRules.IsAllowedOwner(input.Repo))
+            {
+                return new AssessResult(AssessStatus.Skipped, string.Empty, TriageRules.ForeignOwner, Mode: mode);
+            }
+
             var cancellationToken = ActivityExecutionContext.Current.CancellationToken;
             var pr = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             var sha = pr.HeadSha;
 
-            var shadow = options.Value.Mode == TriageMode.Shadow;
-            var skip = SkipReason(input.Repo, pr, shadow);
+            var shadow = mode == TriageMode.Shadow;
+            var unapplied = mode == TriageMode.Live
+                ? await verdicts.FindUnappliedAsync(input.Repo, input.PrNumber, sha, cancellationToken).ConfigureAwait(false)
+                : null;
+            var ignoreTriageSignals = shadow || unapplied is not null;
+            var honourNeedsReviewLabel = unapplied is { Verdict: TriageVerdict.Approve };
+            var skip = SkipReason(input.Repo, pr, shadow, ignoreTriageSignals, honourNeedsReviewLabel);
             if (skip is not null)
             {
-                return new AssessResult(AssessStatus.Skipped, sha, skip);
+                return new AssessResult(AssessStatus.Skipped, sha, skip, Mode: mode);
             }
 
             var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            if (TriageRules.IsApproved(reviews, sha, shadow))
+            if (TriageRules.IsApproved(reviews, sha, ignoreTriageSignals))
             {
-                return new AssessResult(AssessStatus.Skipped, sha, TriageRules.AlreadyApproved);
+                return new AssessResult(AssessStatus.Skipped, sha, TriageRules.AlreadyApproved, Mode: mode);
             }
 
-            if (await verdicts.ExistsAsync(input.Repo, input.PrNumber, sha, cancellationToken).ConfigureAwait(false))
+            if (unapplied is not null)
             {
-                return new AssessResult(AssessStatus.AlreadyJudged, sha);
+                return new AssessResult(AssessStatus.Decided, sha, Decision: unapplied, Mode: mode);
+            }
+
+            if (await verdicts.ExistsAsync(input.Repo, input.PrNumber, sha, mode, cancellationToken).ConfigureAwait(false))
+            {
+                return new AssessResult(AssessStatus.AlreadyJudged, sha, Mode: mode);
             }
 
             var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             if (!TriageRules.AreAllRenovateCommits(commits, pr.Commits))
             {
-                return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.NonRenovateCommitDecision());
+                return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.NonRenovateCommitDecision(), Mode: mode);
             }
 
             var checks = await github.ListCheckRunsAsync(input.Repo, sha, cancellationToken).ConfigureAwait(false);
             var suites = await github.ListCheckSuitesAsync(input.Repo, sha, cancellationToken).ConfigureAwait(false);
-            return TriageRules.AssessChecks(checks, suites) switch
+            var ci = TriageRules.AssessChecks(checks, suites);
+            if (ci == CiState.Pending)
             {
-                CiState.Pending => new AssessResult(AssessStatus.Pending, sha),
-                CiState.Failed => new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.CiFailedDecision()),
-                _ => TriageRules.IsRiskyBranch(pr.HeadRef)
-                    ? new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.HighRiskDecision())
-                    : new AssessResult(AssessStatus.NeedsJev, sha),
-            };
+                return new AssessResult(AssessStatus.Pending, sha, Mode: mode);
+            }
+
+            if (ci == CiState.Failed)
+            {
+                var failed = TriageRules.FailedChecks(checks);
+                return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.CiFailedDecision(input.Repo, sha, failed), Mode: mode);
+            }
+
+            return TriageRules.RiskyTerm(pr.HeadRef) is { } term
+                ? new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.HighRiskDecision(term), Mode: mode)
+                : new AssessResult(AssessStatus.NeedsJev, sha, Mode: mode);
         });
 
     [Activity(JudgeName)]
@@ -75,11 +105,16 @@ public sealed class RenovateTriageActivities(
 
             var files = await github.ListPullRequestFilesAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             var diff = PrDiff.Build(files, JevClient.MaxPrDiffBytes);
+            var facts = BumpAnalyzer.Analyze(files);
 
             JevAnswers answers;
             try
             {
                 answers = await jev.AskAsync(pr.Body, diff, cancellationToken).ConfigureAwait(false);
+            }
+            catch (JevException ex) when (input.RetryJevErrors)
+            {
+                throw new ApplicationFailureException(ex.Message, ex, JevErrorFailureType);
             }
             catch (JevException ex)
             {
@@ -90,7 +125,7 @@ public sealed class RenovateTriageActivities(
                 throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
             }
 
-            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers), answers);
+            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers, facts), answers);
         });
 
     [Activity(RecordVerdictName)]
@@ -98,21 +133,142 @@ public sealed class RenovateTriageActivities(
         GuardAsync(async () =>
         {
             Validate(input.Repo, input.PrNumber);
-            var mode = options.Value.Mode;
             var inserted = await verdicts
-                .RecordAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision, mode, ActivityExecutionContext.Current.CancellationToken)
+                .RecordAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision, input.Mode, ActivityExecutionContext.Current.CancellationToken)
                 .ConfigureAwait(false);
-            return new RecordVerdictResult(inserted, mode);
+            return new RecordVerdictResult(inserted, input.Mode);
         });
 
-    private static string? SkipReason(string repo, GitHubPullRequest pr, bool shadow)
+    [Activity(ApplyName)]
+    public Task<ApplyResult> ApplyAsync(ApplyInput input) =>
+        GuardAsync(async () =>
+        {
+            Validate(input.Repo, input.PrNumber);
+            ArgumentException.ThrowIfNullOrWhiteSpace(input.HeadSha);
+            ArgumentNullException.ThrowIfNull(input.Decision);
+            if (!TriageRules.IsAllowedOwner(input.Repo))
+            {
+                return new ApplyResult(ApplyOutcome.Refused, TriageRules.ForeignOwner);
+            }
+
+            if (input.Mode != TriageMode.Live || options.Value.Mode != TriageMode.Live)
+            {
+                return new ApplyResult(ApplyOutcome.Refused, NotLive);
+            }
+
+            var cancellationToken = ActivityExecutionContext.Current.CancellationToken;
+            var logger = ActivityExecutionContext.Current.Logger;
+            var pr = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+            if (pr.State != "open" || pr.Merged)
+            {
+                LogNotApplied(logger, input.Repo, input.PrNumber, TriageRules.NotOpen);
+                return new ApplyResult(ApplyOutcome.Aborted, TriageRules.NotOpen);
+            }
+
+            if (!string.Equals(pr.HeadSha, input.HeadSha, StringComparison.Ordinal))
+            {
+                LogNotApplied(logger, input.Repo, input.PrNumber, HeadMoved);
+                return new ApplyResult(ApplyOutcome.Aborted, HeadMoved);
+            }
+
+            if (input.Decision.Verdict == TriageVerdict.Approve)
+            {
+                await ApproveAsync(input, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await FlagAsync(input, cancellationToken).ConfigureAwait(false);
+            }
+
+            await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            return new ApplyResult(ApplyOutcome.Applied);
+        });
+
+    private async Task ApproveAsync(ApplyInput input, CancellationToken cancellationToken)
+    {
+        var summary = input.Decision.Comment ?? "**Auto-approved:**";
+        var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (!reviews.Any(r => IsBotApproval(r) && string.Equals(r.CommitId, input.HeadSha, StringComparison.Ordinal)))
+        {
+            await github.ApproveAsync(input.Repo, input.PrNumber, input.HeadSha, summary, cancellationToken).ConfigureAwait(false);
+        }
+
+        await github.AddLabelsAsync(input.Repo, input.PrNumber, [TriageRules.AutoApprovedLabel], cancellationToken).ConfigureAwait(false);
+
+        var sticky = await FindStickyAsync(input, cancellationToken).ConfigureAwait(false);
+        if (sticky is not null)
+        {
+            await UpsertStickyAsync(input, sticky, TriageRules.StickyApprovalText(input.HeadSha, input.Decision.Comment), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task FlagAsync(ApplyInput input, CancellationToken cancellationToken)
+    {
+        var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        foreach (var stale in reviews.Where(IsBotApproval))
+        {
+            await DismissAsync(input, stale, cancellationToken).ConfigureAwait(false);
+        }
+
+        await github.AddLabelsAsync(input.Repo, input.PrNumber, [TriageRules.NeedsReviewLabel], cancellationToken).ConfigureAwait(false);
+
+        if (input.Decision.Comment is { } comment)
+        {
+            var sticky = await FindStickyAsync(input, cancellationToken).ConfigureAwait(false);
+            await UpsertStickyAsync(input, sticky, comment, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task DismissAsync(ApplyInput input, GitHubReview review, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await github.DismissReviewAsync(input.Repo, input.PrNumber, review.Id, DismissalMessage, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GitHubApiException ex) when (ex.StatusCode == HttpStatusCode.UnprocessableEntity)
+        {
+            LogDismissRefused(ActivityExecutionContext.Current.Logger, review.Id, input.Repo, input.PrNumber);
+        }
+    }
+
+    private async Task<GitHubIssueComment?> FindStickyAsync(ApplyInput input, CancellationToken cancellationToken)
+    {
+        var comments = await github.ListIssueCommentsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        return comments.FirstOrDefault(c => string.Equals(c.AuthorLogin, TriageRules.TriageBotLogin, StringComparison.Ordinal)
+            && c.Body.Contains(TriageRules.StickyMarker, StringComparison.Ordinal));
+    }
+
+    private async Task UpsertStickyAsync(ApplyInput input, GitHubIssueComment? sticky, string text, CancellationToken cancellationToken)
+    {
+        var body = $"{TriageRules.StickyMarker}\n{text}";
+        if (sticky is null)
+        {
+            await github.CreateIssueCommentAsync(input.Repo, input.PrNumber, body, cancellationToken).ConfigureAwait(false);
+        }
+        else if (!string.Equals(sticky.Body, body, StringComparison.Ordinal))
+        {
+            await github.UpdateIssueCommentAsync(input.Repo, sticky.Id, body, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Not applying the verdict for {Repo}#{Number}: {Reason}.")]
+    private static partial void LogNotApplied(ILogger logger, string repo, int number, string reason);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub refused to dismiss review {ReviewId} on {Repo}#{Number}; carrying on.")]
+    private static partial void LogDismissRefused(ILogger logger, long reviewId, string repo, int number);
+
+    private static bool IsBotApproval(GitHubReview review) =>
+        string.Equals(review.AuthorLogin, TriageRules.TriageBotLogin, StringComparison.Ordinal)
+        && string.Equals(review.State, "APPROVED", StringComparison.OrdinalIgnoreCase);
+
+    private static string? SkipReason(string repo, GitHubPullRequest pr, bool shadow, bool ignoreTriageSignals, bool honourNeedsReviewLabel)
     {
         if (TriageRules.IsNotOpen(pr.State, pr.Merged, shadow))
         {
             return TriageRules.NotOpen;
         }
 
-        return TriageRules.SkipReason(pr.AuthorId, pr.Labels, shadow)
+        return TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals, honourNeedsReviewLabel)
             ?? (TriageRules.IsSameRepo(repo, pr.HeadRepo, pr.BaseRepo) ? null : TriageRules.ForeignRepo);
     }
 

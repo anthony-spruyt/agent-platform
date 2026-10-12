@@ -11,6 +11,9 @@ public class RenovateTriageWorkflow
 {
     public const string CheckSuiteCompletedSignalName = "CheckSuiteCompleted";
 
+    private const string JevRetryPatch = "renovate-triage-jev-retry-v1";
+    private const string LivePatch = "renovate-triage-live-v1";
+
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
     private static readonly ActivityOptions _activityOptions = new()
@@ -23,6 +26,32 @@ public class RenovateTriageWorkflow
             BackoffCoefficient = 2,
             MaximumInterval = TimeSpan.FromMinutes(1),
             MaximumAttempts = 5,
+        },
+    };
+
+    private static readonly ActivityOptions _judgeOptions = new()
+    {
+        StartToCloseTimeout = TimeSpan.FromMinutes(3),
+        ScheduleToCloseTimeout = TimeSpan.FromMinutes(30),
+        RetryPolicy = new RetryPolicy
+        {
+            InitialInterval = TimeSpan.FromMinutes(5),
+            BackoffCoefficient = 2,
+            MaximumInterval = TimeSpan.FromMinutes(10),
+            MaximumAttempts = 3,
+        },
+    };
+
+    private static readonly ActivityOptions _applyOptions = new()
+    {
+        StartToCloseTimeout = TimeSpan.FromMinutes(2),
+        ScheduleToCloseTimeout = TimeSpan.FromHours(2),
+        RetryPolicy = new RetryPolicy
+        {
+            InitialInterval = TimeSpan.FromSeconds(10),
+            BackoffCoefficient = 2,
+            MaximumInterval = TimeSpan.FromMinutes(5),
+            MaximumAttempts = 12,
         },
     };
 
@@ -122,9 +151,7 @@ public class RenovateTriageWorkflow
                     break;
                 default:
                     stepStarted = Workflow.UtcNow;
-                    var judge = await Workflow.ExecuteActivityAsync(
-                        (RenovateTriageActivities activities) => activities.JudgeAsync(new JudgeInput(input.Repo, input.PrNumber, assess.HeadSha)),
-                        _activityOptions);
+                    var judge = await JudgeWithJevAsync(input, assess.HeadSha);
                     await RecordStepAsync(run, ++seq, "jev", LadderRung.Jev, JudgeStopReason(judge), stepStarted, judge);
                     if (judge.HeadMoved)
                     {
@@ -135,7 +162,28 @@ public class RenovateTriageWorkflow
                     break;
             }
 
-            return await RecordVerdictAsync(input, run, ++seq, assess.HeadSha, decision!);
+            return await RecordVerdictAsync(input, run, ++seq, assess.HeadSha, decision!, assess.Mode);
+        }
+    }
+
+    private static async Task<JudgeResult> JudgeWithJevAsync(RenovateTriageInput input, string headSha)
+    {
+        if (!Workflow.Patched(JevRetryPatch))
+        {
+            return await Workflow.ExecuteActivityAsync(
+                (RenovateTriageActivities activities) => activities.JudgeAsync(new JudgeInput(input.Repo, input.PrNumber, headSha)),
+                _activityOptions);
+        }
+
+        try
+        {
+            return await Workflow.ExecuteActivityAsync(
+                (RenovateTriageActivities activities) => activities.JudgeAsync(new JudgeInput(input.Repo, input.PrNumber, headSha, RetryJevErrors: true)),
+                _judgeOptions);
+        }
+        catch (ActivityFailureException ex) when (ex.InnerException is ApplicationFailureException { ErrorType: RenovateTriageActivities.JevErrorFailureType } cause)
+        {
+            return new JudgeResult(false, TriageRules.JevErrorDecision(), JevError: cause.Message);
         }
     }
 
@@ -147,13 +195,22 @@ public class RenovateTriageWorkflow
         _ => "answered",
     };
 
-    private static async Task<RenovateTriageResult> RecordVerdictAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageDecision decision)
+    private static async Task<RenovateTriageResult> RecordVerdictAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageDecision decision, TriageMode mode)
     {
         var stepStarted = Workflow.UtcNow;
         var recorded = await Workflow.ExecuteActivityAsync(
-            (RenovateTriageActivities activities) => activities.RecordVerdictAsync(new RecordVerdictInput(input.Repo, input.PrNumber, headSha, decision)),
+            (RenovateTriageActivities activities) => activities.RecordVerdictAsync(new RecordVerdictInput(input.Repo, input.PrNumber, headSha, decision, mode)),
             _activityOptions);
         await RecordStepAsync(run, seq, "verdict", LadderRung.Rule, decision.Reason, stepStarted, new { decision, recorded });
+        if (mode == TriageMode.Live && Workflow.Patched(LivePatch))
+        {
+            stepStarted = Workflow.UtcNow;
+            var applied = await Workflow.ExecuteActivityAsync(
+                (RenovateTriageActivities activities) => activities.ApplyAsync(new ApplyInput(input.Repo, input.PrNumber, headSha, decision, mode)),
+                _applyOptions);
+            await RecordStepAsync(run, seq + 1, "apply", LadderRung.Rule, applied.Outcome.ToString(), stepStarted, applied);
+        }
+
         await CompleteAsync(run);
         return new RenovateTriageResult(RenovateTriageOutcome.Judged, headSha, decision.Reason, decision.Verdict);
     }

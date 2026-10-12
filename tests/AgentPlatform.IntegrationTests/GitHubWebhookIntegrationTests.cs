@@ -38,7 +38,7 @@ public class GitHubWebhookIntegrationTests(AppHostFixture fixture)
                 app = new { slug = "github-actions" },
                 pull_requests = new[] { new { number = pr, head = new { repo = new { id = 9 } }, @base = new { repo = new { id = 9 } } } },
             },
-            repository = new { id = 9, full_name = "octo/widgets" },
+            repository = new { id = 9, full_name = "anthony-spruyt/widgets" },
         });
         using var web = fixture.App.CreateHttpClient("web", "webhooks");
         using var request = new HttpRequestMessage(HttpMethod.Post, GitHubWebhookEndpoint.Path)
@@ -53,7 +53,7 @@ public class GitHubWebhookIntegrationTests(AppHostFixture fixture)
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var client = await fixture.ConnectAsync(ct);
-        var handle = client.GetWorkflowHandle(RenovateTriageWorkflow.WorkflowId("octo/widgets", pr));
+        var handle = client.GetWorkflowHandle(RenovateTriageWorkflow.WorkflowId("anthony-spruyt/widgets", pr));
         var history = await WaitForAsync(
             handle,
             h => h.Events.Any(e => e.ActivityTaskScheduledEventAttributes?.ActivityType.Name == RenovateTriageActivities.AssessName),

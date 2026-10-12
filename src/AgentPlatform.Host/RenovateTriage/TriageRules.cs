@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using AgentPlatform.Host.GitHub;
@@ -34,8 +36,15 @@ public static partial class TriageRules
     public const double BreakingThreshold = 0.66;
     public const double ChangelogThreshold = 0.7;
 
+    public const string AllowedOwner = "anthony-spruyt";
+
+    public const string StickyMarker = "<!-- agent-platform:renovate-triage -->";
+    public const string NeedsReviewLabel = "agent/needs-review";
+    public const string AutoApprovedLabel = "agent/auto-approved";
+
     public const string NotOpen = "not-open";
     public const string ForeignRepo = "foreign-repo";
+    public const string ForeignOwner = "foreign-owner";
     public const string NotRenovate = "not-renovate";
     public const string BlockingLabel = "blocking-label";
     public const string AlreadyApproved = "already-approved";
@@ -53,12 +62,22 @@ public static partial class TriageRules
     public const string Allowlisted = "allowlisted";
     public const string ChangelogPresent = "changelog-present";
     public const string NoChangelog = "no-changelog";
+    public const string BumpTypeMismatch = "bump-type-mismatch";
+    public const string DigestMismatch = "digest-mismatch";
 
-    public const string NonRenovateCommitComment = "This dependency bump has commits not made by Renovate and requires review.";
-    public const string CiFailedComment = "Flagged for review as CI failed.";
-    public const string HighRiskComment = "This is a high risk dependency bump and requires review.";
-    public const string BreakingComment = "This dependency bump has breaking changes and requires review.";
-    public const string NoChangelogComment = "This dependency bump has no changelog and requires review.";
+    public const string NonRenovateCommitComment = "**Needs review:** this PR has commits that Renovate didn't make.";
+    public const string CiTimeoutComment = "**Needs review:** CI didn't finish within 2 hours.";
+    public const string OtherBumpComment = "**Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.";
+    public const string NoChangelogComment = "**Needs review:** no changelog found for this bump.";
+    public const string JevErrorComment = "**Needs review:** the triage check couldn't run (Jev error).";
+    public const string DigestMismatchComment = "**Needs review:** marked as a digest bump, but more than a digest changed.";
+    public const string DigestApprovalComment = "**Auto-approved:** digest bump.";
+    public const string AllowlistedApprovalComment = "**Auto-approved:** allowlisted.";
+
+    private const int MaxListedFailedChecks = 10;
+
+    private const string NeedsReviewPrefix = "**Needs review:**";
+    private const string AutoApprovedPrefix = "**Auto-approved:**";
 
     private const string RenovateLogin = "renovate[bot]";
     private const string RenovateAuthorEmail = "29139614+renovate[bot]@users.noreply.github.com";
@@ -90,7 +109,7 @@ public static partial class TriageRules
         "renovate/aikidosec-safe-chain",
     ];
 
-    public static string? SkipReason(long? authorId, IReadOnlyCollection<string> labels, bool shadow = false)
+    public static string? SkipReason(long? authorId, IReadOnlyCollection<string> labels, bool ignoreTriageSignals = false, bool honourNeedsReviewLabel = false)
     {
         ArgumentNullException.ThrowIfNull(labels);
         if (authorId != RenovateUserId)
@@ -98,7 +117,7 @@ public static partial class TriageRules
             return NotRenovate;
         }
 
-        return labels.Any(l => IsBlockingLabel(l, shadow)) ? BlockingLabel : null;
+        return labels.Any(l => IsBlockingLabel(l, ignoreTriageSignals, honourNeedsReviewLabel)) ? BlockingLabel : null;
     }
 
     public static bool IsNotOpen(string state, bool merged, bool shadow)
@@ -114,12 +133,12 @@ public static partial class TriageRules
         return string.Equals(headRepo, repo, StringComparison.OrdinalIgnoreCase) && string.Equals(baseRepo, repo, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static bool IsApproved(IReadOnlyList<GitHubReview> reviews, string headSha, bool shadow = false)
+    public static bool IsApproved(IReadOnlyList<GitHubReview> reviews, string headSha, bool ignoreTriageSignals = false)
     {
         ArgumentNullException.ThrowIfNull(reviews);
         ArgumentNullException.ThrowIfNull(headSha);
         var latest = new Dictionary<string, GitHubReview>(StringComparer.Ordinal);
-        foreach (var review in reviews.Where(r => !(shadow && IsTriageBot(r)) && IsTrustedReviewer(r) && !string.Equals(r.State, "COMMENTED", StringComparison.OrdinalIgnoreCase)))
+        foreach (var review in reviews.Where(r => !(ignoreTriageSignals && IsTriageBot(r)) && IsTrustedReviewer(r) && !string.Equals(r.State, "COMMENTED", StringComparison.OrdinalIgnoreCase)))
         {
             latest[review.AuthorLogin ?? string.Empty] = review;
         }
@@ -133,13 +152,17 @@ public static partial class TriageRules
             && latest.Values.Any(r => string.Equals(r.State, "APPROVED", StringComparison.OrdinalIgnoreCase) && string.Equals(r.CommitId, headSha, StringComparison.Ordinal));
     }
 
+    public static bool IsAllowedOwner(string repo)
+    {
+        ArgumentNullException.ThrowIfNull(repo);
+        return GitHubRepoName.TryParse(repo, out var owner, out _) && string.Equals(owner, AllowedOwner, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static CiState AssessChecks(IReadOnlyList<GitHubCheckRun> checks, IReadOnlyList<GitHubCheckSuite> suites)
     {
         ArgumentNullException.ThrowIfNull(checks);
         ArgumentNullException.ThrowIfNull(suites);
-        var considered = checks
-            .Where(c => !StartsWithAny(c.Name, _ignoredCheckPrefixes) && !string.Equals(c.AppSlug, MergifyApp, StringComparison.Ordinal))
-            .ToList();
+        var considered = ConsideredChecks(checks);
         var consideredSuites = suites.Where(IsConsideredSuite);
         if (considered.Count == 0
             || considered.Any(c => !IsCompleted(c.Status))
@@ -148,8 +171,13 @@ public static partial class TriageRules
             return CiState.Pending;
         }
 
-        var failed = considered.Any(c => !StartsWithAny(c.Name, _notFailingCheckPrefixes) && !PassingConclusion(c.Conclusion));
-        return failed ? CiState.Failed : CiState.Passed;
+        return considered.Any(IsFailing) ? CiState.Failed : CiState.Passed;
+    }
+
+    public static IReadOnlyList<GitHubCheckRun> FailedChecks(IReadOnlyList<GitHubCheckRun> checks)
+    {
+        ArgumentNullException.ThrowIfNull(checks);
+        return [.. ConsideredChecks(checks).Where(c => IsCompleted(c.Status) && IsFailing(c))];
     }
 
     public static bool AreAllRenovateCommits(IReadOnlyList<GitHubCommit> commits, int prCommitCount)
@@ -158,61 +186,139 @@ public static partial class TriageRules
         return prCommitCount is > 0 and < MaxListedCommits && commits.Count == prCommitCount && commits.All(IsRenovateCommit);
     }
 
-    public static bool IsRiskyBranch(string branch)
+    public static bool IsRiskyBranch(string branch) => RiskyTerm(branch) is not null;
+
+    public static string? RiskyTerm(string branch)
     {
         ArgumentNullException.ThrowIfNull(branch);
         var lower = branch.ToLowerInvariant();
-        return RiskyBranch().IsMatch(lower) && !lower.Contains("n8n-mcp", StringComparison.Ordinal);
+        var match = RiskyBranch().Match(lower);
+        return match.Success && !lower.Contains("n8n-mcp", StringComparison.Ordinal) ? match.Value : null;
     }
 
-    public static TriageDecision DecideFromJev(string branch, JevAnswers jev)
+    public static TriageDecision DecideFromJev(string branch, JevAnswers jev, BumpFacts facts)
     {
         ArgumentNullException.ThrowIfNull(branch);
         ArgumentNullException.ThrowIfNull(jev);
+        ArgumentNullException.ThrowIfNull(facts);
         if (jev.Breaking >= BreakingThreshold)
         {
-            return new TriageDecision(TriageVerdict.NeedsReview, Breaking, BreakingComment);
+            return new TriageDecision(
+                TriageVerdict.NeedsReview,
+                Breaking,
+                $"{NeedsReviewPrefix} likely breaking changes (Jev score {jev.Breaking.ToString("0.00", CultureInfo.InvariantCulture)}).");
         }
 
         switch (jev.BumpType)
         {
             case "digest":
-                return new TriageDecision(TriageVerdict.Approve, Digest, null);
+                return facts.DigestOnly
+                    ? new TriageDecision(TriageVerdict.Approve, Digest, DigestApprovalComment)
+                    : new TriageDecision(TriageVerdict.NeedsReview, DigestMismatch, DigestMismatchComment);
             case "major":
-                return new TriageDecision(TriageVerdict.NeedsReview, MajorBump, BreakingComment);
+                return new TriageDecision(
+                    TriageVerdict.NeedsReview,
+                    MajorBump,
+                    $"{NeedsReviewPrefix} major bump{VersionSuffix(facts.Versions.FirstOrDefault(v => v.Kind == BumpAnalyzer.Major && !IsCalendar(v)))}.");
             case "calver":
-                return new TriageDecision(TriageVerdict.NeedsReview, CalverBump, null);
+                return new TriageDecision(
+                    TriageVerdict.NeedsReview,
+                    CalverBump,
+                    $"{NeedsReviewPrefix} calendar-versioned bump{VersionSuffix(facts.Versions.FirstOrDefault(IsCalendar))}. The version can't show whether it breaks anything.");
             case "other":
-                return new TriageDecision(TriageVerdict.NeedsReview, OtherBump, null);
+                return new TriageDecision(TriageVerdict.NeedsReview, OtherBump, OtherBumpComment);
             case "patch":
             case "minor":
-                return DecidePatchOrMinor(branch, jev);
+                return DecidePatchOrMinor(branch, jev, facts);
             default:
-                return new TriageDecision(TriageVerdict.NeedsReview, UnknownBump, null);
+                return new TriageDecision(TriageVerdict.NeedsReview, UnknownBump, OtherBumpComment);
         }
     }
 
     public static TriageDecision NonRenovateCommitDecision() => new(TriageVerdict.NeedsReview, NonRenovateCommit, NonRenovateCommitComment);
 
-    public static TriageDecision CiFailedDecision() => new(TriageVerdict.NeedsReview, CiFailed, CiFailedComment);
-
-    public static TriageDecision CiTimeoutDecision() => new(TriageVerdict.NeedsReview, CiTimeout, null);
-
-    public static TriageDecision HighRiskDecision() => new(TriageVerdict.NeedsReview, HighRisk, HighRiskComment);
-
-    public static TriageDecision JevErrorDecision() => new(TriageVerdict.NeedsReview, JevError, null);
-
-    private static TriageDecision DecidePatchOrMinor(string branch, JevAnswers jev)
+    public static TriageDecision CiFailedDecision(string repo, string headSha, IReadOnlyList<GitHubCheckRun> failed)
     {
+        ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(headSha);
+        ArgumentNullException.ThrowIfNull(failed);
+        var comment = new StringBuilder($"{NeedsReviewPrefix} CI failed on `{ShortSha(headSha)}`.");
+        if (failed.Count > 0)
+        {
+            var links = failed.Take(MaxListedFailedChecks).Select(c => $"[{LinkText(c.Name)}](https://github.com/{repo}/runs/{c.Id.ToString(CultureInfo.InvariantCulture)})");
+            comment.Append(" Failed: ").Append(string.Join(", ", links));
+            comment.Append(failed.Count > MaxListedFailedChecks ? $" and {failed.Count - MaxListedFailedChecks} more." : ".");
+        }
+
+        return new TriageDecision(TriageVerdict.NeedsReview, CiFailed, comment.ToString());
+    }
+
+    public static TriageDecision CiTimeoutDecision() => new(TriageVerdict.NeedsReview, CiTimeout, CiTimeoutComment);
+
+    public static TriageDecision HighRiskDecision(string term)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+        return new TriageDecision(TriageVerdict.NeedsReview, HighRisk, $"{NeedsReviewPrefix} `{term}` is on the high-risk list. These always get a human look.");
+    }
+
+    public static TriageDecision JevErrorDecision() => new(TriageVerdict.NeedsReview, JevError, JevErrorComment);
+
+    public static string ShortSha(string sha)
+    {
+        ArgumentNullException.ThrowIfNull(sha);
+        return sha[..Math.Min(7, sha.Length)];
+    }
+
+    public static string StickyApprovalText(string headSha, string? approvalComment)
+    {
+        ArgumentNullException.ThrowIfNull(headSha);
+        var reason = approvalComment is not null && approvalComment.StartsWith(AutoApprovedPrefix, StringComparison.Ordinal)
+            ? approvalComment[AutoApprovedPrefix.Length..].Trim().TrimEnd('.')
+            : string.Empty;
+        var commit = $"{AutoApprovedPrefix} new commit `{ShortSha(headSha)}`";
+        return reason.Length == 0 ? $"{commit}." : $"{commit}, {char.ToLowerInvariant(reason[0])}{reason[1..]}.";
+    }
+
+    private static TriageDecision DecidePatchOrMinor(string branch, JevAnswers jev, BumpFacts facts)
+    {
+        var disagreeing = facts.Versions.FirstOrDefault(v => !string.Equals(v.Kind, jev.BumpType, StringComparison.Ordinal));
+        if (disagreeing is not null)
+        {
+            return new TriageDecision(
+                TriageVerdict.NeedsReview,
+                BumpTypeMismatch,
+                $"{NeedsReviewPrefix} the versions in the diff (`{disagreeing.Old}` -> `{disagreeing.New}`) don't match the bump type Jev picked (`{jev.BumpType}`).");
+        }
+
+        if (facts.UnpairedVersions)
+        {
+            return new TriageDecision(TriageVerdict.NeedsReview, BumpTypeMismatch, $"{NeedsReviewPrefix} the versions in the diff don't match the bump type Jev picked (`{jev.BumpType}`).");
+        }
+
         if (_allowlist.Any(entry => branch.StartsWith(entry, StringComparison.Ordinal)))
         {
-            return new TriageDecision(TriageVerdict.Approve, Allowlisted, null);
+            return new TriageDecision(TriageVerdict.Approve, Allowlisted, AllowlistedApprovalComment);
         }
 
         return jev.Changelog >= ChangelogThreshold
-            ? new TriageDecision(TriageVerdict.Approve, ChangelogPresent, null)
+            ? new TriageDecision(TriageVerdict.Approve, ChangelogPresent, $"{AutoApprovedPrefix} {jev.BumpType} bump with changelog.")
             : new TriageDecision(TriageVerdict.NeedsReview, NoChangelog, NoChangelogComment);
     }
+
+    private static bool IsCalendar(VersionChange change) => CalendarVersion().IsMatch(change.Old) && CalendarVersion().IsMatch(change.New);
+
+    private static string VersionSuffix(VersionChange? change) => change is null ? string.Empty : $", `{change.Old}` -> `{change.New}`";
+
+    private static string LinkText(string name)
+    {
+        var text = LineBreaks().Replace(name, " ").Replace("[", "(", StringComparison.Ordinal).Replace("]", ")", StringComparison.Ordinal).Replace("`", "'", StringComparison.Ordinal).Trim();
+        return $"`{(text.Length == 0 ? "check" : text)}`";
+    }
+
+    private static List<GitHubCheckRun> ConsideredChecks(IReadOnlyList<GitHubCheckRun> checks) =>
+        [.. checks.Where(c => !StartsWithAny(c.Name, _ignoredCheckPrefixes) && !string.Equals(c.AppSlug, MergifyApp, StringComparison.Ordinal))];
+
+    private static bool IsFailing(GitHubCheckRun check) => !StartsWithAny(check.Name, _notFailingCheckPrefixes) && !PassingConclusion(check.Conclusion);
 
     private static bool IsCompleted(string status) => string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase);
 
@@ -227,8 +333,9 @@ public static partial class TriageRules
         && string.Equals(commit.CommitterEmail, GitHubCommitterEmail, StringComparison.Ordinal)
         && commit.Verified;
 
-    private static bool IsBlockingLabel(string label, bool shadow) =>
-        _blockingLabels.Contains(label, StringComparer.Ordinal) && !(shadow && _livePathLabels.Contains(label, StringComparer.Ordinal));
+    private static bool IsBlockingLabel(string label, bool ignoreTriageSignals, bool honourNeedsReviewLabel) =>
+        _blockingLabels.Contains(label, StringComparer.Ordinal)
+        && !(ignoreTriageSignals && _livePathLabels.Contains(label, StringComparer.Ordinal) && !(honourNeedsReviewLabel && label == NeedsReviewLabel));
 
     private static bool IsTriageBot(GitHubReview review) => string.Equals(review.AuthorLogin, TriageBotLogin, StringComparison.Ordinal);
 
@@ -241,6 +348,12 @@ public static partial class TriageRules
 
     private static bool StartsWithAny(string name, string[] prefixes) =>
         prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
+
+    [GeneratedRegex(@"^v?20\d\d\.", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex CalendarVersion();
+
+    [GeneratedRegex(@"\s*[\r\n]+\s*", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex LineBreaks();
 
     [GeneratedRegex("kube|k8s|n8n|talos|ceph|rook|traefik|cilium|victoria|velero|postgres|litellm|flux|technitium|nexus|barman|app-template|cnpg|cloudflared|vaultwarden|authentik|dns|foundryvtt", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex RiskyBranch();
