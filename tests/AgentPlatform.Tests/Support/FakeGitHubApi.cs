@@ -35,6 +35,8 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public List<long> Dismissed { get; } = [];
 
+    public List<string> DismissalMessages { get; } = [];
+
     public List<string> Calls { get; } = [];
 
     public Action? OnPullRequestRead { get; set; }
@@ -127,6 +129,7 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
         Writes.Add($"dismiss:{reviewId}");
         Dismissed.Add(reviewId);
+        DismissalMessages.Add(message);
         var index = Reviews.FindIndex(r => r.Id == reviewId);
         if (index >= 0)
         {

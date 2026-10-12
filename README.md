@@ -118,7 +118,7 @@ In order; the first that applies decides:
 1. The repository is not owned by `anthony-spruyt`, the pull request is not open, or its head or base is in another repository: skipped. In `Shadow` mode a merged pull request is not skipped (Mergify may merge it before CI is complete); one closed without merging still is.
 2. The author is not Renovate, or the pull request has an `agent/needs-review`, `agent/revert` or `blocked` label: skipped. In `Shadow` mode the `agent/needs-review` and `agent/auto-approved` labels are ignored.
 3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved. In `Shadow` mode reviews by the triage App are ignored.
-4. A verdict already exists for the head sha and mode: nothing to do. In `Live` only a verdict that `Apply` has written counts. A `Live` verdict that was recorded but not applied is applied again on the next signal, without asking Jev again; for it the triage App's own approval and the `agent/*` labels are ignored, and `blocked`, `agent/revert` and human approvals still skip.
+4. A verdict already exists for the head sha and mode: nothing to do. In `Live` only a verdict that `Apply` has written counts; an unapplied one is applied again on the next signal, without asking Jev again (see Writes).
 5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
 6. CI must be done. All check runs of the sha and all check suites are read; a run or suite that has not completed, or no check runs at all, is pending. Mergify checks are ignored. A failed check: needs review, `ci-failed`. The branch matching the high-risk list: needs review, `high-risk`.
 7. Jev answers a breaking-change score, a bump type and a changelog score. It judges the bump type itself from the old and new versions in the diff or the body, without trusting Renovate's labels. A breaking score of 0.66 or more, or a major, calver or other type: needs review. An answer that is none of the known types: needs review, `unknown-bump`.
@@ -129,37 +129,42 @@ In order; the first that applies decides:
 
 Jev stays the judge; the code only guards the diff.
 
-- A `digest` answer approves only when every changed line pair in the pull request diff differs in `sha256` or digest strings alone. Otherwise: needs review, `digest-mismatch`.
-- For `patch` and `minor`, the old and new versions are read from the `-` and `+` line pairs of the diff (semver-like versions). If any pair disagrees with Jev's type: needs review, `bump-type-mismatch`. When no pair is found, Jev's answer stands.
-- The parsed versions also fill the comment texts; a comment leaves them out when none were parsed.
+- A `digest` answer approves only when every changed line pair in the pull request diff differs in `sha256` or digest strings alone, or the new line is the old line with `@sha256:<64 hex>` appended (a Renovate pin-digest change). Anything else: needs review, `digest-mismatch`.
+- For `patch` and `minor`, the old and new versions are read from the `-` and `+` line pairs of the diff (semver-like versions). If any pair disagrees with Jev's type, or a changed line pair has a different number of versions on its two sides (or a version on one side only): needs review, `bump-type-mismatch`. When the diff has no versions at all, Jev's answer stands.
+- The parsed versions also fill the comment texts: a major comment shows only a semver major pair and a calver comment only a calendar-versioned pair (a year such as `2025.1` first). A comment leaves the versions out when no such pair was parsed.
 
 ### Writes
 
-`Apply` writes with an installation token for the pull request's repository. It first re-reads the pull request and writes nothing, only logging, when the head sha is not the judged one or the pull request is not open. It has its own retry options (up to 12 tries over two hours). Errors `400`, `404`, `410` and `422` are not retried; rate limits (`403` or `429`) and `5xx` are.
+`Apply` writes with an installation token for the pull request's repository. It first re-reads the pull request and writes nothing, only logging, when the head sha is not the judged one or the pull request is not open. It has its own retry options (up to 12 tries, about 35 minutes of backoff). Errors `400`, `404`, `410` and `422` are not retried; rate limits (`403` or `429`) and `5xx` are.
 
-- Approve: an `APPROVE` review pinned to the judged commit (skipped when the App already approved that sha) and the label `agent/auto-approved`. If a sticky comment from an earlier needs-review exists, it is edited to say the new commit was auto-approved.
-- Needs review: the label `agent/needs-review`, the verdict comment, and a dismissal of the App's approvals on any other commit.
+- Approve: an `APPROVE` review pinned to the judged commit (skipped when the App already approved that sha) and the label `agent/auto-approved`. If a sticky comment from an earlier needs-review exists, it is edited to say the new commit was auto-approved (see the table).
+- Needs review: the label `agent/needs-review`, the verdict comment, and a dismissal of every approval by the App, including one on the same commit. GitHub refusing a dismissal (`422`) is logged as a warning and the rest carries on.
 - One sticky comment per pull request, found by the hidden marker `<!-- agent-platform:renovate-triage -->` on a comment by the App. It is created once and edited for each new head sha, never duplicated.
 - When the writes are done the verdict row gets `applied_at`.
+- An unapplied verdict is applied again with the App's own approval and the `agent/auto-approved` label ignored, and `agent/needs-review` ignored when the verdict is needs review. `blocked`, `agent/revert` and human approvals still skip it, and so does `agent/needs-review` when the verdict is approve.
 
 The comments:
 
-| Reason                 | Text                                                                                                              |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `ci-failed`            | **Needs review:** CI failed on `<short sha>`. Failed: `<check names, linked>`.                                    |
-| `high-risk`            | **Needs review:** `<matched term>` is on the high-risk list. These always get a human look.                       |
-| `breaking`             | **Needs review:** likely breaking changes (Jev score `<x>`).                                                      |
-| `major-bump`           | **Needs review:** major bump, `<old>` -> `<new>`.                                                                 |
-| `calver-bump`          | **Needs review:** calendar-versioned bump, `<old>` -> `<new>`. The version can't show whether it breaks anything. |
-| `other-bump`           | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
-| `unknown-bump`         | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
-| `no-changelog`         | **Needs review:** no changelog found for this bump.                                                               |
-| `jev-error`            | **Needs review:** the triage check couldn't run (Jev error).                                                      |
-| `bump-type-mismatch`   | **Needs review:** the versions in the diff (`<old>` -> `<new>`) don't match the bump type Jev picked (`<type>`).  |
-| `digest-mismatch`      | **Needs review:** marked as a digest bump, but more than a digest changed.                                        |
-| `non-renovate-commit`  | **Needs review:** the PR has commits that Renovate didn't make.                                                   |
-| `ci-timeout`           | **Needs review:** CI didn't finish within two hours.                                                              |
-| Approved (review body) | **Auto-approved:** digest bump, `<patch or minor>` bump with changelog, or allowlisted.                           |
+| Reason                | Text                                                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ci-failed`           | **Needs review:** CI failed on `<short sha>`. Failed: `<check names, linked>`.                                    |
+| `high-risk`           | **Needs review:** `<matched term>` is on the high-risk list. These always get a human look.                       |
+| `breaking`            | **Needs review:** likely breaking changes (Jev score `<x>`).                                                      |
+| `major-bump`          | **Needs review:** major bump, `<old>` -> `<new>`.                                                                 |
+| `calver-bump`         | **Needs review:** calendar-versioned bump, `<old>` -> `<new>`. The version can't show whether it breaks anything. |
+| `other-bump`          | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
+| `unknown-bump`        | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
+| `no-changelog`        | **Needs review:** no changelog found for this bump.                                                               |
+| `jev-error`           | **Needs review:** the triage check couldn't run (Jev error).                                                      |
+| `bump-type-mismatch`  | **Needs review:** the versions in the diff (`<old>` -> `<new>`) don't match the bump type Jev picked (`<type>`).  |
+| `digest-mismatch`     | **Needs review:** marked as a digest bump, but more than a digest changed.                                        |
+| `non-renovate-commit` | **Needs review:** this PR has commits that Renovate didn't make.                                                  |
+| `ci-timeout`          | **Needs review:** CI didn't finish within 2 hours.                                                                |
+| `digest`              | Review body: **Auto-approved:** digest bump.                                                                      |
+| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with changelog.                                           |
+| `allowlisted`         | Review body: **Auto-approved:** allowlisted.                                                                      |
+| Sticky edit           | **Auto-approved:** new commit `<short sha>`, `<reason>`. The reason is the review body's text, lowercased.        |
+| Dismissal message     | A newer commit needs review.                                                                                      |
 
 ## Run data
 

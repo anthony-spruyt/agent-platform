@@ -6,7 +6,7 @@ namespace AgentPlatform.Host.RenovateTriage;
 
 public sealed record VersionChange(string Old, string New, string Kind);
 
-public sealed record BumpFacts(bool DigestOnly, IReadOnlyList<VersionChange> Versions)
+public sealed record BumpFacts(bool DigestOnly, IReadOnlyList<VersionChange> Versions, bool UnpairedVersions = false)
 {
     public static BumpFacts Empty { get; } = new(false, []);
 }
@@ -25,6 +25,7 @@ public static partial class BumpAnalyzer
         var digestOnly = files.Count > 0;
         var changedBlocks = 0;
         var versions = new List<VersionChange>();
+        var unpaired = false;
 
         foreach (var file in files)
         {
@@ -38,28 +39,33 @@ public static partial class BumpAnalyzer
             {
                 changedBlocks++;
                 digestOnly &= IsDigestOnly(removed, added);
-                CollectVersions(removed, added, versions);
+                unpaired |= CollectVersions(removed, added, versions);
             }
         }
 
-        return new BumpFacts(digestOnly && changedBlocks > 0, [.. versions.Distinct()]);
+        return new BumpFacts(digestOnly && changedBlocks > 0, [.. versions.Distinct()], unpaired);
     }
 
     private static bool IsDigestOnly(List<string> removed, List<string> added) =>
         removed.Count == added.Count
         && removed.Count > 0
-        && removed.Zip(added).All(pair => string.Equals(MaskDigests(pair.First), MaskDigests(pair.Second), StringComparison.Ordinal));
+        && removed.Zip(added).All(pair => string.Equals(MaskDigests(pair.First), MaskDigests(pair.Second), StringComparison.Ordinal) || IsAppendedDigest(pair.First, pair.Second));
+
+    private static bool IsAppendedDigest(string oldLine, string newLine) =>
+        newLine.StartsWith(oldLine, StringComparison.Ordinal) && AppendedDigest().IsMatch(newLine.AsSpan(oldLine.Length));
 
     private static string MaskDigests(string line) => Sha256Digest().Replace(GitSha().Replace(line, DigestPlaceholder), DigestPlaceholder);
 
-    private static void CollectVersions(List<string> removed, List<string> added, List<VersionChange> versions)
+    private static bool CollectVersions(List<string> removed, List<string> added, List<VersionChange> versions)
     {
+        var unpaired = false;
         foreach (var (oldLine, newLine) in removed.Zip(added))
         {
             var oldTokens = VersionTokens(oldLine);
             var newTokens = VersionTokens(newLine);
-            if (oldTokens.Count == 0 || oldTokens.Count != newTokens.Count)
+            if (oldTokens.Count != newTokens.Count)
             {
+                unpaired = true;
                 continue;
             }
 
@@ -72,6 +78,8 @@ public static partial class BumpAnalyzer
                 }
             }
         }
+
+        return unpaired;
     }
 
     private static string? KindOfChange(VersionToken before, VersionToken after)
@@ -155,6 +163,9 @@ public static partial class BumpAnalyzer
 
     [GeneratedRegex("sha256:[0-9a-fA-F]{64}", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Sha256Digest();
+
+    [GeneratedRegex(@"^@sha256:[0-9a-fA-F]{64}\z", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex AppendedDigest();
 
     [GeneratedRegex("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex GitSha();

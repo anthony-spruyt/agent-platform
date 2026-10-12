@@ -59,6 +59,13 @@ public class TriageRulesTests
             Assert.Null(TriageRules.SkipReason(29139614, [label], ignoreTriageSignals: true));
         }
 
+        [Fact]
+        public void TheNeedsReviewLabel_StillBlocksWhenAskedToHonourIt()
+        {
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-review"], ignoreTriageSignals: true, honourNeedsReviewLabel: true));
+            Assert.Null(TriageRules.SkipReason(29139614, ["agent/auto-approved"], ignoreTriageSignals: true, honourNeedsReviewLabel: true));
+        }
+
         [Theory]
         [InlineData("agent/revert")]
         [InlineData("blocked")]
@@ -306,7 +313,7 @@ public class TriageRulesTests
         public void TheDecision_NeedsReviewWithTheCommitComment()
         {
             Assert.Equal(
-                new TriageDecision(TriageVerdict.NeedsReview, "non-renovate-commit", "**Needs review:** the PR has commits that Renovate didn't make."),
+                new TriageDecision(TriageVerdict.NeedsReview, "non-renovate-commit", "**Needs review:** this PR has commits that Renovate didn't make."),
                 TriageRules.NonRenovateCommitDecision());
         }
     }
@@ -534,6 +541,38 @@ public class TriageRulesTests
         }
 
         [Fact]
+        public void Major_OmitsTheVersionsWhenOnlyAnUnrelatedPairWasParsed()
+        {
+            var decision = Decide("renovate/foo", Jev("major"), Versions(("1.0.0", "1.0.1", "patch"), ("1.0.0", "1.1.0", "minor")));
+
+            Assert.Equal("**Needs review:** major bump.", decision.Comment);
+        }
+
+        [Fact]
+        public void Major_DoesNotNameACalendarPair()
+        {
+            var decision = Decide("renovate/foo", Jev("major"), Versions(("2024.10", "2025.1", "major")));
+
+            Assert.Equal("**Needs review:** major bump.", decision.Comment);
+        }
+
+        [Fact]
+        public void Calver_OmitsTheVersionsWhenOnlySemverPairsWereParsed()
+        {
+            var decision = Decide("renovate/foo", Jev("calver"), Versions(("1.9.0", "2.0.0", "major"), ("1.0.0", "1.0.1", "patch")));
+
+            Assert.Equal("**Needs review:** calendar-versioned bump. The version can't show whether it breaks anything.", decision.Comment);
+        }
+
+        [Fact]
+        public void Calver_NamesTheCalendarPairAmongSeveral()
+        {
+            var decision = Decide("renovate/foo", Jev("calver"), Versions(("1.9.0", "2.0.0", "major"), ("2025.1.2", "2025.2.0", "minor")));
+
+            Assert.Equal("**Needs review:** calendar-versioned bump, `2025.1.2` -> `2025.2.0`. The version can't show whether it breaks anything.", decision.Comment);
+        }
+
+        [Fact]
         public void Calver_NeedsReviewAndNamesTheVersionsWhenTheyWereParsed()
         {
             var decision = Decide("renovate/foo", Jev("calver"), Versions(("2024.10", "2025.1", "major")));
@@ -605,6 +644,26 @@ public class TriageRulesTests
             var decision = Decide("renovate/foo", Jev(bump), Versions(("1.0.0", "1.0.1", bump)));
 
             Assert.Equal(TriageRules.ChangelogPresent, decision.Reason);
+        }
+
+        [Theory]
+        [InlineData("patch")]
+        [InlineData("minor")]
+        public void PatchAndMinor_NeedReviewWhenAChangedLineHadNoVersionToPair(string bump)
+        {
+            var decision = Decide("renovate/foo", Jev(bump), new BumpFacts(false, [], UnpairedVersions: true));
+
+            Assert.Equal(
+                new TriageDecision(TriageVerdict.NeedsReview, TriageRules.BumpTypeMismatch, $"**Needs review:** the versions in the diff don't match the bump type Jev picked (`{bump}`)."),
+                decision);
+        }
+
+        [Fact]
+        public void PatchAndMinor_NameTheDisagreeingPairBeforeFallingBackToTheUnpairedText()
+        {
+            var decision = Decide("renovate/foo", Jev("patch"), new BumpFacts(false, [new VersionChange("1.0.0", "1.1.0", "minor")], UnpairedVersions: true));
+
+            Assert.Contains("`1.0.0` -> `1.1.0`", decision.Comment, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -684,7 +743,7 @@ public class TriageRulesTests
         [Fact]
         public void TheOtherFixedTexts_AreAsApproved()
         {
-            Assert.Equal("**Needs review:** CI didn't finish within two hours.", TriageRules.CiTimeoutDecision().Comment);
+            Assert.Equal("**Needs review:** CI didn't finish within 2 hours.", TriageRules.CiTimeoutDecision().Comment);
             Assert.Equal("**Needs review:** the triage check couldn't run (Jev error).", TriageRules.JevErrorDecision().Comment);
         }
     }
@@ -701,7 +760,7 @@ public class TriageRulesTests
             Assert.Equal(TriageVerdict.NeedsReview, decision.Verdict);
             Assert.Equal(TriageRules.CiFailed, decision.Reason);
             Assert.Equal(
-                "**Needs review:** CI failed on `0123456`. Failed: [build](https://github.com/anthony-spruyt/widgets/runs/11), [test (x)](https://github.com/anthony-spruyt/widgets/runs/12).",
+                "**Needs review:** CI failed on `0123456`. Failed: [`build`](https://github.com/anthony-spruyt/widgets/runs/11), [`test (x)`](https://github.com/anthony-spruyt/widgets/runs/12).",
                 decision.Comment);
         }
 
@@ -718,8 +777,8 @@ public class TriageRulesTests
 
             var comment = TriageRules.CiFailedDecision(Repo, Head, failed).Comment!;
 
-            Assert.Contains("[job-10](", comment, StringComparison.Ordinal);
-            Assert.DoesNotContain("[job-11](", comment, StringComparison.Ordinal);
+            Assert.Contains("[`job-10`](", comment, StringComparison.Ordinal);
+            Assert.DoesNotContain("[`job-11`](", comment, StringComparison.Ordinal);
             Assert.EndsWith(" and 2 more.", comment, StringComparison.Ordinal);
         }
 
@@ -728,7 +787,20 @@ public class TriageRulesTests
         {
             var comment = TriageRules.CiFailedDecision(Repo, Head, [new GitHubCheckRun(1, "a](https://evil.test) `x`", "completed", "failure", "github-actions")]).Comment!;
 
-            Assert.Equal("**Needs review:** CI failed on `0123456`. Failed: [a)(https://evil.test) 'x'](https://github.com/anthony-spruyt/widgets/runs/1).", comment);
+            Assert.Equal("**Needs review:** CI failed on `0123456`. Failed: [`a)(https://evil.test) 'x'`](https://github.com/anthony-spruyt/widgets/runs/1).", comment);
+        }
+
+        [Theory]
+        [InlineData("@octocat please look", "`@octocat please look`")]
+        [InlineData("<img src=x onerror=y>", "`<img src=x onerror=y>`")]
+        [InlineData("a <!-- b", "`a <!-- b`")]
+        [InlineData("line one\nline two", "`line one line two`")]
+        [InlineData("  ", "`check`")]
+        public void CiFailed_ShowsACheckNameAsInlineCodeSoItCannotMentionOrInjectHtml(string name, string shown)
+        {
+            var comment = TriageRules.CiFailedDecision(Repo, Head, [new GitHubCheckRun(1, name, "completed", "failure", "github-actions")]).Comment!;
+
+            Assert.Equal($"**Needs review:** CI failed on `0123456`. Failed: [{shown}](https://github.com/anthony-spruyt/widgets/runs/1).", comment);
         }
 
         [Fact]
@@ -764,6 +836,16 @@ public class TriageRulesTests
         public void RiskyTerm_IsTheFirstMatchOrNothing(string branch, string? term)
         {
             Assert.Equal(term, TriageRules.RiskyTerm(branch));
+        }
+
+        [Theory]
+        [InlineData("**Auto-approved:** digest bump.", "**Auto-approved:** new commit `0123456`, digest bump.")]
+        [InlineData("**Auto-approved:** allowlisted.", "**Auto-approved:** new commit `0123456`, allowlisted.")]
+        [InlineData("**Auto-approved:**", "**Auto-approved:** new commit `0123456`.")]
+        [InlineData(null, "**Auto-approved:** new commit `0123456`.")]
+        public void StickyApprovalText_NamesTheCommitAndTheLowercasedReason(string? approvalComment, string expected)
+        {
+            Assert.Equal(expected, TriageRules.StickyApprovalText(Head, approvalComment));
         }
 
         [Theory]

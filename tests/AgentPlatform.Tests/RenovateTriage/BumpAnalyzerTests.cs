@@ -44,6 +44,37 @@ public class BumpAnalyzerTests
         }
 
         [Fact]
+        public void APinnedDigestAppendedToTheSameImageReference_IsDigestOnly()
+        {
+            var facts = AnalyzePatch($"@@ -1 +1 @@\n-image: foo:1.2.3\n+image: foo:1.2.3@{DigestA}");
+
+            Assert.True(facts.DigestOnly);
+            Assert.False(facts.UnpairedVersions);
+        }
+
+        [Theory]
+        [InlineData("image: foo:1.2.3", "image: foo:1.2.4@sha256:A")]
+        [InlineData("image: foo:1.2.3", "image: foo:1.2.3@sha256:A # pinned")]
+        [InlineData("image: foo:1.2.3", "image: foo:1.2.3 @sha256:A")]
+        [InlineData("image: foo:1.2.3", "image: foo:1.2.3@sha512:A")]
+        [InlineData("image: foo:1.2.3", "image: foo:1.2.3@sha256:A@sha256:A")]
+        [InlineData("image: foo:1.2.3", "image: foo:1.2.3@sha256:A\n+extra: true")]
+        public void AnythingBesideTheAppendedDigest_IsNotDigestOnly(string removed, string added)
+        {
+            var patch = $"@@ -1 +1 @@\n-{removed}\n+{added.Replace("sha512:A", "sha512:" + new string('a', 64), StringComparison.Ordinal).Replace("sha256:A", DigestA, StringComparison.Ordinal)}";
+
+            Assert.False(AnalyzePatch(patch).DigestOnly);
+        }
+
+        [Fact]
+        public void AGoPseudoVersionBump_IsNotDigestOnly()
+        {
+            var facts = AnalyzePatch("@@ -1 +1 @@\n-\tgolang.org/x/foo v0.0.0-20240101000000-aaaaaaaaaaaa\n+\tgolang.org/x/foo v0.0.0-20240202000000-bbbbbbbbbbbb");
+
+            Assert.False(facts.DigestOnly);
+        }
+
+        [Fact]
         public void ATagThatChangesBesideTheDigest_IsNotDigestOnly()
         {
             var facts = AnalyzePatch($"@@ -1 +1 @@\n-image: app:1.2.3@{DigestA}\n+image: app:1.2.4@{DigestB}");
@@ -158,12 +189,23 @@ public class BumpAnalyzerTests
             Assert.Empty(facts.Versions);
         }
 
-        [Fact]
-        public void LinesWithADifferentNumberOfVersions_AreNotPaired()
+        [Theory]
+        [InlineData("-a: 1.0.0", "+a: 1.0.1 and 2.0.0")]
+        [InlineData("-a: 1.0.0", "+a: latest")]
+        [InlineData("-a: latest", "+a: 1.0.1")]
+        public void LinesWithADifferentNumberOfVersions_AreNotPaired_AndAreReportedAsUnpaired(string removed, string added)
         {
-            var facts = AnalyzePatch("@@ -1 +1 @@\n-a: 1.0.0\n+a: 1.0.1 and 2.0.0");
+            var facts = AnalyzePatch($"@@ -1 +1 @@\n{removed}\n{added}");
 
             Assert.Empty(facts.Versions);
+            Assert.True(facts.UnpairedVersions);
+        }
+
+        [Fact]
+        public void PairedLinesAndLinesWithoutVersions_AreNotReportedAsUnpaired()
+        {
+            Assert.False(AnalyzePatch("@@ -1,2 +1,2 @@\n-a: 1.0.0\n-name: old\n+a: 1.0.1\n+name: new").UnpairedVersions);
+            Assert.False(BumpAnalyzer.Analyze([]).UnpairedVersions);
         }
 
         [Fact]

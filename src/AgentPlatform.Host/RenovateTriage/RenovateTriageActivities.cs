@@ -21,7 +21,7 @@ public sealed partial class RenovateTriageActivities(
 
     private const string NotLive = "not-live";
     private const string HeadMoved = "head-moved";
-    private const string DismissalMessage = "A newer commit needs review, so this approval no longer applies.";
+    private const string DismissalMessage = "A newer commit needs review.";
 
     [Activity(AssessName)]
     public Task<AssessResult> AssessAsync(AssessInput input) =>
@@ -43,7 +43,8 @@ public sealed partial class RenovateTriageActivities(
                 ? await verdicts.FindUnappliedAsync(input.Repo, input.PrNumber, sha, cancellationToken).ConfigureAwait(false)
                 : null;
             var ignoreTriageSignals = shadow || unapplied is not null;
-            var skip = SkipReason(input.Repo, pr, shadow, ignoreTriageSignals);
+            var honourNeedsReviewLabel = unapplied is { Verdict: TriageVerdict.Approve };
+            var skip = SkipReason(input.Repo, pr, shadow, ignoreTriageSignals, honourNeedsReviewLabel);
             if (skip is not null)
             {
                 return new AssessResult(AssessStatus.Skipped, sha, skip, Mode: mode);
@@ -197,15 +198,14 @@ public sealed partial class RenovateTriageActivities(
         var sticky = await FindStickyAsync(input, cancellationToken).ConfigureAwait(false);
         if (sticky is not null)
         {
-            var text = $"{summary} The new commit `{TriageRules.ShortSha(input.HeadSha)}` was auto-approved.";
-            await UpsertStickyAsync(input, sticky, text, cancellationToken).ConfigureAwait(false);
+            await UpsertStickyAsync(input, sticky, TriageRules.StickyApprovalText(input.HeadSha, input.Decision.Comment), cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async Task FlagAsync(ApplyInput input, CancellationToken cancellationToken)
     {
         var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-        foreach (var stale in reviews.Where(r => IsBotApproval(r) && !string.Equals(r.CommitId, input.HeadSha, StringComparison.Ordinal)))
+        foreach (var stale in reviews.Where(IsBotApproval))
         {
             await DismissAsync(input, stale, cancellationToken).ConfigureAwait(false);
         }
@@ -254,21 +254,21 @@ public sealed partial class RenovateTriageActivities(
     [LoggerMessage(Level = LogLevel.Information, Message = "Not applying the verdict for {Repo}#{Number}: {Reason}.")]
     private static partial void LogNotApplied(ILogger logger, string repo, int number, string reason);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "GitHub refused to dismiss review {ReviewId} on {Repo}#{Number}; carrying on.")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub refused to dismiss review {ReviewId} on {Repo}#{Number}; carrying on.")]
     private static partial void LogDismissRefused(ILogger logger, long reviewId, string repo, int number);
 
     private static bool IsBotApproval(GitHubReview review) =>
         string.Equals(review.AuthorLogin, TriageRules.TriageBotLogin, StringComparison.Ordinal)
         && string.Equals(review.State, "APPROVED", StringComparison.OrdinalIgnoreCase);
 
-    private static string? SkipReason(string repo, GitHubPullRequest pr, bool shadow, bool ignoreTriageSignals)
+    private static string? SkipReason(string repo, GitHubPullRequest pr, bool shadow, bool ignoreTriageSignals, bool honourNeedsReviewLabel)
     {
         if (TriageRules.IsNotOpen(pr.State, pr.Merged, shadow))
         {
             return TriageRules.NotOpen;
         }
 
-        return TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals)
+        return TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals, honourNeedsReviewLabel)
             ?? (TriageRules.IsSameRepo(repo, pr.HeadRepo, pr.BaseRepo) ? null : TriageRules.ForeignRepo);
     }
 
