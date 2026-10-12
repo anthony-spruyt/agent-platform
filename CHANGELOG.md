@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.3.0...v1.4.0) (2026-10-12)
+
+
+### Features
+
+* add the RenovateTriage workflow in shadow mode ([#30](https://github.com/anthony-spruyt/agent-platform/issues/30)) ([327b343](https://github.com/anthony-spruyt/agent-platform/commit/327b34371e16c0d945fad4ac992f9f31885a5b4e))
+
 ## [1.3.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.2.1...v1.3.0) (2026-10-12)
 
 
