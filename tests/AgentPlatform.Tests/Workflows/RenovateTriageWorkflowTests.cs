@@ -319,24 +319,25 @@ public class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task AMajorBumpInTheUpdateTable_IsNeedsReviewWhenJevSaysPatch()
+    public async Task AMajorBumpAnsweredByJev_IsNeedsReview()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
-        rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.UpdateTable("major"));
+        rig.Jev.Answers = new JevAnswers(0.04, "major", 0.9);
 
         var result = await InWorkerAsync(env, rig, async () =>
         {
             var handle = await StartAsync(env, Signal());
-            return await RunToResultAsync(handle, "renovate-triage-type-mismatch");
+            return await RunToResultAsync(handle, "renovate-triage-major-bump");
         });
 
         Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.MajorBump, TriageVerdict.NeedsReview), result);
         Assert.Single(rig.Jev.Bodies);
+        Assert.Single(rig.Jev.Diffs);
     }
 
     [Fact]
-    public async Task APrWithoutAReadableUpdateTable_IsNeedsReviewAndJevIsNotAsked()
+    public async Task APrWithoutAnUpdateTable_IsJudgedByJevAlone()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
@@ -348,11 +349,11 @@ public class RenovateTriageWorkflowTests
             return await RunToResultAsync(handle);
         });
 
-        Assert.Equal(TriageRules.UnknownBump, result.Reason);
-        Assert.Empty(rig.Jev.Bodies);
+        Assert.Equal(TriageRules.ChangelogPresent, result.Reason);
+        Assert.Equal(["no table"], rig.Jev.Bodies);
         await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
         var run = await db.Runs.Include(r => r.Steps).SingleAsync(Ct);
-        Assert.Equal("skipped", run.Steps.Single(s => s.Name == "jev").StopReason);
+        Assert.Equal("answered", run.Steps.Single(s => s.Name == "jev").StopReason);
     }
 
     [Fact]

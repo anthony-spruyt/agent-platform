@@ -43,7 +43,7 @@ public sealed class RenovateTriageActivities(
             }
 
             var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            if (!TriageRules.AreAllRenovateCommits(commits))
+            if (!TriageRules.AreAllRenovateCommits(commits, pr.Commits))
             {
                 return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.NonRenovateCommitDecision());
             }
@@ -72,16 +72,13 @@ public sealed class RenovateTriageActivities(
                 return new JudgeResult(HeadMoved: true);
             }
 
-            var codeType = TriageRules.UpdateTypeFromBody(pr.Body);
-            if (codeType is null)
-            {
-                return new JudgeResult(false, TriageRules.UnknownBumpDecision());
-            }
+            var files = await github.ListPullRequestFilesAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+            var diff = PrDiff.Build(files, JevClient.MaxPrDiffBytes);
 
             JevAnswers answers;
             try
             {
-                answers = await jev.AskAsync(pr.Body, cancellationToken).ConfigureAwait(false);
+                answers = await jev.AskAsync(pr.Body, diff, cancellationToken).ConfigureAwait(false);
             }
             catch (JevException ex)
             {
@@ -92,7 +89,7 @@ public sealed class RenovateTriageActivities(
                 throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
             }
 
-            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers, codeType), answers);
+            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers), answers);
         });
 
     [Activity(RecordVerdictName)]

@@ -29,6 +29,8 @@ public static partial class TriageRules
 
     public const string TriageBotLogin = "skynet-rw[bot]";
 
+    public const int MaxListedCommits = 250;
+
     public const double BreakingThreshold = 0.66;
     public const double ChangelogThreshold = 0.7;
 
@@ -141,62 +143,10 @@ public static partial class TriageRules
         return failed ? CiState.Failed : CiState.Passed;
     }
 
-    public static bool AreAllRenovateCommits(IReadOnlyList<GitHubCommit> commits)
+    public static bool AreAllRenovateCommits(IReadOnlyList<GitHubCommit> commits, int prCommitCount)
     {
         ArgumentNullException.ThrowIfNull(commits);
-        return commits.Count > 0 && commits.All(IsRenovateCommit);
-    }
-
-    public static string? UpdateTypeFromBody(string? body)
-    {
-        if (string.IsNullOrEmpty(body))
-        {
-            return null;
-        }
-
-        var updateColumn = -1;
-        string? strictest = null;
-        foreach (var line in body.Split('\n').Select(l => l.Trim()))
-        {
-            if (line == "---")
-            {
-                break;
-            }
-
-            if (updateColumn < 0)
-            {
-                updateColumn = UpdateColumn(line);
-                continue;
-            }
-
-            if (!line.StartsWith('|'))
-            {
-                break;
-            }
-
-            var cells = Cells(line);
-            if (cells.All(c => TableSeparatorCell().IsMatch(c)))
-            {
-                continue;
-            }
-
-            var type = updateColumn < cells.Count ? MapUpdateKind(cells[updateColumn]) : null;
-            if (type is null)
-            {
-                return null;
-            }
-
-            strictest = strictest is null ? type : ResolveBump(strictest, type);
-        }
-
-        return strictest;
-    }
-
-    public static string ResolveBump(string codeType, string jevBump)
-    {
-        ArgumentNullException.ThrowIfNull(codeType);
-        ArgumentNullException.ThrowIfNull(jevBump);
-        return BumpRank(jevBump) >= BumpRank(codeType) ? jevBump : codeType;
+        return prCommitCount is > 0 and < MaxListedCommits && commits.Count == prCommitCount && commits.All(IsRenovateCommit);
     }
 
     public static bool IsRiskyBranch(string branch)
@@ -206,7 +156,7 @@ public static partial class TriageRules
         return RiskyBranch().IsMatch(lower) && !lower.Contains("n8n-mcp", StringComparison.Ordinal);
     }
 
-    public static TriageDecision DecideFromJev(string branch, JevAnswers jev, string codeType)
+    public static TriageDecision DecideFromJev(string branch, JevAnswers jev)
     {
         ArgumentNullException.ThrowIfNull(branch);
         ArgumentNullException.ThrowIfNull(jev);
@@ -215,7 +165,7 @@ public static partial class TriageRules
             return new TriageDecision(TriageVerdict.NeedsReview, Breaking, BreakingComment);
         }
 
-        switch (ResolveBump(codeType, jev.BumpType))
+        switch (jev.BumpType)
         {
             case "digest":
                 return new TriageDecision(TriageVerdict.Approve, Digest, null);
@@ -234,8 +184,6 @@ public static partial class TriageRules
     }
 
     public static TriageDecision NonRenovateCommitDecision() => new(TriageVerdict.NeedsReview, NonRenovateCommit, NonRenovateCommitComment);
-
-    public static TriageDecision UnknownBumpDecision() => new(TriageVerdict.NeedsReview, UnknownBump, null);
 
     public static TriageDecision CiFailedDecision() => new(TriageVerdict.NeedsReview, CiFailed, CiFailedComment);
 
@@ -270,40 +218,6 @@ public static partial class TriageRules
         && string.Equals(commit.CommitterEmail, GitHubCommitterEmail, StringComparison.Ordinal)
         && commit.Verified;
 
-    private static List<string> Cells(string row) =>
-        [.. UnescapedPipe().Split(row.Trim().Trim('|')).Select(c => c.Trim())];
-
-    private static int UpdateColumn(string line)
-    {
-        if (!line.StartsWith('|'))
-        {
-            return -1;
-        }
-
-        var cells = Cells(line);
-        return cells.Exists(c => string.Equals(c, "Package", StringComparison.OrdinalIgnoreCase))
-            ? cells.FindIndex(c => string.Equals(c, "Update", StringComparison.OrdinalIgnoreCase))
-            : -1;
-    }
-
-    private static string? MapUpdateKind(string kind) => kind.ToLowerInvariant() switch
-    {
-        "major" => "major",
-        "minor" => "minor",
-        "patch" => "patch",
-        "digest" or "pin" or "pindigest" => "digest",
-        _ => null,
-    };
-
-    private static int BumpRank(string bump) => bump switch
-    {
-        "digest" => 0,
-        "patch" => 1,
-        "minor" => 2,
-        "major" => 3,
-        _ => 4,
-    };
-
     private static bool IsTrustedReviewer(GitHubReview review) =>
         string.Equals(review.AuthorLogin, TriageBotLogin, StringComparison.Ordinal)
         || (review.AuthorAssociation is not null && _trustedAssociations.Contains(review.AuthorAssociation, StringComparer.Ordinal));
@@ -313,12 +227,6 @@ public static partial class TriageRules
 
     private static bool StartsWithAny(string name, string[] prefixes) =>
         prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
-
-    [GeneratedRegex(@"(?<!\\)\|", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex UnescapedPipe();
-
-    [GeneratedRegex("^:?-+:?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex TableSeparatorCell();
 
     [GeneratedRegex("kube|k8s|n8n|talos|ceph|rook|traefik|cilium|victoria|velero|postgres|litellm|flux|technitium|nexus|barman|app-template|cnpg|cloudflared|vaultwarden|authentik|dns|foundryvtt", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex RiskyBranch();

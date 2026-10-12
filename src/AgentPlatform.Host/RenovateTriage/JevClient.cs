@@ -11,7 +11,7 @@ public sealed class JevException(string message, Exception? innerException = nul
 
 public interface IJevClient
 {
-    Task<JevAnswers> AskAsync(string? prBody, CancellationToken cancellationToken);
+    Task<JevAnswers> AskAsync(string? prBody, string? prDiff, CancellationToken cancellationToken);
 }
 
 public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options, TimeProvider time) : IJevClient
@@ -20,18 +20,21 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
 
     public const int MaxPrBodyBytes = 32 * 1024;
 
+    public const int MaxPrDiffBytes = 32 * 1024;
+
     private const string QuestionsResource = "JevQuestions.json";
 
     private static readonly Lazy<JsonNode> _questions = new(LoadQuestions);
 
-    public async Task<JevAnswers> AskAsync(string? prBody, CancellationToken cancellationToken)
+    public async Task<JevAnswers> AskAsync(string? prBody, string? prDiff, CancellationToken cancellationToken)
     {
         var litellm = options.Value;
         var body = new JsonObject
         {
             ["state"] = new JsonObject
             {
-                ["pr_body"] = CapBody(prBody),
+                ["pr_body"] = Cap(prBody, MaxPrBodyBytes),
+                ["pr_diff"] = Cap(prDiff, MaxPrDiffBytes),
                 ["current_date"] = time.GetUtcNow().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
             },
             ["model"] = Model,
@@ -61,15 +64,15 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
         }
     }
 
-    private static string? CapBody(string? prBody)
+    private static string? Cap(string? text, int maxBytes)
     {
-        if (prBody is null || Encoding.UTF8.GetByteCount(prBody) <= MaxPrBodyBytes)
+        if (text is null || Encoding.UTF8.GetByteCount(text) <= maxBytes)
         {
-            return prBody;
+            return text;
         }
 
-        var bytes = Encoding.UTF8.GetBytes(prBody);
-        var length = MaxPrBodyBytes;
+        var bytes = Encoding.UTF8.GetBytes(text);
+        var length = maxBytes;
         while (length > 0 && (bytes[length] & 0xC0) == 0x80)
         {
             length--;

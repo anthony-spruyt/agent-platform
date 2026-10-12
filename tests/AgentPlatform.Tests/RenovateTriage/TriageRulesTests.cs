@@ -19,8 +19,7 @@ public class TriageRulesTests
     private static GitHubCheckSuite Suite(string app = "github-actions", string status = "completed", int runs = 1) =>
         new(1, status, status == "completed" ? "success" : null, app, runs);
 
-    private static TriageDecision Decide(string branch, JevAnswers jev, string? code = null) =>
-        TriageRules.DecideFromJev(branch, jev, code ?? (jev.BumpType is "major" or "minor" or "patch" or "digest" ? jev.BumpType : "patch"));
+    private static TriageDecision Decide(string branch, JevAnswers jev) => TriageRules.DecideFromJev(branch, jev);
 
     public class AuthorAndLabels
     {
@@ -202,19 +201,37 @@ public class TriageRulesTests
         [Fact]
         public void VerifiedCommitsAuthoredByRenovateAndCommittedByGitHub_Pass()
         {
-            Assert.True(TriageRules.AreAllRenovateCommits([Commit(), Commit()]));
+            Assert.True(TriageRules.AreAllRenovateCommits([Commit(), Commit()], 2));
         }
 
         [Fact]
         public void NoCommits_Fail()
         {
-            Assert.False(TriageRules.AreAllRenovateCommits([]));
+            Assert.False(TriageRules.AreAllRenovateCommits([], 0));
+        }
+
+        [Theory]
+        [InlineData(1, 2)]
+        [InlineData(2, 1)]
+        [InlineData(2, 0)]
+        public void AListThatDiffersFromThePrCommitCount_Fails(int listed, int expected)
+        {
+            Assert.False(TriageRules.AreAllRenovateCommits([.. Enumerable.Repeat(Commit(), listed)], expected));
+        }
+
+        [Theory]
+        [InlineData(249, true)]
+        [InlineData(250, false)]
+        [InlineData(251, false)]
+        public void ACountAtTheListingLimit_Fails(int count, bool expected)
+        {
+            Assert.Equal(expected, TriageRules.AreAllRenovateCommits([.. Enumerable.Repeat(Commit(), Math.Min(count, TriageRules.MaxListedCommits))], count));
         }
 
         [Fact]
         public void OneBadCommitAmongGoodOnes_Fails()
         {
-            Assert.False(TriageRules.AreAllRenovateCommits([Commit(), Commit(login: "alice"), Commit()]));
+            Assert.False(TriageRules.AreAllRenovateCommits([Commit(), Commit(login: "alice"), Commit()], 3));
         }
 
         [Theory]
@@ -230,7 +247,7 @@ public class TriageRulesTests
         [InlineData("Renovate[bot]", 29139614L, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true)]
         public void AnythingOtherThanAVerifiedRenovateCommit_Fails(string? login, long? id, string? authorEmail, string? committerEmail, bool verified)
         {
-            Assert.False(TriageRules.AreAllRenovateCommits([Commit(login, id, authorEmail, committerEmail, verified)]));
+            Assert.False(TriageRules.AreAllRenovateCommits([Commit(login, id, authorEmail, committerEmail, verified)], 1));
         }
 
         [Fact]
@@ -239,160 +256,6 @@ public class TriageRulesTests
             Assert.Equal(
                 new TriageDecision(TriageVerdict.NeedsReview, "non-renovate-commit", "This dependency bump has commits not made by Renovate and requires review."),
                 TriageRules.NonRenovateCommitDecision());
-        }
-    }
-
-    public class UpdateTypes
-    {
-        private static string Body(params string[] rows) =>
-            "This PR contains the following updates:\n\n| Package | Update | Change |\n|---|---|---|\n"
-            + string.Concat(rows.Select(r => r + "\n"))
-            + "\n---\n\n### Release Notes\n";
-
-        private static string Row(string update) => $"| [dep](https://example.test) | {update} | `1.0.0` -> `1.0.1` |";
-
-        [Theory]
-        [InlineData("major", "major")]
-        [InlineData("minor", "minor")]
-        [InlineData("patch", "patch")]
-        [InlineData("digest", "digest")]
-        [InlineData("pin", "digest")]
-        [InlineData("pinDigest", "digest")]
-        [InlineData("Minor", "minor")]
-        public void TheUpdateColumnOfASingleRow_IsTheType(string update, string expected)
-        {
-            Assert.Equal(expected, TriageRules.UpdateTypeFromBody(Body(Row(update))));
-        }
-
-        [Theory]
-        [InlineData("lockFileMaintenance")]
-        [InlineData("rollback")]
-        [InlineData("bump")]
-        [InlineData("replacement")]
-        [InlineData("")]
-        [InlineData("minor, patch")]
-        public void AnUpdateKindThatIsNotAVersionBump_HasNoType(string update)
-        {
-            Assert.Null(TriageRules.UpdateTypeFromBody(Body(Row(update))));
-        }
-
-        [Fact]
-        public void TheStrictestRowWins()
-        {
-            Assert.Equal("minor", TriageRules.UpdateTypeFromBody(Body(Row("patch"), Row("minor"), Row("digest"))));
-            Assert.Equal("major", TriageRules.UpdateTypeFromBody(Body(Row("patch"), Row("major"))));
-            Assert.Equal("patch", TriageRules.UpdateTypeFromBody(Body(Row("digest"), Row("patch"))));
-        }
-
-        [Fact]
-        public void OneUnreadableRowAmongReadableOnes_HasNoType()
-        {
-            Assert.Null(TriageRules.UpdateTypeFromBody(Body(Row("patch"), Row("lockFileMaintenance"))));
-        }
-
-        [Fact]
-        public void ExtraColumnsAreSkipped_TheUpdateColumnIsFoundByItsHeader()
-        {
-            var body = "| Package | Type | Update | Change | Pending |\n|---|---|---|---|---|\n| [dep](https://example.test) | uses-with | minor | `v1` -> `v2` | `v3` (+1) |\n\n---\n";
-
-            Assert.Equal("minor", TriageRules.UpdateTypeFromBody(body));
-        }
-
-        [Fact]
-        public void AnEscapedPipeInAnotherCell_DoesNotShiftTheColumns()
-        {
-            var body = "| Package | Update | Change |\n|---|---|---|\n| [a\\|b](https://example.test) | major | `1` -> `2` |\n";
-
-            Assert.Equal("major", TriageRules.UpdateTypeFromBody(body));
-        }
-
-        [Fact]
-        public void ATableWithoutAnUpdateColumn_HasNoType()
-        {
-            Assert.Null(TriageRules.UpdateTypeFromBody("| Package | Change |\n|---|---|\n| dep | `1` -> `2` |\n"));
-        }
-
-        [Theory]
-        [InlineData(null)]
-        [InlineData("")]
-        [InlineData("no table at all")]
-        public void ABodyWithoutTheUpdateTable_HasNoType(string? body)
-        {
-            Assert.Null(TriageRules.UpdateTypeFromBody(body));
-        }
-
-        [Fact]
-        public void ATableWithNoRows_HasNoType()
-        {
-            Assert.Null(TriageRules.UpdateTypeFromBody("| Package | Update | Change |\n|---|---|---|\n\nlater text\n"));
-        }
-
-        [Fact]
-        public void ATableAfterTheFirstRule_IsNotTheUpdateTable()
-        {
-            var body = "Notes\n\n---\n\n| Package | Update | Change |\n|---|---|---|\n| dep | patch | `1` -> `2` |\n";
-
-            Assert.Null(TriageRules.UpdateTypeFromBody(body));
-        }
-
-        [Fact]
-        public void WindowsLineEndings_AreHandled()
-        {
-            Assert.Equal("patch", TriageRules.UpdateTypeFromBody(Body(Row("patch")).Replace("\n", "\r\n", StringComparison.Ordinal)));
-        }
-
-        [Theory]
-        [InlineData("digest", "digest", "digest")]
-        [InlineData("digest", "patch", "patch")]
-        [InlineData("patch", "digest", "patch")]
-        [InlineData("patch", "minor", "minor")]
-        [InlineData("minor", "patch", "minor")]
-        [InlineData("minor", "major", "major")]
-        [InlineData("major", "minor", "major")]
-        [InlineData("major", "patch", "major")]
-        [InlineData("patch", "calver", "calver")]
-        [InlineData("major", "other", "other")]
-        [InlineData("digest", "calver", "calver")]
-        [InlineData("minor", "Patch", "Patch")]
-        [InlineData("patch", "", "")]
-        public void TheStricterOfTheCodeTypeAndJevsTypeWins(string code, string jev, string expected)
-        {
-            Assert.Equal(expected, TriageRules.ResolveBump(code, jev));
-        }
-
-        [Fact]
-        public void WhenBothAreInTheStrictestGroup_JevsOwnWordingIsKept()
-        {
-            Assert.Equal("calver", TriageRules.ResolveBump("other", "calver"));
-        }
-
-        [Fact]
-        public void DigestIsApprovedOnlyWhenBothSayDigest()
-        {
-            Assert.Equal(TriageRules.Digest, Decide("renovate/foo", Jev("digest", changelog: 0), "digest").Reason);
-            Assert.Equal(TriageRules.NoChangelog, Decide("renovate/foo", Jev("digest", changelog: 0), "patch").Reason);
-            Assert.Equal(TriageRules.NoChangelog, Decide("renovate/foo", Jev("patch", changelog: 0), "digest").Reason);
-        }
-
-        [Fact]
-        public void ACodeTypeOfMajor_NeedsReviewEvenWhenJevSaysPatch()
-        {
-            var decision = Decide("renovate/foo", Jev("patch"), "major");
-
-            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.MajorBump, TriageRules.BreakingComment), decision);
-        }
-
-        [Fact]
-        public void ACodeTypeOfMinor_StillGetsTheChangelogCheckWhenJevSaysPatch()
-        {
-            Assert.Equal(TriageRules.ChangelogPresent, Decide("renovate/foo", Jev("patch", changelog: 0.9), "minor").Reason);
-            Assert.Equal(TriageRules.NoChangelog, Decide("renovate/foo", Jev("patch", changelog: 0.1), "minor").Reason);
-        }
-
-        [Fact]
-        public void TheUnknownBumpDecision_NeedsReviewWithoutAComment()
-        {
-            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.UnknownBump, null), TriageRules.UnknownBumpDecision());
         }
     }
 

@@ -97,7 +97,7 @@ a token is reused until five minutes before it expires.
 `RenovateTriageWorkflow` judges one Renovate pull request per workflow ID. Each pass runs three activities on the `agent-platform` queue:
 
 - `Assess` reads the pull request from GitHub and applies the rules below. It returns a skip, an earlier verdict for the head sha, a decision, `Pending` (CI still running) or a request to ask Jev.
-- `Judge` works out the update type in code, then sends the pull request body to Jev (the LiteLLM `/typesafe` pass-through, capped at 32 KiB) and applies the answers. It re-reads the pull request first, so a moved head returns without a verdict.
+- `Judge` reads the pull request files and sends the pull request body and the file diff to Jev in one call (the LiteLLM `/typesafe` pass-through, each capped at 32 KiB; lock files come last in the diff, and files without a patch are listed by name) and applies the answers. It re-reads the pull request first, so a moved head returns without a verdict.
 - `RecordVerdict` stores the verdict in `renovate_triage_verdicts`, once per pull request and head sha.
 
 The workflow waits for all CI: while `Assess` returns `Pending` it waits for the next `CheckSuiteCompleted` signal, for at most two hours. When the two hours end it runs `Assess` once more and records `ci-timeout` only if CI is still pending. A head sha that differs from the one judged starts a new run with the same input.
@@ -110,11 +110,10 @@ Rules, in order; the first that applies decides:
 2. The author is not Renovate, or the pull request has an `agent/needs-review`, `agent/revert` or `blocked` label: skipped.
 3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved.
 4. A verdict already exists for the head sha: nothing to do.
-5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. Otherwise: needs review, `non-renovate-commit`.
+5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
 6. CI must be done. All check runs of the sha and all check suites are read; a run or suite that has not completed, or no check runs at all, is pending. Mergify checks are ignored. A failed check: needs review, `ci-failed`.
-7. The update type comes from the `Update` column of the table in the Renovate pull request body. A body without a readable table: needs review, `unknown-bump`.
-8. Jev answers a breaking-change score, a bump type and a changelog score. The final type is the stricter of the table and Jev, ordered unknown, other or calver, major, minor, patch, digest. A breaking score of 0.66 or more, a major, calver or other type: needs review. Digest approves only when the table and Jev both say digest.
-9. A patch or minor on an allowlisted branch approves; any other needs a changelog score of 0.7 or more. A Jev failure: needs review, `jev-error`.
+7. Jev answers a breaking-change score, a bump type and a changelog score. It judges the bump type itself from the old and new versions in the diff or the body, without trusting Renovate's labels. A breaking score of 0.66 or more, or a major, calver or other type: needs review. Digest approves. An answer that is none of the known types: needs review, `unknown-bump`.
+8. A patch or minor on an allowlisted branch approves; any other needs a changelog score of 0.7 or more. A Jev failure: needs review, `jev-error`.
 
 ## Run data
 

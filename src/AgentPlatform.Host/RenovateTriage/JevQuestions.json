@@ -28,7 +28,7 @@
     "type": "choice",
     "instructions": {
       "question": "What kind of version bump is this Renovate PR?",
-      "focus": "Find the old and new version in `pr_body` (usually a table cell like `44.69.8` -> `44.83.1`). Compare them segment by segment YOURSELF. Do NOT trust Renovate's own wording (its title or the 'patch'/'minor'/'major' labels) — it is frequently wrong, especially for calver.",
+      "focus": "Find the old and new version in `pr_diff` (the PR's actual file changes) or `pr_body` (usually a table cell like `44.69.8` -> `44.83.1`). Compare them segment by segment YOURSELF. Do NOT trust Renovate's own wording (its title or the 'patch'/'minor'/'major' labels) — it is frequently wrong, especially for calver.",
       "how_to_decide": [
         "1. Did only a sha256 digest change, with no version numbers at all? -> digest",
         "2. Is the FIRST segment a real calendar date — a 4-digit year (2024, 2025, 2026), a 2-digit year paired with a month (24.04, 25.10), or a packed date (20260920)? -> calver",

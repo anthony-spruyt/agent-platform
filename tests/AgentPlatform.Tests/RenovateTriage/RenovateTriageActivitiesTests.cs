@@ -196,6 +196,30 @@ public class RenovateTriageActivitiesTests
             Assert.Empty(rig.Jev.Bodies);
         }
 
+        [Theory]
+        [InlineData(2)]
+        [InlineData(0)]
+        public async Task ACommitCountThatDiffersFromTheListedCommits_DecidesNeedsReview(int prCommits)
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { Commits = prCommits };
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: TriageRules.NonRenovateCommitDecision()), result);
+        }
+
+        [Fact]
+        public async Task APrWithTheMaximumListableCommits_DecidesNeedsReview()
+        {
+            var rig = Create();
+            rig.Github.Commits.Clear();
+            rig.Github.Commits.AddRange(Enumerable.Repeat(FakeGitHubApi.RenovateCommit(), TriageRules.MaxListedCommits));
+            rig.Github.PullRequest = rig.Github.PullRequest with { Commits = TriageRules.MaxListedCommits };
+
+            Assert.Equal(TriageRules.NonRenovateCommit, (await Assess(rig)).Decision!.Reason);
+        }
+
         [Fact]
         public async Task AnUnverifiedCommit_DecidesNeedsReview()
         {
@@ -390,7 +414,7 @@ public class RenovateTriageActivitiesTests
         public async Task JevIsAskedWithThePrBodyReadFromGitHub()
         {
             var rig = Create();
-            var body = FakeGitHubApi.UpdateTable("patch") + "the notes";
+            var body = "the notes";
             rig.Github.PullRequest = FakeGitHubApi.Renovate(body: body);
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
@@ -439,47 +463,73 @@ public class RenovateTriageActivitiesTests
             Assert.Null(result.Jev);
         }
 
+        [Fact]
+        public async Task JevIsGivenThePrDiffWithTheLockFilesLast()
+        {
+            var rig = Create();
+            rig.Github.Files.Clear();
+            rig.Github.Files.Add(new GitHubPullRequestFile("package-lock.json", "@@\n-lock-old\n+lock-new"));
+            rig.Github.Files.Add(new GitHubPullRequestFile("package.json", "@@\n-1.0.0\n+1.0.1"));
+            rig.Github.Files.Add(new GitHubPullRequestFile("logo.png", null));
+
+            await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+
+            Assert.Equal(["### package.json\n@@\n-1.0.0\n+1.0.1\n\n### logo.png (no patch)\n\n### package-lock.json\n@@\n-lock-old\n+lock-new\n\n"], rig.Jev.Diffs);
+        }
+
+        [Fact]
+        public async Task TheDiffIsCappedBeforeItIsSent()
+        {
+            var rig = Create();
+            rig.Github.Files.Clear();
+            rig.Github.Files.AddRange(Enumerable.Range(0, 2000).Select(i => new GitHubPullRequestFile($"f{i}.txt", new string('x', 1000))));
+
+            await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+
+            var sent = Assert.Single(rig.Jev.Diffs)!;
+            Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(sent), JevClient.MaxPrDiffBytes, JevClient.MaxPrDiffBytes + 1100);
+        }
+
         [Theory]
         [InlineData(null)]
         [InlineData("")]
-        [InlineData("release notes without the update table")]
-        public async Task AnUpdateTypeThatCannotBeFound_IsNeedsReviewAndJevIsNotAsked(string? body)
+        [InlineData("release notes without any table")]
+        public async Task AnyBody_IsJudgedByJevAlone(string? body)
         {
             var rig = Create();
             rig.Github.PullRequest = rig.Github.PullRequest with { Body = body };
+            rig.Jev.Answers = new JevAnswers(0.04, "minor", 0.9);
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.Equal(new JudgeResult(false, TriageRules.UnknownBumpDecision()), result);
-            Assert.Empty(rig.Jev.Bodies);
+            Assert.Equal([body], rig.Jev.Bodies);
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), result.Decision);
         }
 
-        [Fact]
-        public async Task ACodeTypeOfMajor_NeedsReviewWhenJevSaysPatch()
+        [Theory]
+        [InlineData("major", TriageRules.MajorBump)]
+        [InlineData("calver", TriageRules.CalverBump)]
+        [InlineData("other", TriageRules.OtherBump)]
+        [InlineData("digest", TriageRules.Digest)]
+        public async Task TheUpdateTypeIsWhatJevSays(string bump, string reason)
         {
             var rig = Create();
-            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.UpdateTable("major"));
-            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.9);
+            rig.Jev.Answers = new JevAnswers(0.04, bump, 0);
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.MajorBump, TriageRules.BreakingComment), result.Decision);
-            Assert.Equal(rig.Jev.Answers, result.Jev);
+            Assert.Equal(reason, result.Decision!.Reason);
         }
 
         [Fact]
-        public async Task ADigestIsApprovedOnlyWhenTheTableAndJevBothSayDigest()
+        public async Task TheFilesAreNotReadWhenTheHeadMoved()
         {
             var rig = Create();
-            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.UpdateTable("digest"));
-            rig.Jev.Answers = new JevAnswers(0.04, "digest", 0);
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: "fedcba9876543210fedcba9876543210fedcba98");
 
-            var approved = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
-            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0);
-            var mismatched = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+            await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.Equal(TriageRules.Digest, approved.Decision!.Reason);
-            Assert.Equal(TriageRules.NoChangelog, mismatched.Decision!.Reason);
+            Assert.DoesNotContain("files", rig.Github.Calls);
         }
 
         [Fact]

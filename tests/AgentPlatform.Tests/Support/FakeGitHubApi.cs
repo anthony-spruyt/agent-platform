@@ -17,6 +17,8 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public List<GitHubCommit> Commits { get; } = [RenovateCommit()];
 
+    public List<GitHubPullRequestFile> Files { get; } = [new("package.json", "@@ -1 +1 @@\n-\"dep\": \"1.0.0\"\n+\"dep\": \"1.0.1\"")];
+
     public Exception? Failure { get; set; }
 
     public List<string> Calls { get; } = [];
@@ -26,13 +28,10 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     public static GitHubCommit RenovateCommit(string sha = "c0ffee0") =>
         new(sha, "renovate[bot]", TriageRules.RenovateUserId, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true);
 
-    public static string UpdateTable(params string[] updates) =>
-        "This PR contains the following updates:\n\n| Package | Update | Change |\n|---|---|---|\n"
-        + string.Concat(updates.Select((u, i) => $"| [dep-{i}](https://example.test/dep-{i}) | {u} | `1.0.0` -> `1.0.1` |\n"))
-        + "\n---\n\n### Release Notes\n";
+    public const string Body = "This PR contains the following updates:\n\n| Package | Change |\n|---|---|\n| [dep](https://example.test/dep) | `1.0.0` -> `1.0.1` |\n\n---\n\n### Release Notes\n";
 
     public static GitHubPullRequest Renovate(string branch = "renovate/czkawka", string sha = Sha, string? body = null) =>
-        new(7, "Update dep", body ?? UpdateTable("patch"), "open", false, false, "clean", "renovate[bot]", TriageRules.RenovateUserId, branch, sha, "octo/widgets", "octo/widgets", "main", ["dependencies"]);
+        new(7, "Update dep", body ?? Body, "open", false, false, "clean", "renovate[bot]", TriageRules.RenovateUserId, branch, sha, "octo/widgets", "octo/widgets", "main", ["dependencies"], 1);
 
     public Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken)
     {
@@ -59,6 +58,12 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         return Result<IReadOnlyList<GitHubCommit>>([.. Commits]);
     }
 
+    public Task<IReadOnlyList<GitHubPullRequestFile>> ListPullRequestFilesAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        Calls.Add("files");
+        return Result<IReadOnlyList<GitHubPullRequestFile>>([.. Files]);
+    }
+
     public Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)
     {
         Calls.Add("reviews");
@@ -82,9 +87,12 @@ internal sealed class FakeJev : IJevClient
 
     public List<string?> Bodies { get; } = [];
 
-    public Task<JevAnswers> AskAsync(string? prBody, CancellationToken cancellationToken)
+    public List<string?> Diffs { get; } = [];
+
+    public Task<JevAnswers> AskAsync(string? prBody, string? prDiff, CancellationToken cancellationToken)
     {
         Bodies.Add(prBody);
+        Diffs.Add(prDiff);
         return Failure is null ? Task.FromResult(Answers) : Task.FromException<JevAnswers>(Failure);
     }
 }

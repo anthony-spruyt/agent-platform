@@ -35,7 +35,7 @@ public class JevClientTests
     {
         var (client, _) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
 
-        var answers = await client.AskAsync("notes", Ct);
+        var answers = await client.AskAsync("notes", null, Ct);
 
         Assert.Equal(new JevAnswers(0.04, "patch", 0.78), answers);
     }
@@ -45,7 +45,7 @@ public class JevClientTests
     {
         var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
 
-        await client.AskAsync("notes", Ct);
+        await client.AskAsync("notes", null, Ct);
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
@@ -58,7 +58,7 @@ public class JevClientTests
     {
         var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
 
-        await client.AskAsync("## Release notes\n- fix: \"quoted\" thing", Ct);
+        await client.AskAsync("## Release notes\n- fix: \"quoted\" thing", null, Ct);
 
         var body = JsonNode.Parse(Assert.Single(handler.Requests).Body!)!.AsObject();
         Assert.Equal("jev-latest", (string?)body["model"]);
@@ -76,11 +76,77 @@ public class JevClientTests
     }
 
     [Fact]
+    public async Task Ask_SendsThePrDiffInTheStateNextToTheBody()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+
+        await client.AskAsync("notes", "### package.json\n@@\n-\"a\": \"1.0.0\"\n+\"a\": \"1.0.1\"\n\n", Ct);
+
+        var state = JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!.AsObject();
+        Assert.Equal(["pr_body", "pr_diff", "current_date"], state.Select(p => p.Key));
+        Assert.Equal("### package.json\n@@\n-\"a\": \"1.0.0\"\n+\"a\": \"1.0.1\"\n\n", (string?)state["pr_diff"]);
+    }
+
+    [Fact]
+    public async Task Ask_SendsANullPrDiffAsNull()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+
+        await client.AskAsync("notes", null, Ct);
+
+        Assert.Null(JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_diff"]);
+    }
+
+    [Fact]
+    public async Task Ask_SendsTheN8nQuestionsUnchanged_ExceptThatBumpTypeAlsoPointsAtThePrDiff()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+
+        await client.AskAsync("notes", "diff", Ct);
+
+        var sent = JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["questions"]!;
+        var expected = JsonNode.Parse(Fixture("jev-questions-n8n.json"))!;
+        const string OldFirstSentence = "Find the old and new version in `pr_body` (usually a table cell like `44.69.8` -> `44.83.1`).";
+        const string NewFirstSentence = "Find the old and new version in `pr_diff` (the PR's actual file changes) or `pr_body` (usually a table cell like `44.69.8` -> `44.83.1`).";
+        var focus = (string)expected["bump_type"]!["instructions"]!["focus"]!;
+        Assert.StartsWith(OldFirstSentence, focus, StringComparison.Ordinal);
+        expected["bump_type"]!["instructions"]!["focus"] = NewFirstSentence + focus[OldFirstSentence.Length..];
+        Assert.Equal(expected.ToJsonString(), sent.ToJsonString());
+    }
+
+    [Fact]
+    public async Task Ask_LeavesAPrDiffUnderTheCapUntouched()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+        var diff = new string('a', JevClient.MaxPrDiffBytes);
+
+        await client.AskAsync("notes", diff, Ct);
+
+        Assert.Equal(diff, (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_diff"]);
+    }
+
+    [Fact]
+    public async Task Ask_CutsAnOversizedPrDiffAtTheCap_OnAUtf8Boundary()
+    {
+        var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
+        var diff = "head" + new string('\u20ac', 20_000);
+
+        await client.AskAsync("notes", diff, Ct);
+
+        var sent = (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_diff"];
+        Assert.NotNull(sent);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(sent) <= JevClient.MaxPrDiffBytes);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(sent) > JevClient.MaxPrDiffBytes - 4);
+        Assert.DoesNotContain('\ufffd', sent);
+        Assert.StartsWith(sent, diff, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Ask_SendsANullPrBodyAsNull()
     {
         var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
 
-        await client.AskAsync(null, Ct);
+        await client.AskAsync(null, null, Ct);
 
         var body = JsonNode.Parse(Assert.Single(handler.Requests).Body!)!;
         Assert.Null(body["state"]!["pr_body"]);
@@ -94,7 +160,7 @@ public class JevClientTests
     {
         var (client, _) = Create(_ => StubHttpHandler.Json("{}", status));
 
-        var ex = await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+        var ex = await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", null, Ct));
 
         Assert.Contains(((int)status).ToString(System.Globalization.CultureInfo.InvariantCulture), ex.Message, StringComparison.Ordinal);
     }
@@ -111,7 +177,7 @@ public class JevClientTests
     {
         var (client, _) = Create(_ => StubHttpHandler.Json(json));
 
-        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", null, Ct));
     }
 
     [Fact]
@@ -119,7 +185,7 @@ public class JevClientTests
     {
         var (client, _) = Create(_ => throw new HttpRequestException("connection refused"));
 
-        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", null, Ct));
     }
 
     [Fact]
@@ -129,7 +195,7 @@ public class JevClientTests
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.AskAsync("notes", cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.AskAsync("notes", null, cts.Token));
     }
 
     [Fact]
@@ -137,7 +203,7 @@ public class JevClientTests
     {
         var (client, _) = Create(_ => throw new TaskCanceledException());
 
-        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", null, Ct));
     }
 
     [Fact]
@@ -145,7 +211,7 @@ public class JevClientTests
     {
         var (client, _) = Create(_ => throw new InvalidOperationException("handler broke"));
 
-        var ex = await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+        var ex = await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", null, Ct));
 
         Assert.IsType<InvalidOperationException>(ex.InnerException);
     }
@@ -155,7 +221,7 @@ public class JevClientTests
     {
         var (client, _) = Create(_ => throw new Polly.Timeout.TimeoutRejectedException("attempt timed out"));
 
-        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", Ct));
+        await Assert.ThrowsAsync<JevException>(() => client.AskAsync("notes", null, Ct));
     }
 
     [Fact]
@@ -164,7 +230,7 @@ public class JevClientTests
         var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
         var body = new string('a', JevClient.MaxPrBodyBytes);
 
-        await client.AskAsync(body, Ct);
+        await client.AskAsync(body, null, Ct);
 
         Assert.Equal(body, (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_body"]);
     }
@@ -175,7 +241,7 @@ public class JevClientTests
         var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
         var body = "head" + new string('\u20ac', 20_000);
 
-        await client.AskAsync(body, Ct);
+        await client.AskAsync(body, null, Ct);
 
         var sent = (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_body"];
         Assert.NotNull(sent);
@@ -191,7 +257,7 @@ public class JevClientTests
     {
         var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
 
-        await client.AskAsync(new string('a', JevClient.MaxPrBodyBytes + 500), Ct);
+        await client.AskAsync(new string('a', JevClient.MaxPrBodyBytes + 500), null, Ct);
 
         var sent = (string?)JsonNode.Parse(Assert.Single(handler.Requests).Body!)!["state"]!["pr_body"];
         Assert.Equal(JevClient.MaxPrBodyBytes, sent!.Length);
@@ -218,7 +284,7 @@ public class JevClientTests
         builder.Services.AddHttpClient<IJevClient, JevClient>().ConfigurePrimaryHttpMessageHandler(() => slow);
         using var provider = builder.Services.BuildServiceProvider();
 
-        var answers = await provider.GetRequiredService<IJevClient>().AskAsync("notes", Ct);
+        var answers = await provider.GetRequiredService<IJevClient>().AskAsync("notes", null, Ct);
 
         Assert.Equal(new JevAnswers(0.04, "patch", 0.78), answers);
         Assert.Equal(1, attempts);

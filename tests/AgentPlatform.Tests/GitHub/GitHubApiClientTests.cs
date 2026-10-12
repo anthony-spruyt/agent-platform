@@ -63,7 +63,7 @@ public class GitHubApiClientTests
              "mergeable_state":"clean","user":{"login":"renovate[bot]","id":29139614},
              "head":{"ref":"renovate/dep","sha":"abc","repo":{"full_name":"octo/widgets"}},
              "base":{"ref":"main","repo":{"full_name":"octo/widgets-base"}},
-             "labels":[{"name":"dependencies"},{"name":"blocked"}]}
+             "commits":3,"labels":[{"name":"dependencies"},{"name":"blocked"}]}
             """));
 
         var pr = await client.GetPullRequestAsync("octo/widgets", 7, Ct);
@@ -83,6 +83,7 @@ public class GitHubApiClientTests
         Assert.Equal("octo/widgets-base", pr.BaseRepo);
         Assert.Equal("main", pr.BaseRef);
         Assert.Equal(["dependencies", "blocked"], pr.Labels);
+        Assert.Equal(3, pr.Commits);
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal("/repos/octo/widgets/pulls/7", request.Uri.AbsolutePath);
@@ -105,6 +106,7 @@ public class GitHubApiClientTests
         Assert.Null(pr.BaseRepo);
         Assert.Null(pr.MergeableState);
         Assert.Empty(pr.Labels);
+        Assert.Equal(0, pr.Commits);
     }
 
     [Fact]
@@ -264,6 +266,34 @@ public class GitHubApiClientTests
     }
 
     [Fact]
+    public async Task ListPullRequestFiles_ReadsEveryPageAndKeepsThePatchOfEachFile()
+    {
+        var (client, handler, tokens) = Create(request => Page(request, 101, (from, count) => JsonSerializer.Serialize(
+            Enumerable.Range(from, count).Select(i => i == 2
+                ? (object)new { sha = "x", filename = "image.png", status = "added" }
+                : new { sha = "x", filename = $"src/file-{i}.txt", status = "modified", patch = $"@@ -1 +1 @@\n-old {i}\n+new {i}" }))));
+
+        var files = await client.ListPullRequestFilesAsync("octo/widgets", 7, Ct);
+
+        Assert.Equal(101, files.Count);
+        Assert.Equal(new GitHubPullRequestFile("src/file-1.txt", "@@ -1 +1 @@\n-old 1\n+new 1"), files[0]);
+        Assert.Equal(new GitHubPullRequestFile("image.png", null), files[1]);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, r => Assert.Equal("/repos/octo/widgets/pulls/7/files", r.Uri.AbsolutePath));
+        Assert.Equal(new Dictionary<string, string> { ["pull_requests"] = "read" }, tokens.Requests[0].Permissions);
+    }
+
+    [Fact]
+    public async Task ListPullRequestFiles_ToleratesAMissingFilename()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""[{"patch":"@@"}]"""));
+
+        var file = Assert.Single(await client.ListPullRequestFilesAsync("octo/widgets", 7, Ct));
+
+        Assert.Equal(string.Empty, file.Filename);
+    }
+
+    [Fact]
     public async Task ListLabels_ReadsEveryPageAndReturnsTheNames()
     {
         var (client, handler, tokens) = Create(request => Page(request, 101, (from, count) => JsonSerializer.Serialize(
@@ -294,8 +324,9 @@ public class GitHubApiClientTests
         await client.ListLabelsAsync("octo/widgets", 7, Ct);
         await client.ListCommitsAsync("octo/widgets", 7, Ct);
         await client.ListCheckSuitesAsync("octo/widgets", Sha, Ct);
+        await client.ListPullRequestFilesAsync("octo/widgets", 7, Ct);
 
-        Assert.Equal(6, handler.Requests.Count);
+        Assert.Equal(7, handler.Requests.Count);
         Assert.All(handler.Requests, r => Assert.Equal(HttpMethod.Get, r.Method));
     }
 
@@ -346,6 +377,7 @@ public class GitHubApiClientTests
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.GetPullRequestAsync("octo/widgets", 0, Ct));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.ListReviewsAsync("octo/widgets", -1, Ct));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.ListLabelsAsync("octo/widgets", 0, Ct));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.ListPullRequestFilesAsync("octo/widgets", 0, Ct));
         await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckRunsAsync("octo/widgets", "../../x", Ct));
         await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckRunsAsync("octo/widgets", "abc?x=1", Ct));
         await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckRunsAsync("octo/widgets", "", Ct));
