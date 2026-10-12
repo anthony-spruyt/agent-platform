@@ -33,6 +33,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
         {
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", Key);
+            builder.UseSetting("GitHub:WebhookSecret", "webhook-secret-for-tests");
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IWorkflowResultSubmitter>(_submitter);

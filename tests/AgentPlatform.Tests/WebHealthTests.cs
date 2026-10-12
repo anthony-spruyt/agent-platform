@@ -1,5 +1,6 @@
 using System.Net;
 using AgentPlatform.Host.RunData;
+using AgentPlatform.Tests.Support;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +16,7 @@ public class WebHealthTests : IClassFixture<WebApplicationFactory<Program>>
         {
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
+            builder.UseSetting("GitHub:WebhookSecret", GitHubPayloads.Secret);
         });
 
     [Fact]
