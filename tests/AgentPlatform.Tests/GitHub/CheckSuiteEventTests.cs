@@ -94,6 +94,18 @@ public class CheckSuiteEventTests
     }
 
     [Fact]
+    public void ARepositoryWithoutAnId_DropsEveryPullRequest()
+    {
+        var body = """
+            {"action":"completed","check_suite":{"id":1,"head_branch":"renovate/foo","head_sha":"abc",
+            "pull_requests":[{"number":3,"head":{"ref":"renovate/foo","sha":"abc","repo":{"id":0}},"base":{"ref":"main","repo":{"id":0}}}]},
+            "repository":{"full_name":"octo/widgets"}}
+            """;
+
+        Assert.Empty(Extract(body));
+    }
+
+    [Fact]
     public void APullRequestWithoutABaseRepository_IsDropped()
     {
         var body = """

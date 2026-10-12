@@ -2,7 +2,6 @@ using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.Workflows;
 using Temporalio.Client;
 using Temporalio.Testing;
-using Temporalio.Worker;
 
 namespace AgentPlatform.Tests.GitHub;
 
@@ -32,13 +31,6 @@ public class TemporalRenovateTriageSignalerTests
         Assert.Equal("RenovateTriageWorkflow", description.WorkflowType);
         Assert.Equal(TaskQueues.AgentPlatform, description.TaskQueue);
         Assert.Equal(Temporalio.Api.Enums.V1.WorkflowExecutionStatus.Running, description.Status);
-
-        using var worker = new TemporalWorker(env.Client, new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<RenovateTriageWorkflow>());
-        var received = await worker.ExecuteAsync(
-            () => env.Client.GetWorkflowHandle<RenovateTriageWorkflow, IReadOnlyList<CheckSuiteCompletedSignal>>("renovate-triage/octo/widgets/7").GetResultAsync(rpcOptions: new RpcOptions { CancellationToken = Ct }),
-            Ct);
-
-        Assert.Equal(Signal(), Assert.Single(received));
     }
 
     [Fact]
@@ -50,12 +42,14 @@ public class TemporalRenovateTriageSignalerTests
         await signaler.SignalAsync(Signal(suite: 1, delivery: "d-1"), Ct);
         await signaler.SignalAsync(Signal(suite: 2, delivery: "d-2"), Ct);
 
-        using var worker = new TemporalWorker(env.Client, new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<RenovateTriageWorkflow>());
-        var received = await worker.ExecuteAsync(
-            () => env.Client.GetWorkflowHandle<RenovateTriageWorkflow, IReadOnlyList<CheckSuiteCompletedSignal>>("renovate-triage/octo/widgets/7").GetResultAsync(rpcOptions: new RpcOptions { CancellationToken = Ct }),
-            Ct);
-
-        Assert.Equal(["d-1", "d-2"], received.Select(s => s.DeliveryId));
+        var history = await env.Client.GetWorkflowHandle("renovate-triage/octo/widgets/7").FetchHistoryAsync();
+        var received = history.Events
+            .Where(e => e.WorkflowExecutionSignaledEventAttributes is not null)
+            .Select(e => e.WorkflowExecutionSignaledEventAttributes.Input.Payloads_[0].Data.ToStringUtf8())
+            .ToList();
+        Assert.Equal(2, received.Count);
+        Assert.Contains("\"deliveryId\":\"d-1\"", received[0], StringComparison.Ordinal);
+        Assert.Contains("\"deliveryId\":\"d-2\"", received[1], StringComparison.Ordinal);
     }
 
     [Fact]

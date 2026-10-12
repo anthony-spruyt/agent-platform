@@ -60,10 +60,10 @@ public class GitHubApiClientTests
     {
         var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""
             {"number":7,"title":"Update dep","body":"notes","state":"open","draft":false,"merged":false,
-             "mergeable_state":"clean","user":{"login":"renovate[bot]"},
+             "mergeable_state":"clean","user":{"login":"renovate[bot]","id":29139614},
              "head":{"ref":"renovate/dep","sha":"abc","repo":{"full_name":"octo/widgets"}},
-             "base":{"ref":"main"},
-             "labels":[{"name":"dependencies"},{"name":"blocked"}]}
+             "base":{"ref":"main","repo":{"full_name":"octo/widgets-base"}},
+             "commits":3,"labels":[{"name":"dependencies"},{"name":"blocked"}]}
             """));
 
         var pr = await client.GetPullRequestAsync("octo/widgets", 7, Ct);
@@ -76,11 +76,14 @@ public class GitHubApiClientTests
         Assert.False(pr.Merged);
         Assert.Equal("clean", pr.MergeableState);
         Assert.Equal("renovate[bot]", pr.AuthorLogin);
+        Assert.Equal(29139614, pr.AuthorId);
         Assert.Equal("renovate/dep", pr.HeadRef);
         Assert.Equal("abc", pr.HeadSha);
         Assert.Equal("octo/widgets", pr.HeadRepo);
+        Assert.Equal("octo/widgets-base", pr.BaseRepo);
         Assert.Equal("main", pr.BaseRef);
         Assert.Equal(["dependencies", "blocked"], pr.Labels);
+        Assert.Equal(3, pr.Commits);
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal("/repos/octo/widgets/pulls/7", request.Uri.AbsolutePath);
@@ -98,9 +101,12 @@ public class GitHubApiClientTests
         var pr = await client.GetPullRequestAsync("octo/widgets", 7, Ct);
 
         Assert.Null(pr.Body);
+        Assert.Null(pr.AuthorId);
         Assert.Null(pr.HeadRepo);
+        Assert.Null(pr.BaseRepo);
         Assert.Null(pr.MergeableState);
         Assert.Empty(pr.Labels);
+        Assert.Equal(0, pr.Commits);
     }
 
     [Fact]
@@ -159,12 +165,12 @@ public class GitHubApiClientTests
     public async Task ListReviews_ReadsEveryPage()
     {
         var (client, handler, tokens) = Create(request => Page(request, 130, (from, count) => JsonSerializer.Serialize(
-            Enumerable.Range(from, count).Select(i => new { id = i, user = new { login = $"user-{i}" }, state = "APPROVED", commit_id = Sha, submitted_at = "2026-10-11T12:00:00Z" }))));
+            Enumerable.Range(from, count).Select(i => new { id = i, user = new { login = $"user-{i}" }, author_association = "COLLABORATOR", state = "APPROVED", commit_id = Sha, submitted_at = "2026-10-11T12:00:00Z" }))));
 
         var reviews = await client.ListReviewsAsync("octo/widgets", 7, Ct);
 
         Assert.Equal(130, reviews.Count);
-        Assert.Equal(new GitHubReview(1, "user-1", "APPROVED", Sha, DateTimeOffset.Parse("2026-10-11T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture)), reviews[0]);
+        Assert.Equal(new GitHubReview(1, "user-1", "COLLABORATOR", "APPROVED", Sha, DateTimeOffset.Parse("2026-10-11T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture)), reviews[0]);
         Assert.Equal(2, handler.Requests.Count);
         Assert.All(handler.Requests, r => Assert.Equal("/repos/octo/widgets/pulls/7/reviews", r.Uri.AbsolutePath));
         Assert.Equal(new Dictionary<string, string> { ["pull_requests"] = "read" }, tokens.Requests[0].Permissions);
@@ -178,7 +184,113 @@ public class GitHubApiClientTests
         var review = Assert.Single(await client.ListReviewsAsync("octo/widgets", 7, Ct));
 
         Assert.Null(review.AuthorLogin);
+        Assert.Null(review.AuthorAssociation);
         Assert.Null(review.SubmittedAt);
+    }
+
+    [Fact]
+    public async Task ListCheckSuites_ReadsEveryPageAndParsesTheFieldsTheTriageNeeds()
+    {
+        var (client, handler, tokens) = Create(request => Page(request, 120, (from, count) => JsonSerializer.Serialize(new
+        {
+            total_count = 120,
+            check_suites = Enumerable.Range(from, count).Select(i => new
+            {
+                id = i,
+                status = i == 1 ? "queued" : "completed",
+                conclusion = i == 1 ? null : "success",
+                app = i == 2 ? null : new { slug = "github-actions" },
+                latest_check_runs_count = i,
+            }),
+        })));
+
+        var suites = await client.ListCheckSuitesAsync("octo/widgets", Sha, Ct);
+
+        Assert.Equal(120, suites.Count);
+        Assert.Equal(new GitHubCheckSuite(1, "queued", null, "github-actions", 1), suites[0]);
+        Assert.Equal(new GitHubCheckSuite(2, "completed", "success", null, 2), suites[1]);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, r => Assert.Equal($"/repos/octo/widgets/commits/{Sha}/check-suites", r.Uri.AbsolutePath));
+        Assert.Equal(new Dictionary<string, string> { ["checks"] = "read" }, tokens.Requests[0].Permissions);
+    }
+
+    [Fact]
+    public async Task ListCheckSuites_RejectsABadSha()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("""{"check_suites":[]}"""));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckSuitesAsync("octo/widgets", "../x", Ct));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ListCommits_ReadsEveryPageAndParsesAuthorshipAndVerification()
+    {
+        var (client, handler, tokens) = Create(request => Page(request, 130, (from, count) => JsonSerializer.Serialize(
+            Enumerable.Range(from, count).Select(i => new
+            {
+                sha = $"sha-{i}",
+                author = i == 2 ? null : new { login = "renovate[bot]", id = 29139614 },
+                committer = new { login = "web-flow", id = 19864447 },
+                commit = new
+                {
+                    author = new { email = "29139614+renovate[bot]@users.noreply.github.com" },
+                    committer = new { email = "noreply@github.com" },
+                    verification = new { verified = i != 3, reason = "valid" },
+                },
+            }))));
+
+        var commits = await client.ListCommitsAsync("octo/widgets", 7, Ct);
+
+        Assert.Equal(130, commits.Count);
+        Assert.Equal(new GitHubCommit("sha-1", "renovate[bot]", 29139614, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true), commits[0]);
+        Assert.Null(commits[1].AuthorLogin);
+        Assert.Null(commits[1].AuthorId);
+        Assert.False(commits[2].Verified);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, r => Assert.Equal("/repos/octo/widgets/pulls/7/commits", r.Uri.AbsolutePath));
+        Assert.Equal(new Dictionary<string, string> { ["pull_requests"] = "read" }, tokens.Requests[0].Permissions);
+    }
+
+    [Fact]
+    public async Task ListCommits_ToleratesMissingCommitDetails()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""[{"sha":"abc","author":null,"commit":null}]"""));
+
+        var commit = Assert.Single(await client.ListCommitsAsync("octo/widgets", 7, Ct));
+
+        Assert.Null(commit.AuthorEmail);
+        Assert.Null(commit.CommitterEmail);
+        Assert.False(commit.Verified);
+    }
+
+    [Fact]
+    public async Task ListPullRequestFiles_ReadsEveryPageAndKeepsThePatchOfEachFile()
+    {
+        var (client, handler, tokens) = Create(request => Page(request, 101, (from, count) => JsonSerializer.Serialize(
+            Enumerable.Range(from, count).Select(i => i == 2
+                ? (object)new { sha = "x", filename = "image.png", status = "added" }
+                : new { sha = "x", filename = $"src/file-{i}.txt", status = "modified", patch = $"@@ -1 +1 @@\n-old {i}\n+new {i}" }))));
+
+        var files = await client.ListPullRequestFilesAsync("octo/widgets", 7, Ct);
+
+        Assert.Equal(101, files.Count);
+        Assert.Equal(new GitHubPullRequestFile("src/file-1.txt", "@@ -1 +1 @@\n-old 1\n+new 1"), files[0]);
+        Assert.Equal(new GitHubPullRequestFile("image.png", null), files[1]);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(handler.Requests, r => Assert.Equal("/repos/octo/widgets/pulls/7/files", r.Uri.AbsolutePath));
+        Assert.Equal(new Dictionary<string, string> { ["pull_requests"] = "read" }, tokens.Requests[0].Permissions);
+    }
+
+    [Fact]
+    public async Task ListPullRequestFiles_ToleratesAMissingFilename()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""[{"patch":"@@"}]"""));
+
+        var file = Assert.Single(await client.ListPullRequestFilesAsync("octo/widgets", 7, Ct));
+
+        Assert.Equal(string.Empty, file.Filename);
     }
 
     [Fact]
@@ -200,7 +312,9 @@ public class GitHubApiClientTests
     {
         var (client, handler, _) = Create(request => request.Uri.AbsolutePath.EndsWith("check-runs", StringComparison.Ordinal)
             ? StubHttpHandler.Json("""{"total_count":0,"check_runs":[]}""")
-            : request.Uri.AbsolutePath.Contains("/pulls/7", StringComparison.Ordinal) && !request.Uri.AbsolutePath.EndsWith("reviews", StringComparison.Ordinal)
+            : request.Uri.AbsolutePath.EndsWith("check-suites", StringComparison.Ordinal)
+            ? StubHttpHandler.Json("""{"total_count":0,"check_suites":[]}""")
+            : request.Uri.AbsolutePath.EndsWith("/pulls/7", StringComparison.Ordinal)
                 ? StubHttpHandler.Json("""{"number":7,"state":"open","head":{"ref":"r","sha":"s"},"base":{"ref":"main"}}""")
                 : StubHttpHandler.Json("[]"));
 
@@ -208,8 +322,11 @@ public class GitHubApiClientTests
         await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
         await client.ListReviewsAsync("octo/widgets", 7, Ct);
         await client.ListLabelsAsync("octo/widgets", 7, Ct);
+        await client.ListCommitsAsync("octo/widgets", 7, Ct);
+        await client.ListCheckSuitesAsync("octo/widgets", Sha, Ct);
+        await client.ListPullRequestFilesAsync("octo/widgets", 7, Ct);
 
-        Assert.Equal(4, handler.Requests.Count);
+        Assert.Equal(7, handler.Requests.Count);
         Assert.All(handler.Requests, r => Assert.Equal(HttpMethod.Get, r.Method));
     }
 
@@ -260,6 +377,7 @@ public class GitHubApiClientTests
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.GetPullRequestAsync("octo/widgets", 0, Ct));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.ListReviewsAsync("octo/widgets", -1, Ct));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.ListLabelsAsync("octo/widgets", 0, Ct));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.ListPullRequestFilesAsync("octo/widgets", 0, Ct));
         await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckRunsAsync("octo/widgets", "../../x", Ct));
         await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckRunsAsync("octo/widgets", "abc?x=1", Ct));
         await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckRunsAsync("octo/widgets", "", Ct));

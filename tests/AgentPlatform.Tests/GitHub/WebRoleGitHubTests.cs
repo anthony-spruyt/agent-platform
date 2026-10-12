@@ -33,7 +33,9 @@ public class WebRoleGitHubTests
     {
         using var factory = Factory(secret);
 
-        Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+        var failure = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+
+        Assert.Contains("WebhookSecret", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]

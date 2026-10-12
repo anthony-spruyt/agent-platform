@@ -22,7 +22,7 @@ public class WorkflowReplayTests
     public async Task CommittedHistory_ReplaysWithoutNondeterminism(string name)
     {
         var replayer = new WorkflowReplayer(
-            new WorkflowReplayerOptions().AddWorkflow<PingWorkflow>().AddWorkflow<SpikeWorkflow>());
+            new WorkflowReplayerOptions().AddWorkflow<PingWorkflow>().AddWorkflow<SpikeWorkflow>().AddWorkflow<RenovateTriageWorkflow>());
         var history = WorkflowHistory.FromJson(name, HistoryStore.Read(name));
 
         var result = await replayer.ReplayWorkflowAsync(history, cancellationToken: TestContext.Current.CancellationToken);
@@ -33,6 +33,7 @@ public class WorkflowReplayTests
     [Theory]
     [InlineData("ping-")]
     [InlineData("spike-")]
+    [InlineData("renovate-triage-")]
     public void EveryWorkflowHasAtLeastOneCommittedHistory(string prefix) =>
         Assert.Contains(HistoryStore.Names(), name => name.StartsWith(prefix, StringComparison.Ordinal));
 }

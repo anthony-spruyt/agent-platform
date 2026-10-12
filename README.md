@@ -34,6 +34,9 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `AgentPods:AgentGatewayUrl`               | `http://agent-platform-web.agent-platform.svc.cluster.local:8081/mcp` | Worker role. The MCP endpoint written into agent pods                                                                                                       |
 | `AgentPods:ServiceAccountName`            | `agent-runner`                                                        | Worker role                                                                                                                                                 |
 | `AgentPods:ClusterReadServiceAccountName` | unset                                                                 | Worker role. Required to run the `cluster-read` tier                                                                                                        |
+| `LiteLlm:BaseUrl`                         | `http://litellm.litellm.svc.cluster.local:4000`                       | Worker role. Where the Jev (`/typesafe`) pass-through is called; an absolute http or https URL                                                              |
+| `LiteLlm:ApiKey`                          | none, required                                                        | Worker role. The LiteLLM key the Jev call authenticates with                                                                                                |
+| `RenovateTriage:Mode`                     | `Shadow`                                                              | Worker role. `Shadow` records verdicts and writes nothing to GitHub; no other mode exists yet                                                               |
 | `ConnectionStrings:rundata`               | none, required                                                        | Worker and Migrate roles. The Npgsql connection string of the run-data database                                                                             |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`             | unset                                                                 | Enables the OTLP exporter when set                                                                                                                          |
 | `ASPNETCORE_HTTP_PORTS`                   | `8080`                                                                | Image default; the Web deployment sets `8080;8081`                                                                                                          |
@@ -84,20 +87,44 @@ The Web role serves `POST /webhooks/github` on the webhook port only (`/mcp` sta
 | `check_suite` with a malformed body                                                                                                | `400`                                                    |
 
 A check suite from any app is forwarded, so the workflow hears about every suite that finishes. Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`, ID `renovate-triage/{owner}/{repo}/{pr}`, task queue `agent-platform`, signal `CheckSuiteCompleted` with the repository, pull request number, head sha, check suite id, app slug, conclusion and `X-GitHub-Delivery` id.
-`RenovateTriageWorkflow` is a placeholder that records the signals it receives.
+`RenovateTriageWorkflow` receives these signals; see Renovate triage below.
 
 The Worker role reads GitHub through `IGitHubApiClient`: pull request, all check runs of a sha, reviews and labels, all paged, read-only. Each call mints an installation token for one repository with only the permission that call needs (`pull_requests: read` or `checks: read`), authenticated by a short-lived App JWT signed with `GitHub:PrivateKey`. The installation is looked up per repository, and
 a token is reused until five minutes before it expires.
+
+## Renovate triage
+
+`RenovateTriageWorkflow` judges one Renovate pull request per workflow ID. Each pass runs three activities on the `agent-platform` queue:
+
+- `Assess` reads the pull request from GitHub and applies the rules below. It returns a skip, an earlier verdict for the head sha, a decision, `Pending` (CI still running) or a request to ask Jev.
+- `Judge` reads the pull request files and sends the pull request body and the file diff to Jev in one call (the LiteLLM `/typesafe` pass-through, each capped at 32 KiB; lock files come last in the diff, and files without a patch are listed by name) and applies the answers. It re-reads the pull request first, so a moved head returns without a verdict.
+- `RecordVerdict` stores the verdict in `renovate_triage_verdicts`, once per pull request and head sha.
+
+The workflow waits for all CI: while `Assess` returns `Pending` it waits for the next `CheckSuiteCompleted` signal, for at most two hours. When the two hours end it runs `Assess` once more and records `ci-timeout` only if CI is still pending. A head sha that differs from the one judged starts a new run with the same input.
+
+In `Shadow` mode the verdict is only written to the database; nothing is written to GitHub.
+
+Rules, in order; the first that applies decides:
+
+1. The pull request is not open, or its head or base is in another repository: skipped.
+2. The author is not Renovate, or the pull request has an `agent/needs-review`, `agent/revert` or `blocked` label: skipped.
+3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved.
+4. A verdict already exists for the head sha: nothing to do.
+5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
+6. CI must be done. All check runs of the sha and all check suites are read; a run or suite that has not completed, or no check runs at all, is pending. Mergify checks are ignored. A failed check: needs review, `ci-failed`.
+7. Jev answers a breaking-change score, a bump type and a changelog score. It judges the bump type itself from the old and new versions in the diff or the body, without trusting Renovate's labels. A breaking score of 0.66 or more, or a major, calver or other type: needs review. Digest approves. An answer that is none of the known types: needs review, `unknown-bump`.
+8. A patch or minor on an allowlisted branch approves; any other needs a changelog score of 0.7 or more. A Jev failure: needs review, `jev-error`.
 
 ## Run data
 
 Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF Core, so runs can be measured, compared and replayed later.
 
-| Table       | One row per     | Key columns                                                                                                                                                                                                          |
-| ----------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runs`      | workflow run    | `workflow_id` + `workflow_run_id` (unique), `workflow_type`, `status`, `input_event` and `context` (jsonb), `prompt_hash`, `model`, timings, token and cost totals, nullable `outcome` fields for later ground truth |
-| `run_steps` | step of a run   | `run_id` + `seq` (unique), `name`, `rung` (`Rule`, `Jev`, `Claude`), `input` and `output` (jsonb), `confidence`, `stop_reason`, `prompt_hash`, `model`, tokens, `cost_usd`, timings                                  |
-| `prompts`   | distinct prompt | `hash` (SHA-256 of the body, primary key), `name`, `body`                                                                                                                                                            |
+| Table                      | One row per           | Key columns                                                                                                                                                                                                          |
+| -------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs`                     | workflow run          | `workflow_id` + `workflow_run_id` (unique), `workflow_type`, `status`, `input_event` and `context` (jsonb), `prompt_hash`, `model`, timings, token and cost totals, nullable `outcome` fields for later ground truth |
+| `run_steps`                | step of a run         | `run_id` + `seq` (unique), `name`, `rung` (`Rule`, `Jev`, `Claude`), `input` and `output` (jsonb), `confidence`, `stop_reason`, `prompt_hash`, `model`, tokens, `cost_usd`, timings                                  |
+| `renovate_triage_verdicts` | pull request head sha | `repo` + `pr_number` + `head_sha` (unique), `verdict` (`Approve` or `NeedsReview`), `reasons` (jsonb), `comment`, `mode`, `created_at`                                                                               |
+| `prompts`                  | distinct prompt       | `hash` (SHA-256 of the body, primary key), `name`, `body`                                                                                                                                                            |
 
 Only activities write to the database, so workflow code stays deterministic. `BeginRun`, `RecordStep` and `CompleteRun` run on the `agent-platform` queue and are idempotent on the unique keys above, so a retried activity never duplicates a row. A failed or cancelled run is completed as `Failed`.
 
@@ -146,8 +173,8 @@ The workflow tests run against Temporal's time-skipping test server, which the S
 The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
 time-skipping tests.
 
-The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row, check that the Migrate role finished with exit code 0 and post a signed `check_suite` delivery to the Web role to see the triage workflow run on the Worker. They need a container runtime, which GitHub's
-ubuntu runners have.
+The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row, check that the Migrate role finished with exit code 0 and post a signed `check_suite` delivery to the Web role to see the triage workflow schedule its `Assess` activity on the Worker. They need a container runtime,
+which GitHub's ubuntu runners have; with Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.
 
 ## Image
 

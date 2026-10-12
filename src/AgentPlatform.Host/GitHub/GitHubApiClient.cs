@@ -9,21 +9,36 @@ public sealed record GitHubPullRequest(
     bool Merged,
     string? MergeableState,
     string? AuthorLogin,
+    long? AuthorId,
     string HeadRef,
     string HeadSha,
     string? HeadRepo,
+    string? BaseRepo,
     string BaseRef,
-    IReadOnlyList<string> Labels);
+    IReadOnlyList<string> Labels,
+    int Commits);
 
 public sealed record GitHubCheckRun(long Id, string Name, string Status, string? Conclusion, string? AppSlug);
 
-public sealed record GitHubReview(long Id, string? AuthorLogin, string State, string? CommitId, DateTimeOffset? SubmittedAt);
+public sealed record GitHubCheckSuite(long Id, string Status, string? Conclusion, string? AppSlug, int CheckRunCount);
+
+public sealed record GitHubCommit(string Sha, string? AuthorLogin, long? AuthorId, string? AuthorEmail, string? CommitterEmail, bool Verified);
+
+public sealed record GitHubPullRequestFile(string Filename, string? Patch);
+
+public sealed record GitHubReview(long Id, string? AuthorLogin, string? AuthorAssociation, string State, string? CommitId, DateTimeOffset? SubmittedAt);
 
 public interface IGitHubApiClient
 {
     Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<GitHubCheckSuite>> ListCheckSuitesAsync(string repo, string sha, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<GitHubCommit>> ListCommitsAsync(string repo, int number, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<GitHubPullRequestFile>> ListPullRequestFilesAsync(string repo, int number, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken);
 
@@ -50,9 +65,10 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         UserDto? User,
         RefDto? Head,
         RefDto? Base,
-        List<LabelDto>? Labels);
+        List<LabelDto>? Labels,
+        int Commits);
 
-    private sealed record UserDto(string? Login);
+    private sealed record UserDto(string? Login, long? Id);
 
     private sealed record RefDto(string? Ref, string? Sha, RepoDto? Repo);
 
@@ -66,7 +82,21 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
 
     private sealed record AppDto(string? Slug);
 
-    private sealed record ReviewDto(long Id, UserDto? User, string? State, string? CommitId, DateTimeOffset? SubmittedAt);
+    private sealed record CheckSuitesPage(List<CheckSuiteDto>? CheckSuites);
+
+    private sealed record CheckSuiteDto(long Id, string? Status, string? Conclusion, AppDto? App, int LatestCheckRunsCount);
+
+    private sealed record CommitDto(string? Sha, UserDto? Author, CommitDetailDto? Commit);
+
+    private sealed record CommitDetailDto(PersonDto? Author, PersonDto? Committer, VerificationDto? Verification);
+
+    private sealed record PersonDto(string? Email);
+
+    private sealed record VerificationDto(bool Verified);
+
+    private sealed record FileDto(string? Filename, string? Patch);
+
+    private sealed record ReviewDto(long Id, UserDto? User, string? AuthorAssociation, string? State, string? CommitId, DateTimeOffset? SubmittedAt);
 
     public async Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken)
     {
@@ -89,11 +119,14 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             pr.Merged,
             pr.MergeableState,
             pr.User?.Login,
+            pr.User?.Id,
             pr.Head?.Ref ?? string.Empty,
             pr.Head?.Sha ?? string.Empty,
             pr.Head?.Repo?.FullName,
+            pr.Base?.Repo?.FullName,
             pr.Base?.Ref ?? string.Empty,
-            (pr.Labels ?? []).Select(l => l.Name).OfType<string>().ToList());
+            (pr.Labels ?? []).Select(l => l.Name).OfType<string>().ToList(),
+            pr.Commits);
     }
 
     public async Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
@@ -115,6 +148,66 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         return [.. runs.Select(r => new GitHubCheckRun(r.Id, r.Name ?? string.Empty, r.Status ?? string.Empty, r.Conclusion, r.App?.Slug))];
     }
 
+    public async Task<IReadOnlyList<GitHubCheckSuite>> ListCheckSuitesAsync(string repo, string sha, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        if (!IsSha(sha))
+        {
+            throw new ArgumentException("The commit must be given as a hexadecimal sha.", nameof(sha));
+        }
+
+        var suites = await GetPagesAsync<CheckSuitesPage, CheckSuiteDto>(
+            repo,
+            $"repos/{owner}/{name}/commits/{sha}/check-suites",
+            _checksRead,
+            "check suites list",
+            page => page.CheckSuites,
+            cancellationToken).ConfigureAwait(false);
+
+        return [.. suites.Select(s => new GitHubCheckSuite(s.Id, s.Status ?? string.Empty, s.Conclusion, s.App?.Slug, s.LatestCheckRunsCount))];
+    }
+
+    public async Task<IReadOnlyList<GitHubCommit>> ListCommitsAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+
+        var commits = await GetPagesAsync<List<CommitDto>, CommitDto>(
+            repo,
+            $"repos/{owner}/{name}/pulls/{number}/commits",
+            _pullRequestsRead,
+            "commits list",
+            page => page,
+            cancellationToken).ConfigureAwait(false);
+
+        return
+        [
+            .. commits.Select(c => new GitHubCommit(
+                c.Sha ?? string.Empty,
+                c.Author?.Login,
+                c.Author?.Id,
+                c.Commit?.Author?.Email,
+                c.Commit?.Committer?.Email,
+                c.Commit?.Verification?.Verified ?? false)),
+        ];
+    }
+
+    public async Task<IReadOnlyList<GitHubPullRequestFile>> ListPullRequestFilesAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+
+        var files = await GetPagesAsync<List<FileDto>, FileDto>(
+            repo,
+            $"repos/{owner}/{name}/pulls/{number}/files",
+            _pullRequestsRead,
+            "files list",
+            page => page,
+            cancellationToken).ConfigureAwait(false);
+
+        return [.. files.Select(f => new GitHubPullRequestFile(f.Filename ?? string.Empty, f.Patch))];
+    }
+
     public async Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)
     {
         var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
@@ -128,7 +221,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             page => page,
             cancellationToken).ConfigureAwait(false);
 
-        return [.. reviews.Select(r => new GitHubReview(r.Id, r.User?.Login, r.State ?? string.Empty, r.CommitId, r.SubmittedAt))];
+        return [.. reviews.Select(r => new GitHubReview(r.Id, r.User?.Login, r.AuthorAssociation, r.State ?? string.Empty, r.CommitId, r.SubmittedAt))];
     }
 
     public async Task<IReadOnlyList<string>> ListLabelsAsync(string repo, int number, CancellationToken cancellationToken)

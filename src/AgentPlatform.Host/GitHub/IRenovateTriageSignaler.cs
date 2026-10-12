@@ -15,7 +15,7 @@ public sealed class TemporalRenovateTriageSignaler(ITemporalClient client) : IRe
         ArgumentNullException.ThrowIfNull(signal);
 
         await client.StartWorkflowAsync(
-            (RenovateTriageWorkflow workflow) => workflow.RunAsync(),
+            (RenovateTriageWorkflow workflow) => workflow.RunAsync(null),
             new WorkflowOptions(RenovateTriageWorkflow.WorkflowId(signal.Repo, signal.PrNumber), TaskQueues.AgentPlatform)
             {
                 StartSignal = RenovateTriageWorkflow.CheckSuiteCompletedSignalName,

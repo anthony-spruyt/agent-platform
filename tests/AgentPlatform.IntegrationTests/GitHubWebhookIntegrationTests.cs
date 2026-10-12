@@ -3,9 +3,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.Workflows;
 using Aspire.Hosting.Testing;
 using Temporalio.Client;
+using Temporalio.Common;
 
 namespace AgentPlatform.IntegrationTests;
 
@@ -23,6 +25,7 @@ public class GitHubWebhookIntegrationTests(AppHostFixture fixture)
         timeout.CancelAfter(TestTimeout);
         var ct = timeout.Token;
         var pr = RandomNumberGenerator.GetInt32(1, int.MaxValue);
+        var delivery = Guid.NewGuid().ToString();
         var body = JsonSerializer.Serialize(new
         {
             action = "completed",
@@ -43,19 +46,23 @@ public class GitHubWebhookIntegrationTests(AppHostFixture fixture)
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-GitHub-Event", "check_suite");
-        request.Headers.TryAddWithoutValidation("X-GitHub-Delivery", "integration-1");
+        request.Headers.TryAddWithoutValidation("X-GitHub-Delivery", delivery);
         request.Headers.TryAddWithoutValidation(WebhookSignature.HeaderName, WebhookSignature.Compute(Encoding.UTF8.GetBytes(body), LocalWebhookSecret));
 
         using var response = await web.SendAsync(request, ct);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var client = await fixture.ConnectAsync(ct);
-        var signals = await client
-            .GetWorkflowHandle<RenovateTriageWorkflow, IReadOnlyList<CheckSuiteCompletedSignal>>(RenovateTriageWorkflow.WorkflowId("octo/widgets", pr))
-            .GetResultAsync(rpcOptions: new RpcOptions { CancellationToken = ct });
-        var signal = Assert.Single(signals);
-        Assert.Equal("integration-1", signal.DeliveryId);
-        Assert.Equal(42, signal.CheckSuiteId);
+        var handle = client.GetWorkflowHandle(RenovateTriageWorkflow.WorkflowId("octo/widgets", pr));
+        var history = await WaitForAsync(
+            handle,
+            h => h.Events.Any(e => e.ActivityTaskScheduledEventAttributes?.ActivityType.Name == RenovateTriageActivities.AssessName),
+            ct);
+
+        var signalEvent = Assert.Single(history.Events, e => e.WorkflowExecutionSignaledEventAttributes is not null);
+        var json = signalEvent.WorkflowExecutionSignaledEventAttributes.Input.Payloads_[0].Data.ToStringUtf8();
+        Assert.Contains($"\"deliveryId\":\"{delivery}\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"checkSuiteId\":42", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -67,5 +74,19 @@ public class GitHubWebhookIntegrationTests(AppHostFixture fixture)
         using var response = await web.PostAsync(GitHubWebhookEndpoint.Path, content, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    private static async Task<WorkflowHistory> WaitForAsync(WorkflowHandle handle, Func<WorkflowHistory, bool> condition, CancellationToken ct)
+    {
+        while (true)
+        {
+            var history = await handle.FetchHistoryAsync();
+            if (condition(history))
+            {
+                return history;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
+        }
     }
 }

@@ -1,3 +1,4 @@
+using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -14,11 +15,14 @@ internal sealed class InMemoryRunData
         Factory = factory;
         _interceptor = interceptor;
         Store = new RunDataStore(factory);
+        Verdicts = new TriageVerdictStore(factory);
     }
 
     public IDbContextFactory<RunDataDbContext> Factory { get; }
 
     public RunDataStore Store { get; }
+
+    public TriageVerdictStore Verdicts { get; }
 
     public RunDataActivities Activities => new(Store);
 
@@ -34,11 +38,23 @@ internal sealed class InMemoryRunData
 
     public void FailSavesWith(Exception failure) => _interceptor.Failure = failure;
 
+    public void FailNextSaveWith(Exception failure) => _interceptor.FailOnce = failure;
+
     private sealed class FailingSaveInterceptor : SaveChangesInterceptor
     {
         public Exception? Failure { get; set; }
 
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default) =>
-            Failure is null ? base.SavingChangesAsync(eventData, result, cancellationToken) : throw Failure;
+        public Exception? FailOnce { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (FailOnce is { } once)
+            {
+                FailOnce = null;
+                throw once;
+            }
+
+            return Failure is null ? base.SavingChangesAsync(eventData, result, cancellationToken) : throw Failure;
+        }
     }
 }

@@ -1,0 +1,1 @@
+{"model":"jev-1.13.0","answers":{"breaking":{"type":"noul","noul":0.04},"bump_type":{"type":"choice","choice":"patch","confidence":1,"probabilities":{"digest":0,"calver":0,"major":0,"minor":0,"patch":1,"other":0}},"changelog":{"type":"noul","noul":0.78}},"usage":{"input_tokens":2288,"output_tokens":97}}

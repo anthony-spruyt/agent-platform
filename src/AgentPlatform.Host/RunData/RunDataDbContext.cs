@@ -1,4 +1,5 @@
 using System.Text;
+using AgentPlatform.Host.RenovateTriage;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgentPlatform.Host.RunData;
@@ -14,9 +15,25 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
 
     public DbSet<RunStep> RunSteps => Set<RunStep>();
 
+    public DbSet<RenovateTriageVerdict> TriageVerdicts => Set<RenovateTriageVerdict>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+
+        modelBuilder.Entity<RenovateTriageVerdict>(verdict =>
+        {
+            verdict.ToTable("renovate_triage_verdicts");
+            verdict.HasKey(v => v.Id);
+            verdict.Property(v => v.Id).ValueGeneratedNever();
+            verdict.Property(v => v.Repo).HasMaxLength(200);
+            verdict.Property(v => v.HeadSha).HasMaxLength(64);
+            verdict.Property(v => v.Verdict).HasConversion<string>().HasMaxLength(16);
+            verdict.Property(v => v.Mode).HasConversion<string>().HasMaxLength(16);
+            verdict.Property(v => v.Reasons).HasColumnType(Jsonb);
+            verdict.Property(v => v.CreatedAt).HasDefaultValueSql("now()");
+            verdict.HasIndex(v => new { v.Repo, v.PrNumber, v.HeadSha }).IsUnique();
+        });
 
         modelBuilder.Entity<Prompt>(prompt =>
         {
