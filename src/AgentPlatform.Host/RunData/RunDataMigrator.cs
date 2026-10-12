@@ -4,15 +4,28 @@ namespace AgentPlatform.Host.RunData;
 
 public sealed partial class RunDataMigrator(IDbContextFactory<RunDataDbContext> factory, ILogger<RunDataMigrator> logger)
 {
+    private const long MigrationLockKey = 7_319_204_551;
+
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         try
         {
             await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-            var pending = (await db.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false)).Count();
-            LogApplying(logger, pending);
-            await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
-            LogApplied(logger);
+            await db.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            // Session lock on a pooled connection, released explicitly; EF's own lock still let a second runner re-apply a migration.
+            await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_lock({MigrationLockKey})", cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var pending = (await db.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false)).Count();
+                LogApplying(logger, pending);
+                await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+                LogApplied(logger);
+            }
+            finally
+            {
+                await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_unlock({MigrationLockKey})", CancellationToken.None).ConfigureAwait(false);
+            }
+
             return 0;
         }
         catch (Exception ex)

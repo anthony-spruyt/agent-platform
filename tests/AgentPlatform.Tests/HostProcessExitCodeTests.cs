@@ -22,6 +22,8 @@ public class HostProcessExitCodeTests
         startInfo.Environment["ConnectionStrings__rundata"] = "Host=localhost;Database=agent_platform";
         startInfo.Environment["GitHub__AppId"] = "12345";
         startInfo.Environment["GitHub__PrivateKey"] = NewPrivateKeyPem();
+        startInfo.Environment["LiteLlm__BaseUrl"] = "http://litellm.example:4000";
+        startInfo.Environment["LiteLlm__ApiKey"] = "test-key";
         startInfo.Environment["Temporal__Address"] = UnusedLoopbackAddress();
         startInfo.Environment["ASPNETCORE_URLS"] = "http://127.0.0.1:0";
 

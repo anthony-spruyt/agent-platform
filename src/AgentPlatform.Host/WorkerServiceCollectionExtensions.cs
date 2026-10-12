@@ -1,6 +1,7 @@
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Gateway;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
 using k8s;
@@ -29,6 +30,7 @@ public static class WorkerServiceCollectionExtensions
             .AddWorkflow<RenovateTriageWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<RunDataActivities>()
+            .AddSingletonActivities<RenovateTriageActivities>()
             .AddScopedActivities<AgentPodActivities>();
 
         services
@@ -38,6 +40,7 @@ public static class WorkerServiceCollectionExtensions
 
         services.AddRunData(configuration);
         services.AddGitHubAppClient(configuration);
+        services.AddRenovateTriage(configuration);
         services.AddSingleton(pods);
         services.AddSingleton(new AgentSessionTokens(gateway.SessionTokenKey));
         services.AddSingleton<AgentPodSpecBuilder>();

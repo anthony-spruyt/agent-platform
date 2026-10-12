@@ -9,6 +9,7 @@ public sealed record GitHubPullRequest(
     bool Merged,
     string? MergeableState,
     string? AuthorLogin,
+    long? AuthorId,
     string HeadRef,
     string HeadSha,
     string? HeadRepo,
@@ -52,7 +53,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         RefDto? Base,
         List<LabelDto>? Labels);
 
-    private sealed record UserDto(string? Login);
+    private sealed record UserDto(string? Login, long? Id);
 
     private sealed record RefDto(string? Ref, string? Sha, RepoDto? Repo);
 
@@ -89,6 +90,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             pr.Merged,
             pr.MergeableState,
             pr.User?.Login,
+            pr.User?.Id,
             pr.Head?.Ref ?? string.Empty,
             pr.Head?.Sha ?? string.Empty,
             pr.Head?.Repo?.FullName,

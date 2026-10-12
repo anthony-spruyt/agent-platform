@@ -34,7 +34,7 @@ public sealed record CheckSuiteEvent(string? Action, CheckSuiteEvent.Suite? Chec
         var signals = new List<CheckSuiteCompletedSignal>();
         if (Action != "completed"
             || CheckSuite is not { HeadSha.Length: > 0, PullRequests: { Count: > 0 } pullRequests } suite
-            || Repository is not { FullName: { } fullName } repository
+            || Repository is not { Id: > 0, FullName: { } fullName } repository
             || !GitHubRepoName.TryParse(fullName, out _, out _)
             || !IsRenovateUpdateBranch(suite.HeadBranch))
         {

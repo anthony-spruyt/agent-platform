@@ -60,7 +60,7 @@ public class GitHubApiClientTests
     {
         var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""
             {"number":7,"title":"Update dep","body":"notes","state":"open","draft":false,"merged":false,
-             "mergeable_state":"clean","user":{"login":"renovate[bot]"},
+             "mergeable_state":"clean","user":{"login":"renovate[bot]","id":29139614},
              "head":{"ref":"renovate/dep","sha":"abc","repo":{"full_name":"octo/widgets"}},
              "base":{"ref":"main"},
              "labels":[{"name":"dependencies"},{"name":"blocked"}]}
@@ -76,6 +76,7 @@ public class GitHubApiClientTests
         Assert.False(pr.Merged);
         Assert.Equal("clean", pr.MergeableState);
         Assert.Equal("renovate[bot]", pr.AuthorLogin);
+        Assert.Equal(29139614, pr.AuthorId);
         Assert.Equal("renovate/dep", pr.HeadRef);
         Assert.Equal("abc", pr.HeadSha);
         Assert.Equal("octo/widgets", pr.HeadRepo);
@@ -98,6 +99,7 @@ public class GitHubApiClientTests
         var pr = await client.GetPullRequestAsync("octo/widgets", 7, Ct);
 
         Assert.Null(pr.Body);
+        Assert.Null(pr.AuthorId);
         Assert.Null(pr.HeadRepo);
         Assert.Null(pr.MergeableState);
         Assert.Empty(pr.Labels);

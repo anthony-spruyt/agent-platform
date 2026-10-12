@@ -58,5 +58,7 @@ internal static class GitHubPayloads
     {
         settings.TryAdd("GitHub:AppId", "12345");
         settings.TryAdd("GitHub:PrivateKey", PrivateKeyPem);
+        settings.TryAdd("LiteLlm:BaseUrl", "http://litellm.example:4000");
+        settings.TryAdd("LiteLlm:ApiKey", "test-key");
     }
 }
