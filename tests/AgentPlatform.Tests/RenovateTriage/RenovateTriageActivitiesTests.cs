@@ -3,6 +3,7 @@ using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Temporalio.Exceptions;
 using Temporalio.Testing;
@@ -11,10 +12,8 @@ namespace AgentPlatform.Tests.RenovateTriage;
 
 public class RenovateTriageActivitiesTests
 {
-    private const string Repo = "octo/widgets";
+    private const string Repo = "anthony-spruyt/widgets";
     private const string Sha = FakeGitHubApi.Sha;
-
-    private const TriageMode NotShadow = (TriageMode)1;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -30,6 +29,19 @@ public class RenovateTriageActivitiesTests
     }
 
     private static Task<T> Run<T>(Func<Task<T>> action) => new ActivityEnvironment().RunAsync(action);
+
+    private sealed class CapturingLogger : ILogger
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
+    }
 
     private static Task<AssessResult> Assess(Rig rig) => Run(() => rig.Activities.AssessAsync(new AssessInput(Repo, 7)));
 
@@ -115,26 +127,26 @@ public class RenovateTriageActivitiesTests
         [InlineData("agent/needs-review")]
         [InlineData("agent/revert")]
         [InlineData("blocked")]
-        public async Task OutsideShadowMode_EveryBlockingLabel_SkipsThePr(string label)
+        public async Task InLiveMode_EveryBlockingLabel_SkipsThePr(string label)
         {
-            var rig = Create(NotShadow);
+            var rig = Create(TriageMode.Live);
             rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
 
-            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel), await Assess(rig));
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel, Mode: TriageMode.Live), await Assess(rig));
         }
 
         [Theory]
         [InlineData("closed", false)]
         [InlineData("closed", true)]
         [InlineData("open", true)]
-        public async Task OutsideShadowMode_AClosedOrMergedPr_IsSkipped(string state, bool merged)
+        public async Task InLiveMode_AClosedOrMergedPr_IsSkipped(string state, bool merged)
         {
-            var rig = Create(NotShadow);
+            var rig = Create(TriageMode.Live);
             rig.Github.PullRequest = rig.Github.PullRequest with { State = state, Merged = merged };
 
             var result = await Assess(rig);
 
-            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.NotOpen), result);
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.NotOpen, Mode: TriageMode.Live), result);
         }
 
         [Fact]
@@ -188,9 +200,9 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task OutsideShadowMode_AnApprovalFromTheTriageApp_IsSkipped()
+        public async Task InLiveMode_AnApprovalFromTheTriageApp_IsSkipped()
         {
-            var rig = Create(NotShadow);
+            var rig = Create(TriageMode.Live);
             rig.Github.Reviews.Add(new GitHubReview(1, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", Sha, null));
 
             Assert.Equal(TriageRules.AlreadyApproved, (await Assess(rig)).Reason);
@@ -244,10 +256,10 @@ public class RenovateTriageActivitiesTests
         }
 
         [Theory]
-        [InlineData("fork/widgets", "octo/widgets")]
-        [InlineData("octo/widgets", "fork/widgets")]
-        [InlineData(null, "octo/widgets")]
-        [InlineData("octo/widgets", null)]
+        [InlineData("fork/widgets", "anthony-spruyt/widgets")]
+        [InlineData("anthony-spruyt/widgets", "fork/widgets")]
+        [InlineData(null, "anthony-spruyt/widgets")]
+        [InlineData("anthony-spruyt/widgets", null)]
         public async Task APrWhoseHeadAndBaseAreNotTheTriagedRepo_IsSkipped(string? headRepo, string? baseRepo)
         {
             var rig = Create();
@@ -272,7 +284,7 @@ public class RenovateTriageActivitiesTests
         public async Task RepoNamesAreComparedWithoutRegardToCase()
         {
             var rig = Create();
-            rig.Github.PullRequest = rig.Github.PullRequest with { HeadRepo = "Octo/Widgets", BaseRepo = "OCTO/widgets" };
+            rig.Github.PullRequest = rig.Github.PullRequest with { HeadRepo = "Anthony-Spruyt/Widgets", BaseRepo = "ANTHONY-SPRUYT/widgets" };
 
             Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
         }
@@ -338,7 +350,7 @@ public class RenovateTriageActivitiesTests
             Assert.DoesNotContain("commits", rig.Github.Calls);
 
             rig = Create();
-            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(), TriageMode.Shadow, Ct);
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Shadow, Ct);
             await Assess(rig);
             Assert.DoesNotContain("commits", rig.Github.Calls);
         }
@@ -347,7 +359,7 @@ public class RenovateTriageActivitiesTests
         public async Task ACommitThatHasAVerdict_IsAlreadyJudged_WithoutReadingTheChecks()
         {
             var rig = Create();
-            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(), TriageMode.Shadow, Ct);
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Shadow, Ct);
 
             var result = await Assess(rig);
 
@@ -406,14 +418,16 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task AFailedCheck_DecidesNeedsReviewWithTheCiComment()
+        public async Task AFailedCheck_DecidesNeedsReviewWithTheCiCommentNamingIt()
         {
             var rig = Create();
-            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "cancelled", "github-actions"));
+            var failed = new GitHubCheckRun(2, "test", "completed", "cancelled", "github-actions");
+            rig.Github.Checks.Add(failed);
 
             var result = await Assess(rig);
 
-            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: TriageRules.CiFailedDecision()), result);
+            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: TriageRules.CiFailedDecision(Repo, Sha, [failed])), result);
+            Assert.Contains("[`test`](https://github.com/anthony-spruyt/widgets/runs/2)", result.Decision!.Comment, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -424,7 +438,8 @@ public class RenovateTriageActivitiesTests
 
             var result = await Assess(rig);
 
-            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: TriageRules.HighRiskDecision()), result);
+            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: TriageRules.HighRiskDecision("traefik")), result);
+            Assert.Contains("`traefik` is on the high-risk list", result.Decision!.Comment, StringComparison.Ordinal);
             Assert.Empty(rig.Jev.Bodies);
         }
 
@@ -446,6 +461,234 @@ public class RenovateTriageActivitiesTests
             rig.Github.Checks.AddRange(Enumerable.Range(1, 120).Select(i => new GitHubCheckRun(i, $"job-{i}", "completed", i == 120 ? "failure" : "success", "github-actions")));
 
             Assert.Equal(AssessStatus.Decided, (await Assess(rig)).Status);
+        }
+    }
+
+    public class LiveAssessTests
+    {
+        private static Rig Live() => Create(TriageMode.Live);
+
+        [Fact]
+        public async Task EveryResultNamesTheModeItWasMadeIn()
+        {
+            var rig = Live();
+
+            Assert.Equal(new AssessResult(AssessStatus.NeedsJev, Sha, Mode: TriageMode.Live), await Assess(rig));
+            Assert.Equal(TriageMode.Shadow, (await Assess(Create())).Mode);
+        }
+
+        [Fact]
+        public async Task ARepoOfAnotherOwner_IsSkippedBeforeAnythingIsRead()
+        {
+            var rig = Live();
+
+            var result = await Run(() => rig.Activities.AssessAsync(new AssessInput("octo/widgets", 7)));
+
+            Assert.Equal(AssessStatus.Skipped, result.Status);
+            Assert.Equal(TriageRules.ForeignOwner, result.Reason);
+            Assert.Equal(TriageMode.Live, result.Mode);
+            Assert.Empty(rig.Github.Calls);
+        }
+
+        [Fact]
+        public async Task ARepoOfAnotherOwner_IsSkippedInShadowToo()
+        {
+            var rig = Create();
+
+            var result = await Run(() => rig.Activities.AssessAsync(new AssessInput("octo/widgets", 7)));
+
+            Assert.Equal(TriageRules.ForeignOwner, result.Reason);
+            Assert.Empty(rig.Github.Calls);
+        }
+
+        [Fact]
+        public async Task AnAppliedLiveVerdict_IsAlreadyJudged()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
+            await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, Ct);
+
+            Assert.Equal(new AssessResult(AssessStatus.AlreadyJudged, Sha, Mode: TriageMode.Live), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task AShadowVerdict_DoesNotCountAsJudgedInLive()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Shadow, Ct);
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task ALiveVerdictDoesNotCountAsJudgedInShadow()
+        {
+            var rig = Create();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task AnUnappliedLiveVerdict_IsDecidedAgainFromTheStoredRow()
+        {
+            var rig = Live();
+            var decision = TriageRules.CiFailedDecision(Repo, Sha, [new GitHubCheckRun(3, "build", "completed", "failure", "github-actions")]);
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, decision, TriageMode.Live, Ct);
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: decision, Mode: TriageMode.Live), result);
+            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("checks", StringComparison.Ordinal));
+            Assert.Empty(rig.Jev.Bodies);
+        }
+
+        [Fact]
+        public async Task AnUnappliedLiveVerdict_IsReappliedDespiteTheLabelAndApprovalOfItsOwnWrites()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, "**Auto-approved:** digest bump."), TriageMode.Live, Ct);
+            rig.Github.Reviews.Add(new GitHubReview(1, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", Sha, null));
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.AutoApprovedLabel] };
+
+            Assert.Equal(AssessStatus.Decided, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task AnUnappliedNeedsReviewVerdict_IsReappliedDespiteTheNeedsReviewLabelOfItsOwnWrites()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.NeedsReviewLabel] };
+
+            Assert.Equal(AssessStatus.Decided, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task AnUnappliedApproveVerdict_IsStillHeldBackByAHumansNeedsReviewLabel()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, "**Auto-approved:** digest bump."), TriageMode.Live, Ct);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.NeedsReviewLabel] };
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel, Mode: TriageMode.Live), result);
+        }
+
+        [Theory]
+        [InlineData("blocked")]
+        [InlineData("agent/revert")]
+        public async Task AnUnappliedLiveVerdict_IsStillHeldBackByAHumansBlockingLabel(string label)
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
+
+            Assert.Equal(TriageRules.BlockingLabel, (await Assess(rig)).Reason);
+        }
+
+        [Fact]
+        public async Task AnUnappliedLiveVerdict_IsStillHeldBackByAHumanApproval()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
+            rig.Github.Reviews.Add(new GitHubReview(1, "owner", "OWNER", "APPROVED", Sha, null));
+
+            Assert.Equal(TriageRules.AlreadyApproved, (await Assess(rig)).Reason);
+        }
+
+        [Fact]
+        public async Task AnUnappliedVerdictOfAnEarlierCommit_DoesNotShortcutTheNewOne()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, new string('a', 40), TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
+        }
+    }
+
+    public class JudgeGuardTests
+    {
+        private static Task<JudgeResult> Judge(Rig rig, bool retryJevErrors = false) =>
+            Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, retryJevErrors)));
+
+        [Fact]
+        public async Task AVersionPairThatDisagreesWithJev_NeedsReview()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.9);
+            rig.Github.Files.Clear();
+            rig.Github.Files.Add(new GitHubPullRequestFile("package.json", "@@ -1 +1 @@\n-\"dep\": \"1.0.0\"\n+\"dep\": \"1.2.0\""));
+
+            var result = await Judge(rig);
+
+            Assert.Equal(TriageRules.BumpTypeMismatch, result.Decision!.Reason);
+            Assert.Equal(rig.Jev.Answers, result.Jev);
+        }
+
+        [Theory]
+        [InlineData("-a: 1.0.0\n+a: 1.0.1 and 2.0.0")]
+        [InlineData("-a: 1.0.0\n+a: latest")]
+        [InlineData("-a: latest\n+a: 1.0.1")]
+        public async Task AChangedLinePairWhoseVersionsCannotBePaired_NeedsReview(string lines)
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.9);
+            rig.Github.Files.Clear();
+            rig.Github.Files.Add(new GitHubPullRequestFile("package.json", $"@@ -1 +1 @@\n{lines}"));
+
+            var result = await Judge(rig);
+
+            Assert.Equal(TriageRules.BumpTypeMismatch, result.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task ADigestBumpThatChangesMoreThanADigest_NeedsReview()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "digest", 0);
+
+            var result = await Judge(rig);
+
+            Assert.Equal(TriageRules.DigestMismatch, result.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task TheMajorCommentNamesTheParsedVersions()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "major", 0);
+            rig.Github.Files.Clear();
+            rig.Github.Files.Add(new GitHubPullRequestFile("package.json", "@@ -1 +1 @@\n-\"dep\": \"1.9.0\"\n+\"dep\": \"2.0.0\""));
+
+            var result = await Judge(rig);
+
+            Assert.Equal("**Needs review:** major bump, `1.9.0` -> `2.0.0`.", result.Decision!.Comment);
+        }
+
+        [Fact]
+        public async Task AJevError_WhenRetriesAreRequested_FailsRetryablyWithATypeTheWorkflowRecognises()
+        {
+            var rig = Create();
+            rig.Jev.Failure = new JevException("Jev answered with status 502.");
+
+            var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Judge(rig, retryJevErrors: true));
+
+            Assert.False(failure.NonRetryable);
+            Assert.Equal(RenovateTriageActivities.JevErrorFailureType, failure.ErrorType);
+        }
+
+        [Fact]
+        public async Task AJevError_WhenRetriesAreNotRequested_KeepsReturningTheErrorVerdict()
+        {
+            var rig = Create();
+            rig.Jev.Failure = new JevException("Jev answered with status 502.");
+
+            var result = await Judge(rig);
+
+            Assert.Equal(TriageRules.JevError, result.Decision!.Reason);
+            Assert.NotNull(result.JevError);
         }
     }
 
@@ -516,7 +759,7 @@ public class RenovateTriageActivitiesTests
 
             Assert.Equal([body], rig.Jev.Bodies);
             Assert.False(result.HeadMoved);
-            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), result.Decision);
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), result.Decision);
             Assert.Equal(rig.Jev.Answers, result.Jev);
             Assert.Null(result.JevError);
         }
@@ -529,7 +772,7 @@ public class RenovateTriageActivitiesTests
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.Breaking, TriageRules.BreakingComment), result.Decision);
+            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.Breaking, "**Needs review:** likely breaking changes (Jev score 0.90)."), result.Decision);
         }
 
         [Fact]
@@ -546,14 +789,14 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task AJevError_NeedsReviewWithoutAComment()
+        public async Task AJevError_NeedsReviewWithTheJevErrorComment()
         {
             var rig = Create();
             rig.Jev.Failure = new JevException("Jev answered with status 502.");
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.JevError, null), result.Decision);
+            Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.JevError, "**Needs review:** the triage check couldn't run (Jev error)."), result.Decision);
             Assert.Equal("Jev answered with status 502.", result.JevError);
             Assert.Null(result.Jev);
         }
@@ -593,12 +836,12 @@ public class RenovateTriageActivitiesTests
         {
             var rig = Create();
             rig.Github.PullRequest = rig.Github.PullRequest with { Body = body };
-            rig.Jev.Answers = new JevAnswers(0.04, "minor", 0.9);
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.9);
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
             Assert.Equal([body], rig.Jev.Bodies);
-            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), result.Decision);
+            Assert.Equal(TriageRules.ChangelogPresent, result.Decision!.Reason);
         }
 
         [Theory]
@@ -610,6 +853,8 @@ public class RenovateTriageActivitiesTests
         {
             var rig = Create();
             rig.Jev.Answers = new JevAnswers(0.04, bump, 0);
+            rig.Github.Files.Clear();
+            rig.Github.Files.Add(new GitHubPullRequestFile("image.yaml", $"@@ -1 +1 @@\n-image: app@sha256:{new string('a', 64)}\n+image: app@sha256:{new string('b', 64)}"));
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
@@ -650,27 +895,383 @@ public class RenovateTriageActivitiesTests
         }
     }
 
-    public class RecordTests
+    public class ApplyTests
     {
+        private static readonly TriageDecision _approve = new(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog.");
+        private static readonly TriageDecision _needsReview = new(TriageVerdict.NeedsReview, TriageRules.NoChangelog, "**Needs review:** no changelog found for this bump.");
+
+        private static Rig Live() => Create(TriageMode.Live);
+
+        private static Task<ApplyResult> Apply(Rig rig, TriageDecision decision, string sha = Sha, TriageMode mode = TriageMode.Live) =>
+            Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, sha, decision, mode)));
+
+        private static async Task Record(Rig rig, TriageDecision decision) =>
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, decision, TriageMode.Live, Ct);
+
+        private static GitHubReview BotApproval(long id, string commit) => new(id, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", commit, null);
+
+        private static string Sticky(string text) => $"{TriageRules.StickyMarker}\n{text}";
+
         [Fact]
-        public async Task TheVerdictIsStoredWithTheConfiguredMode()
+        public async Task Approve_ReviewsThePinnedCommitAndLabelsThePr()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+
+            var result = await Apply(rig, _approve);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Equal((Sha, "**Auto-approved:** patch bump with changelog."), Assert.Single(rig.Github.Approvals));
+            Assert.Equal([TriageRules.AutoApprovedLabel], rig.Github.AddedLabels);
+            Assert.Empty(rig.Github.Comments);
+        }
+
+        [Fact]
+        public async Task Approve_MarksTheVerdictApplied()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+
+            await Apply(rig, _approve);
+
+            Assert.True(await rig.Data.Verdicts.ExistsAsync(Repo, 7, Sha, TriageMode.Live, Ct));
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task Approve_SkipsTheReviewWhenTheAppAlreadyApprovedThisCommit_ButStillLabels()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, Sha));
+
+            await Apply(rig, _approve);
+
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Equal([TriageRules.AutoApprovedLabel], rig.Github.AddedLabels);
+        }
+
+        [Fact]
+        public async Task Approve_ReviewsAgainWhenTheEarlierApprovalWasForAnotherCommit()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, new string('a', 40)));
+
+            await Apply(rig, _approve);
+
+            Assert.Single(rig.Github.Approvals);
+        }
+
+        [Fact]
+        public async Task Approve_RunTwice_WritesTheReviewOnce()
+        {
+            var rig = Live();
+
+            await Apply(rig, _approve);
+            await Apply(rig, _approve);
+
+            Assert.Single(rig.Github.Approvals);
+        }
+
+        [Fact]
+        public async Task Approve_UpdatesAnEarlierNeedsReviewStickyCommentInsteadOfLeavingItStale()
+        {
+            var rig = Live();
+            rig.Github.Comments.Add(new GitHubIssueComment(40, TriageRules.TriageBotLogin, Sticky("**Needs review:** no changelog found for this bump.")));
+
+            await Apply(rig, _approve);
+
+            var comment = Assert.Single(rig.Github.Comments);
+            Assert.Equal(Sticky($"**Auto-approved:** new commit `{TriageRules.ShortSha(Sha)}`, patch bump with changelog."), comment.Body);
+            Assert.Contains("comment-update:40", rig.Github.Writes);
+        }
+
+        [Theory]
+        [InlineData("**Auto-approved:** digest bump.", "digest bump")]
+        [InlineData("**Auto-approved:** minor bump with changelog.", "minor bump with changelog")]
+        [InlineData("**Auto-approved:** allowlisted.", "allowlisted")]
+        public async Task Approve_TheStickyEditGivesTheSameReasonAsTheReviewBody(string reviewBody, string reason)
+        {
+            var rig = Live();
+            rig.Github.Comments.Add(new GitHubIssueComment(40, TriageRules.TriageBotLogin, Sticky("**Needs review:** no changelog found for this bump.")));
+
+            await Apply(rig, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, reviewBody));
+
+            Assert.Equal(reviewBody, Assert.Single(rig.Github.Approvals).Body);
+            Assert.Equal(Sticky($"**Auto-approved:** new commit `{TriageRules.ShortSha(Sha)}`, {reason}."), Assert.Single(rig.Github.Comments).Body);
+        }
+
+        [Fact]
+        public async Task Approve_IgnoresAMarkerCommentFromSomeoneElse()
+        {
+            var rig = Live();
+            rig.Github.Comments.Add(new GitHubIssueComment(40, "mallory", Sticky("planted")));
+
+            await Apply(rig, _approve);
+
+            Assert.Equal(Sticky("planted"), Assert.Single(rig.Github.Comments).Body);
+            Assert.DoesNotContain(rig.Github.Writes, w => w.StartsWith("comment", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task NeedsReview_LabelsAndPostsTheStickyComment()
+        {
+            var rig = Live();
+            await Record(rig, _needsReview);
+
+            var result = await Apply(rig, _needsReview);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+            Assert.Equal(Sticky(_needsReview.Comment!), Assert.Single(rig.Github.Comments).Body);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task NeedsReview_EditsTheExistingStickyCommentForANewCommit()
+        {
+            var rig = Live();
+            rig.Github.Comments.Add(new GitHubIssueComment(40, TriageRules.TriageBotLogin, Sticky("**Needs review:** CI failed on `aaaaaaa`.")));
+
+            await Apply(rig, _needsReview);
+
+            Assert.Equal(Sticky(_needsReview.Comment!), Assert.Single(rig.Github.Comments).Body);
+            Assert.Contains("comment-update:40", rig.Github.Writes);
+            Assert.DoesNotContain(rig.Github.Writes, w => w.StartsWith("comment-create", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task NeedsReview_RunTwice_NeverDuplicatesTheComment()
+        {
+            var rig = Live();
+
+            await Apply(rig, _needsReview);
+            await Apply(rig, _needsReview);
+
+            Assert.Single(rig.Github.Comments);
+            Assert.Single(rig.Github.Writes, w => w.StartsWith("comment", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task NeedsReview_DismissesEveryApprovalOfTheApp_EvenOneOnTheSameCommit()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, new string('a', 40)));
+            rig.Github.Reviews.Add(BotApproval(2, Sha));
+            rig.Github.Reviews.Add(new GitHubReview(3, "owner", "OWNER", "APPROVED", new string('a', 40), null));
+            rig.Github.Reviews.Add(new GitHubReview(4, TriageRules.TriageBotLogin, "CONTRIBUTOR", "DISMISSED", new string('c', 40), null));
+
+            await Apply(rig, _needsReview);
+
+            Assert.Equal([1L, 2L], rig.Github.Dismissed);
+        }
+
+        [Fact]
+        public async Task NeedsReview_TheDismissalMessageIsTheApprovedText()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, new string('a', 40)));
+
+            await Apply(rig, _needsReview);
+
+            Assert.Equal("A newer commit needs review.", Assert.Single(rig.Github.DismissalMessages));
+        }
+
+        [Fact]
+        public async Task NeedsReview_DismissesBeforeItLabelsAndComments()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, new string('a', 40)));
+
+            await Apply(rig, _needsReview);
+
+            Assert.Equal(["dismiss:1", $"labels:{TriageRules.NeedsReviewLabel}", "comment-create:500"], rig.Github.Writes);
+        }
+
+        [Fact]
+        public async Task NeedsReview_WithoutAComment_OnlyLabels()
+        {
+            var rig = Live();
+
+            await Apply(rig, new TriageDecision(TriageVerdict.NeedsReview, TriageRules.NoChangelog, null));
+
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+            Assert.Empty(rig.Github.Comments);
+        }
+
+        [Fact]
+        public async Task NeedsReview_ADismissalGitHubRefuses_DoesNotStopTheRest()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, new string('a', 40)));
+            rig.Github.OnDismiss = () => throw new GitHubApiException("already dismissed", HttpStatusCode.UnprocessableEntity);
+
+            var result = await Apply(rig, _needsReview);
+
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+        }
+
+        [Fact]
+        public async Task NeedsReview_ARefusedDismissal_IsLoggedAsAWarning()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, new string('a', 40)));
+            rig.Github.OnDismiss = () => throw new GitHubApiException("already dismissed", HttpStatusCode.UnprocessableEntity);
+            var logs = new CapturingLogger();
+
+            await new ActivityEnvironment { Logger = logs }.RunAsync(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, Sha, _needsReview, TriageMode.Live)));
+
+            Assert.Contains(logs.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("review 1", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task AHeadThatMoved_AbortsWithoutAnyWrite()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: "fedcba9876543210fedcba9876543210fedcba98");
+
+            var result = await Apply(rig, _approve);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, "head-moved"), result);
+            Assert.Empty(rig.Github.Writes);
+            Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Theory]
+        [InlineData("closed", false)]
+        [InlineData("closed", true)]
+        public async Task APrThatIsNotOpen_AbortsWithoutAnyWrite(string state, bool merged)
+        {
+            var rig = Live();
+            rig.Github.PullRequest = rig.Github.PullRequest with { State = state, Merged = merged };
+
+            var result = await Apply(rig, _approve);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, "not-open"), result);
+            Assert.Empty(rig.Github.Writes);
+        }
+
+        [Fact]
+        public async Task InShadowMode_NothingIsWritten_EvenWhenAskedTo()
         {
             var rig = Create();
 
-            var result = await Run(() => rig.Activities.RecordVerdictAsync(new RecordVerdictInput(Repo, 7, Sha, TriageRules.HighRiskDecision())));
+            var result = await Apply(rig, _approve, mode: TriageMode.Live);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, "not-live"), result);
+            Assert.Empty(rig.Github.Calls);
+            Assert.Empty(rig.Github.Writes);
+        }
+
+        [Fact]
+        public async Task ARunPinnedToShadow_NeverWrites_EvenWhenTheConfigIsLive()
+        {
+            var rig = Live();
+
+            var result = await Apply(rig, _approve, mode: TriageMode.Shadow);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, "not-live"), result);
+            Assert.Empty(rig.Github.Calls);
+            Assert.Empty(rig.Github.Writes);
+        }
+
+        [Fact]
+        public async Task AForeignOwner_IsRefusedWithoutAnyGitHubCall()
+        {
+            var rig = Live();
+
+            var result = await Run(() => rig.Activities.ApplyAsync(new ApplyInput("octo/widgets", 7, Sha, _approve, TriageMode.Live)));
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.ForeignOwner), result);
+            Assert.Empty(rig.Github.Calls);
+        }
+
+        [Theory]
+        [InlineData(HttpStatusCode.NotFound)]
+        [InlineData(HttpStatusCode.UnprocessableEntity)]
+        [InlineData(HttpStatusCode.BadRequest)]
+        [InlineData(HttpStatusCode.Gone)]
+        public async Task AWriteFailureThatRetryingCannotFix_IsNotRetried(HttpStatusCode status)
+        {
+            var rig = Live();
+            rig.Github.WriteFailure = new GitHubApiException("no", status);
+
+            var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Apply(rig, _approve));
+
+            Assert.True(failure.NonRetryable);
+        }
+
+        [Theory]
+        [InlineData(HttpStatusCode.Forbidden)]
+        [InlineData(HttpStatusCode.TooManyRequests)]
+        [InlineData(HttpStatusCode.BadGateway)]
+        public async Task ARateLimitOrServerFailure_IsRetried(HttpStatusCode status)
+        {
+            var rig = Live();
+            rig.Github.WriteFailure = new GitHubApiException("slow down", status);
+
+            var failure = await Assert.ThrowsAsync<GitHubApiException>(() => Apply(rig, _approve));
+
+            Assert.Equal(status, failure.StatusCode);
+        }
+
+        [Fact]
+        public async Task AFailedWrite_LeavesTheVerdictUnappliedSoTheNextSignalRetriesIt()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+            rig.Github.WriteFailure = new GitHubApiException("down", HttpStatusCode.BadGateway);
+            await Assert.ThrowsAsync<GitHubApiException>(() => Apply(rig, _approve));
+
+            Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task ABadInput_FailsWithoutRetry()
+        {
+            var rig = Live();
+
+            var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 0, Sha, _approve, TriageMode.Live))));
+
+            Assert.True(failure.NonRetryable);
+        }
+    }
+
+    public class RecordTests
+    {
+        [Fact]
+        public async Task TheVerdictIsStoredWithTheModeOfTheInput()
+        {
+            var rig = Create();
+
+            var result = await Run(() => rig.Activities.RecordVerdictAsync(new RecordVerdictInput(Repo, 7, Sha, TriageRules.HighRiskDecision("traefik"), TriageMode.Shadow)));
 
             Assert.Equal(new RecordVerdictResult(true, TriageMode.Shadow), result);
             await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
             var row = await db.TriageVerdicts.SingleAsync(Ct);
             Assert.Equal(TriageMode.Shadow, row.Mode);
-            Assert.Equal(TriageRules.HighRiskComment, row.Comment);
+            Assert.Equal(TriageRules.HighRiskDecision("traefik").Comment, row.Comment);
+        }
+
+        [Fact]
+        public async Task ALivePinnedRun_StoresALiveRowWhateverTheConfigSaysNow()
+        {
+            var rig = Create();
+
+            var result = await Run(() => rig.Activities.RecordVerdictAsync(new RecordVerdictInput(Repo, 7, Sha, TriageRules.HighRiskDecision("traefik"), TriageMode.Live)));
+
+            Assert.Equal(new RecordVerdictResult(true, TriageMode.Live), result);
+            await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+            Assert.Equal(TriageMode.Live, (await db.TriageVerdicts.SingleAsync(Ct)).Mode);
         }
 
         [Fact]
         public async Task ARepeatedVerdict_IsNotInsertedTwice()
         {
             var rig = Create();
-            var input = new RecordVerdictInput(Repo, 7, Sha, TriageRules.HighRiskDecision());
+            var input = new RecordVerdictInput(Repo, 7, Sha, TriageRules.HighRiskDecision("traefik"));
             await Run(() => rig.Activities.RecordVerdictAsync(input));
 
             var again = await Run(() => rig.Activities.RecordVerdictAsync(input));
@@ -684,7 +1285,7 @@ public class RenovateTriageActivitiesTests
             var rig = Create();
 
             var failure = await Assert.ThrowsAsync<ApplicationFailureException>(
-                () => Run(() => rig.Activities.RecordVerdictAsync(new RecordVerdictInput(Repo, 0, Sha, TriageRules.HighRiskDecision()))));
+                () => Run(() => rig.Activities.RecordVerdictAsync(new RecordVerdictInput(Repo, 0, Sha, TriageRules.HighRiskDecision("traefik")))));
 
             Assert.True(failure.NonRetryable);
         }

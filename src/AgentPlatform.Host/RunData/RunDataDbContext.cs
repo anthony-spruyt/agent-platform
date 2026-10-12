@@ -32,7 +32,7 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             verdict.Property(v => v.Mode).HasConversion<string>().HasMaxLength(16);
             verdict.Property(v => v.Reasons).HasColumnType(Jsonb);
             verdict.Property(v => v.CreatedAt).HasDefaultValueSql("now()");
-            verdict.HasIndex(v => new { v.Repo, v.PrNumber, v.HeadSha }).IsUnique();
+            verdict.HasIndex(v => new { v.Repo, v.PrNumber, v.HeadSha, v.Mode }).IsUnique();
         });
 
         modelBuilder.Entity<Prompt>(prompt =>

@@ -238,12 +238,24 @@ public class WorkerConfigurationTests
     }
 
     [Fact]
-    public void LiveTriageMode_FailsAtStartup()
+    public void LiveTriageMode_IsAccepted()
+    {
+        using var provider = Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["RenovateTriage:Mode"] = "Live",
+        });
+
+        Assert.Equal(TriageMode.Live, provider.GetRequiredService<IOptions<RenovateTriageOptions>>().Value.Mode);
+    }
+
+    [Fact]
+    public void AnUnknownTriageMode_FailsAtStartup()
     {
         Assert.Throws<InvalidOperationException>(() => Build(new()
         {
             ["AgentGateway:SessionTokenKey"] = Key,
-            ["RenovateTriage:Mode"] = "Live",
+            ["RenovateTriage:Mode"] = "Active",
         }));
     }
 }

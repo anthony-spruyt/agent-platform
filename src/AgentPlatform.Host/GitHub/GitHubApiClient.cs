@@ -1,3 +1,5 @@
+using System.Net.Http.Json;
+
 namespace AgentPlatform.Host.GitHub;
 
 public sealed record GitHubPullRequest(
@@ -28,6 +30,8 @@ public sealed record GitHubPullRequestFile(string Filename, string? Patch);
 
 public sealed record GitHubReview(long Id, string? AuthorLogin, string? AuthorAssociation, string State, string? CommitId, DateTimeOffset? SubmittedAt);
 
+public sealed record GitHubIssueComment(long Id, string? AuthorLogin, string Body);
+
 public interface IGitHubApiClient
 {
     Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken);
@@ -43,6 +47,18 @@ public interface IGitHubApiClient
     Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<string>> ListLabelsAsync(string repo, int number, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<GitHubIssueComment>> ListIssueCommentsAsync(string repo, int number, CancellationToken cancellationToken);
+
+    Task ApproveAsync(string repo, int number, string commitId, string body, CancellationToken cancellationToken);
+
+    Task DismissReviewAsync(string repo, int number, long reviewId, string message, CancellationToken cancellationToken);
+
+    Task AddLabelsAsync(string repo, int number, IReadOnlyList<string> labels, CancellationToken cancellationToken);
+
+    Task<long> CreateIssueCommentAsync(string repo, int number, string body, CancellationToken cancellationToken);
+
+    Task UpdateIssueCommentAsync(string repo, long commentId, string body, CancellationToken cancellationToken);
 }
 
 public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenProvider tokens) : IGitHubApiClient
@@ -52,6 +68,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private const int PageSize = 100;
 
     private static readonly Dictionary<string, string> _pullRequestsRead = new() { ["pull_requests"] = "read" };
+    private static readonly Dictionary<string, string> _pullRequestsWrite = new() { ["pull_requests"] = "write" };
     private static readonly Dictionary<string, string> _checksRead = new() { ["checks"] = "read" };
 
     private sealed record PullRequestDto(
@@ -95,6 +112,8 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private sealed record VerificationDto(bool Verified);
 
     private sealed record FileDto(string? Filename, string? Patch);
+
+    private sealed record IssueCommentDto(long Id, UserDto? User, string? Body);
 
     private sealed record ReviewDto(long Id, UserDto? User, string? AuthorAssociation, string? State, string? CommitId, DateTimeOffset? SubmittedAt);
 
@@ -238,6 +257,98 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             cancellationToken).ConfigureAwait(false);
 
         return [.. labels.Select(l => l.Name).OfType<string>()];
+    }
+
+    public async Task<IReadOnlyList<GitHubIssueComment>> ListIssueCommentsAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+
+        var comments = await GetPagesAsync<List<IssueCommentDto>, IssueCommentDto>(
+            repo,
+            $"repos/{owner}/{name}/issues/{number}/comments",
+            _pullRequestsRead,
+            "comments list",
+            page => page,
+            cancellationToken).ConfigureAwait(false);
+
+        return [.. comments.Select(c => new GitHubIssueComment(c.Id, c.User?.Login, c.Body ?? string.Empty))];
+    }
+
+    public async Task ApproveAsync(string repo, int number, string commitId, string body, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+        if (!IsSha(commitId))
+        {
+            throw new ArgumentException("The commit must be given as a hexadecimal sha.", nameof(commitId));
+        }
+
+        var token = await tokens.GetTokenAsync(repo, _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
+        await GitHubHttp.SendAsync(
+            http,
+            GitHubHttp.Request(HttpMethod.Post, $"repos/{owner}/{name}/pulls/{number}/reviews", token, JsonContent.Create(new { @event = "APPROVE", commit_id = commitId, body }, options: GitHubJson.Options)),
+            "review create",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DismissReviewAsync(string repo, int number, long reviewId, string message, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(reviewId);
+
+        var token = await tokens.GetTokenAsync(repo, _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
+        await GitHubHttp.SendAsync(
+            http,
+            GitHubHttp.Request(HttpMethod.Put, $"repos/{owner}/{name}/pulls/{number}/reviews/{reviewId}/dismissals", token, JsonContent.Create(new { message }, options: GitHubJson.Options)),
+            "review dismissal",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task AddLabelsAsync(string repo, int number, IReadOnlyList<string> labels, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+        ArgumentNullException.ThrowIfNull(labels);
+        if (labels.Count == 0)
+        {
+            throw new ArgumentException("At least one label is required.", nameof(labels));
+        }
+
+        var token = await tokens.GetTokenAsync(repo, _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
+        await GitHubHttp.SendAsync(
+            http,
+            GitHubHttp.Request(HttpMethod.Post, $"repos/{owner}/{name}/issues/{number}/labels", token, JsonContent.Create(new { labels }, options: GitHubJson.Options)),
+            "labels add",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<long> CreateIssueCommentAsync(string repo, int number, string body, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+
+        var token = await tokens.GetTokenAsync(repo, _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
+        var created = await GitHubHttp.SendAsync<IssueCommentDto>(
+            http,
+            GitHubHttp.Request(HttpMethod.Post, $"repos/{owner}/{name}/issues/{number}/comments", token, JsonContent.Create(new { body }, options: GitHubJson.Options)),
+            "comment create",
+            cancellationToken).ConfigureAwait(false);
+        return created.Id;
+    }
+
+    public async Task UpdateIssueCommentAsync(string repo, long commentId, string body, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commentId);
+
+        var token = await tokens.GetTokenAsync(repo, _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
+        await GitHubHttp.SendAsync(
+            http,
+            GitHubHttp.Request(HttpMethod.Patch, $"repos/{owner}/{name}/issues/comments/{commentId}", token, JsonContent.Create(new { body }, options: GitHubJson.Options)),
+            "comment update",
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static bool IsSha(string? value) =>

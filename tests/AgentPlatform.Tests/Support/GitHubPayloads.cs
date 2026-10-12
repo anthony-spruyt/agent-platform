@@ -8,7 +8,7 @@ namespace AgentPlatform.Tests.Support;
 internal static class GitHubPayloads
 {
     public const string Secret = "webhook-secret-for-tests";
-    public const string Repo = "octo/widgets";
+    public const string Repo = "anthony-spruyt/widgets";
     public const long RepoId = 4242;
     public const string HeadSha = "0123456789abcdef0123456789abcdef01234567";
 
@@ -25,7 +25,8 @@ internal static class GitHubPayloads
         string? appSlug = "github-actions",
         string? conclusion = "success",
         object[]? pullRequests = null,
-        long suiteId = 99) =>
+        long suiteId = 99,
+        string repo = Repo) =>
         JsonSerializer.Serialize(new
         {
             action,
@@ -38,7 +39,7 @@ internal static class GitHubPayloads
                 app = appSlug is null ? null : new { slug = appSlug },
                 pull_requests = pullRequests ?? [PullRequest(7)],
             },
-            repository = new { id = RepoId, full_name = Repo },
+            repository = new { id = RepoId, full_name = repo },
         });
 
     public static string Sign(string body, string secret = Secret) =>

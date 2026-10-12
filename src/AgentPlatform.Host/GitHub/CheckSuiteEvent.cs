@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.Workflows;
 
 namespace AgentPlatform.Host.GitHub;
@@ -36,6 +37,7 @@ public sealed record CheckSuiteEvent(string? Action, CheckSuiteEvent.Suite? Chec
             || CheckSuite is not { HeadSha.Length: > 0, PullRequests: { Count: > 0 } pullRequests } suite
             || Repository is not { Id: > 0, FullName: { } fullName } repository
             || !GitHubRepoName.TryParse(fullName, out _, out _)
+            || !TriageRules.IsAllowedOwner(fullName)
             || !IsRenovateUpdateBranch(suite.HeadBranch))
         {
             return signals;
