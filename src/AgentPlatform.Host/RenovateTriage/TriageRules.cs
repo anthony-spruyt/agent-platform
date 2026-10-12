@@ -70,6 +70,8 @@ public static partial class TriageRules
 
     private static readonly string[] _blockingLabels = ["agent/needs-review", "agent/revert", "blocked"];
 
+    private static readonly string[] _livePathLabels = ["agent/needs-review", "agent/auto-approved"];
+
     private static readonly string[] _ignoredCheckPrefixes = ["Mergify", "renovate/stability-days"];
 
     private static readonly string[] _notFailingCheckPrefixes = ["skynet/", .. _ignoredCheckPrefixes];
@@ -88,7 +90,7 @@ public static partial class TriageRules
         "renovate/aikidosec-safe-chain",
     ];
 
-    public static string? SkipReason(long? authorId, IReadOnlyCollection<string> labels)
+    public static string? SkipReason(long? authorId, IReadOnlyCollection<string> labels, bool shadow = false)
     {
         ArgumentNullException.ThrowIfNull(labels);
         if (authorId != RenovateUserId)
@@ -96,7 +98,14 @@ public static partial class TriageRules
             return NotRenovate;
         }
 
-        return labels.Any(l => _blockingLabels.Contains(l, StringComparer.Ordinal)) ? BlockingLabel : null;
+        return labels.Any(l => IsBlockingLabel(l, shadow)) ? BlockingLabel : null;
+    }
+
+    public static bool IsNotOpen(string state, bool merged, bool shadow)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var open = state == "open";
+        return shadow ? !open && !merged : !open || merged;
     }
 
     public static bool IsSameRepo(string repo, string? headRepo, string? baseRepo)
@@ -105,12 +114,12 @@ public static partial class TriageRules
         return string.Equals(headRepo, repo, StringComparison.OrdinalIgnoreCase) && string.Equals(baseRepo, repo, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static bool IsApproved(IReadOnlyList<GitHubReview> reviews, string headSha)
+    public static bool IsApproved(IReadOnlyList<GitHubReview> reviews, string headSha, bool shadow = false)
     {
         ArgumentNullException.ThrowIfNull(reviews);
         ArgumentNullException.ThrowIfNull(headSha);
         var latest = new Dictionary<string, GitHubReview>(StringComparer.Ordinal);
-        foreach (var review in reviews.Where(r => IsTrustedReviewer(r) && !string.Equals(r.State, "COMMENTED", StringComparison.OrdinalIgnoreCase)))
+        foreach (var review in reviews.Where(r => !(shadow && IsTriageBot(r)) && IsTrustedReviewer(r) && !string.Equals(r.State, "COMMENTED", StringComparison.OrdinalIgnoreCase)))
         {
             latest[review.AuthorLogin ?? string.Empty] = review;
         }
@@ -218,8 +227,13 @@ public static partial class TriageRules
         && string.Equals(commit.CommitterEmail, GitHubCommitterEmail, StringComparison.Ordinal)
         && commit.Verified;
 
+    private static bool IsBlockingLabel(string label, bool shadow) =>
+        _blockingLabels.Contains(label, StringComparer.Ordinal) && !(shadow && _livePathLabels.Contains(label, StringComparer.Ordinal));
+
+    private static bool IsTriageBot(GitHubReview review) => string.Equals(review.AuthorLogin, TriageBotLogin, StringComparison.Ordinal);
+
     private static bool IsTrustedReviewer(GitHubReview review) =>
-        string.Equals(review.AuthorLogin, TriageBotLogin, StringComparison.Ordinal)
+        IsTriageBot(review)
         || (review.AuthorAssociation is not null && _trustedAssociations.Contains(review.AuthorAssociation, StringComparer.Ordinal));
 
     private static bool PassingConclusion(string? conclusion) =>

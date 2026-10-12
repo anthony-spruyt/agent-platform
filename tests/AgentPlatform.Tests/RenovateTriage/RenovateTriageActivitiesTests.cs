@@ -14,6 +14,8 @@ public class RenovateTriageActivitiesTests
     private const string Repo = "octo/widgets";
     private const string Sha = FakeGitHubApi.Sha;
 
+    private const TriageMode NotShadow = (TriageMode)1;
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private sealed record Rig(RenovateTriageActivities Activities, FakeGitHubApi Github, FakeJev Jev, InMemoryRunData Data);
@@ -88,16 +90,90 @@ public class RenovateTriageActivitiesTests
         }
 
         [Theory]
-        [InlineData("closed", false)]
-        [InlineData("open", true)]
-        public async Task AClosedOrMergedPr_IsSkipped(string state, bool merged)
+        [InlineData("blocked")]
+        [InlineData("agent/revert")]
+        public async Task InShadowMode_ABlockedOrRevertLabel_SkipsThePr(string label)
         {
             var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-review", label] };
+
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel), await Assess(rig));
+        }
+
+        [Theory]
+        [InlineData("agent/needs-review")]
+        [InlineData("agent/auto-approved")]
+        public async Task InShadowMode_ALabelFromTheLivePath_DoesNotSkipThePr(string label)
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
+
+            Assert.Equal(new AssessResult(AssessStatus.NeedsJev, Sha), await Assess(rig));
+        }
+
+        [Theory]
+        [InlineData("agent/needs-review")]
+        [InlineData("agent/revert")]
+        [InlineData("blocked")]
+        public async Task OutsideShadowMode_EveryBlockingLabel_SkipsThePr(string label)
+        {
+            var rig = Create(NotShadow);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
+
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel), await Assess(rig));
+        }
+
+        [Theory]
+        [InlineData("closed", false)]
+        [InlineData("closed", true)]
+        [InlineData("open", true)]
+        public async Task OutsideShadowMode_AClosedOrMergedPr_IsSkipped(string state, bool merged)
+        {
+            var rig = Create(NotShadow);
             rig.Github.PullRequest = rig.Github.PullRequest with { State = state, Merged = merged };
 
             var result = await Assess(rig);
 
             Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.NotOpen), result);
+        }
+
+        [Fact]
+        public async Task InShadowMode_AClosedUnmergedPr_IsSkipped()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { State = "closed", Merged = false };
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.NotOpen), result);
+        }
+
+        [Fact]
+        public async Task InShadowMode_AMergedPr_ContinuesThroughTheRules()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { State = "closed", Merged = true };
+
+            Assert.Equal(new AssessResult(AssessStatus.NeedsJev, Sha), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task InShadowMode_AMergedPrWithRunningChecks_IsPending()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { State = "closed", Merged = true };
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+
+            Assert.Equal(new AssessResult(AssessStatus.Pending, Sha), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task InShadowMode_AMergedPrFromAnotherRepo_IsStillSkipped()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = rig.Github.PullRequest with { State = "closed", Merged = true, HeadRepo = "fork/widgets" };
+
+            Assert.Equal(TriageRules.ForeignRepo, (await Assess(rig)).Reason);
         }
 
         [Fact]
@@ -112,12 +188,31 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task AnApprovalFromTheTriageApp_IsSkipped()
+        public async Task OutsideShadowMode_AnApprovalFromTheTriageApp_IsSkipped()
+        {
+            var rig = Create(NotShadow);
+            rig.Github.Reviews.Add(new GitHubReview(1, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", Sha, null));
+
+            Assert.Equal(TriageRules.AlreadyApproved, (await Assess(rig)).Reason);
+        }
+
+        [Fact]
+        public async Task InShadowMode_AnApprovalFromTheTriageApp_IsNotSkipped()
         {
             var rig = Create();
             rig.Github.Reviews.Add(new GitHubReview(1, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", Sha, null));
 
-            Assert.Equal(TriageRules.AlreadyApproved, (await Assess(rig)).Reason);
+            Assert.Equal(new AssessResult(AssessStatus.NeedsJev, Sha), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task InShadowMode_AHumanApprovalBesideTheTriageApp_IsSkipped()
+        {
+            var rig = Create();
+            rig.Github.Reviews.Add(new GitHubReview(1, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", Sha, null));
+            rig.Github.Reviews.Add(new GitHubReview(2, "owner", "OWNER", "APPROVED", Sha, null));
+
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.AlreadyApproved), await Assess(rig));
         }
 
         [Fact]

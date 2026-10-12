@@ -48,6 +48,31 @@ public class TriageRulesTests
             Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["dep/minor", label]));
         }
 
+        [Theory]
+        [InlineData("agent/needs-review")]
+        [InlineData("agent/auto-approved")]
+        public void InShadowMode_TheLabelsOfTheLivePath_AreIgnored(string label)
+        {
+            Assert.Null(TriageRules.SkipReason(29139614, [label], shadow: true));
+        }
+
+        [Theory]
+        [InlineData("agent/revert")]
+        [InlineData("blocked")]
+        public void InShadowMode_OtherBlockingLabels_StillSkip(string label)
+        {
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-review", label], shadow: true));
+        }
+
+        [Theory]
+        [InlineData("agent/needs-review")]
+        [InlineData("agent/revert")]
+        [InlineData("blocked")]
+        public void OutsideShadowMode_EveryBlockingLabel_Skips(string label)
+        {
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, [label], shadow: false));
+        }
+
         [Fact]
         public void TheAuthorIsCheckedBeforeTheLabels()
         {
@@ -142,6 +167,30 @@ public class TriageRulesTests
         {
             Assert.True(TriageRules.IsApproved([Review("skynet-rw[bot]", "APPROVED", "CONTRIBUTOR")], Head));
             Assert.True(TriageRules.IsApproved([Review(TriageRules.TriageBotLogin, "APPROVED", "NONE")], Head));
+        }
+
+        [Fact]
+        public void InShadowMode_TheTriageAppBot_IsIgnored()
+        {
+            Assert.False(TriageRules.IsApproved([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR")], Head, shadow: true));
+        }
+
+        [Fact]
+        public void InShadowMode_AHumanApproval_StillCounts()
+        {
+            Assert.True(TriageRules.IsApproved([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR"), Review("alice", "APPROVED")], Head, shadow: true));
+        }
+
+        [Fact]
+        public void InShadowMode_TheTriageAppBotRequestingChanges_IsIgnored()
+        {
+            Assert.True(TriageRules.IsApproved([Review("alice", "APPROVED"), Review(TriageRules.TriageBotLogin, "CHANGES_REQUESTED", "CONTRIBUTOR")], Head, shadow: true));
+        }
+
+        [Fact]
+        public void OutsideShadowMode_TheTriageAppBot_Counts()
+        {
+            Assert.True(TriageRules.IsApproved([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR")], Head, shadow: false));
         }
 
         [Theory]

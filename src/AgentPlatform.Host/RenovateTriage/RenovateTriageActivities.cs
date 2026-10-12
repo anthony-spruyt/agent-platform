@@ -25,14 +25,15 @@ public sealed class RenovateTriageActivities(
             var pr = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             var sha = pr.HeadSha;
 
-            var skip = SkipReason(input.Repo, pr);
+            var shadow = options.Value.Mode == TriageMode.Shadow;
+            var skip = SkipReason(input.Repo, pr, shadow);
             if (skip is not null)
             {
                 return new AssessResult(AssessStatus.Skipped, sha, skip);
             }
 
             var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            if (TriageRules.IsApproved(reviews, sha))
+            if (TriageRules.IsApproved(reviews, sha, shadow))
             {
                 return new AssessResult(AssessStatus.Skipped, sha, TriageRules.AlreadyApproved);
             }
@@ -104,14 +105,14 @@ public sealed class RenovateTriageActivities(
             return new RecordVerdictResult(inserted, mode);
         });
 
-    private static string? SkipReason(string repo, GitHubPullRequest pr)
+    private static string? SkipReason(string repo, GitHubPullRequest pr, bool shadow)
     {
-        if (pr.State != "open" || pr.Merged)
+        if (TriageRules.IsNotOpen(pr.State, pr.Merged, shadow))
         {
             return TriageRules.NotOpen;
         }
 
-        return TriageRules.SkipReason(pr.AuthorId, pr.Labels)
+        return TriageRules.SkipReason(pr.AuthorId, pr.Labels, shadow)
             ?? (TriageRules.IsSameRepo(repo, pr.HeadRepo, pr.BaseRepo) ? null : TriageRules.ForeignRepo);
     }
 
