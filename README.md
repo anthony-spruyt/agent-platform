@@ -102,13 +102,13 @@ a token is reused until five minutes before it expires.
 
 The workflow waits for all CI: while `Assess` returns `Pending` it waits for the next `CheckSuiteCompleted` signal, for at most two hours. When the two hours end it runs `Assess` once more and records `ci-timeout` only if CI is still pending. A head sha that differs from the one judged starts a new run with the same input.
 
-In `Shadow` mode the verdict is only written to the database; nothing is written to GitHub.
+In `Shadow` mode the verdict is only written to the database; nothing is written to GitHub. The live path (n8n, acting as the triage App) still runs beside it and approves or labels the pull request while CI runs, so `Shadow` ignores its output in rules 1 to 3 (marked below); otherwise every pull request would already be skipped when CI is complete.
 
 Rules, in order; the first that applies decides:
 
-1. The pull request is not open, or its head or base is in another repository: skipped.
-2. The author is not Renovate, or the pull request has an `agent/needs-review`, `agent/revert` or `blocked` label: skipped.
-3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved.
+1. The pull request is not open, or its head or base is in another repository: skipped. In `Shadow` mode a merged pull request is not skipped (Mergify may merge it before CI is complete); one closed without merging still is.
+2. The author is not Renovate, or the pull request has an `agent/needs-review`, `agent/revert` or `blocked` label: skipped. In `Shadow` mode the `agent/needs-review` and `agent/auto-approved` labels are ignored.
+3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved. In `Shadow` mode reviews by the triage App are ignored.
 4. A verdict already exists for the head sha: nothing to do.
 5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
 6. CI must be done. All check runs of the sha and all check suites are read; a run or suite that has not completed, or no check runs at all, is pending. Mergify checks are ignored. A failed check: needs review, `ci-failed`.
