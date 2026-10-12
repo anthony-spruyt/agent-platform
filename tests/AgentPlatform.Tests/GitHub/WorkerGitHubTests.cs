@@ -17,6 +17,8 @@ public class WorkerGitHubTests
         {
             ["AgentGateway:SessionTokenKey"] = "0123456789abcdef0123456789abcdef",
             ["ConnectionStrings:rundata"] = "Host=localhost;Database=agent_platform",
+            ["LiteLlm:BaseUrl"] = "http://litellm.example:4000",
+            ["LiteLlm:ApiKey"] = "test-key",
         };
         foreach (var (key, value) in github)
         {

@@ -1,0 +1,61 @@
+{
+  "breaking": {
+    "type": "noul",
+    "instructions": {
+      "question": "Does this Renovate dependency update include at least one breaking change?",
+      "focus": "Judge the dependency being updated, based on the embedded release notes, commit list and the old-to-new version numbers in `pr_body`. Ignore breaking changes in transitive dependencies that are only mentioned in passing. If the body has no release notes at all, judge from the version jump alone.",
+      "signals_to_look_for": [
+        "A conventional commit with an exclamation mark before the colon: `feat!:`, `fix!:`, `chore!:`, `refactor!:`, `feat(api)!:` — the `!` marks that commit as breaking",
+        "A `BREAKING CHANGE:` or `BREAKING-CHANGE:` footer or heading anywhere in the notes",
+        "Changelog sections titled 'Breaking Changes', '⚠ BREAKING CHANGES', 'Migration', 'Upgrade Guide', 'Incompatible changes'",
+        "A semver major bump (1.x.x -> 2.0.0), which by convention means breaking",
+        "A 0.x minor bump (0.4.x -> 0.5.0), which is the breaking slot while a project is pre-1.0",
+        "Wording such as: removed, dropped support for, no longer supported, renamed, replaced, deprecated and removed, requires migration, action required, minimum version now, must now, is now required, behaviour change, default changed, rewritten"
+      ],
+      "not_breaking": [
+        "A deprecation notice with the old path still working",
+        "A breaking change listed under an older version's section in the notes, not the version being upgraded to",
+        "Security patches, bug fixes, docs, performance or internal refactors with no user-facing API change",
+        "A digest-only update with no version change"
+      ]
+    },
+    "criteria": {
+      "true": "The update requires the consuming repo to change code, config or tooling to keep working — an explicit breaking marker (`!`, `BREAKING CHANGE:`, a Breaking Changes section), a semver major bump, a pre-1.0 minor bump, or removal/rename/required-migration wording for the new version.",
+      "false": "The update is safe to merge as-is: patch or minor bump with no breaking markers, only additions, fixes or deprecation warnings, or a digest-only update."
+    }
+  },
+  "bump_type": {
+    "type": "choice",
+    "instructions": {
+      "question": "What kind of version bump is this Renovate PR?",
+      "focus": "Find the old and new version in `pr_diff` (the PR's actual file changes) or `pr_body` (usually a table cell like `44.69.8` -> `44.83.1`). Compare them segment by segment YOURSELF. Do NOT trust Renovate's own wording (its title or the 'patch'/'minor'/'major' labels) — it is frequently wrong, especially for calver.",
+      "how_to_decide": [
+        "1. Did only a sha256 digest change, with no version numbers at all? -> digest",
+        "2. Is the FIRST segment a real calendar date — a 4-digit year (2024, 2025, 2026), a 2-digit year paired with a month (24.04, 25.10), or a packed date (20260920)? -> calver",
+        "3. Otherwise treat it as semver. First segment changed? -> major",
+        "4. First segment same, second changed? -> minor",
+        "5. First two same, third changed? -> patch",
+        "6. Genuinely unreadable, or several unrelated deps bumped different ways -> other"
+      ],
+      "traps": [
+        "A large first segment is NOT a year. `44.69.8` -> `44.83.1` is a MINOR semver bump, not calver — 44 is a release counter. Same for `13.97.4`, `v1.17.2`.",
+        "calver requires the leading segment to plausibly BE a date. If it is not a year or a packed date, it is not calver.",
+        "A version like `1.2.3-rc.4` or `2.0.0-beta1` still classifies by its numeric segments.",
+        "A `v` prefix is decoration. Strip it before comparing.",
+        "Several packages in one PR bumped differently -> other. Several packages all bumped the same way -> that way."
+      ]
+    },
+    "criteria": {
+      "digest": "Only an image digest (sha256) changed. No version number moved.",
+      "calver": "The version encodes a calendar date in its leading segment: `2026.09.1`, `24.04`, `v20260920`, `2025.3.2`.",
+      "major": "Semver, and the first segment increased: `1.17.2` -> `2.0.0`, `v3.4.1` -> `v4.0.0`.",
+      "minor": "Semver, first segment unchanged, second increased: `44.69.8` -> `44.83.1`, `1.17.2` -> `1.18.0`.",
+      "patch": "Semver, first two segments unchanged, third increased: `1.17.2` -> `1.17.5`, `44.83.0` -> `44.83.1`.",
+      "other": "Cannot determine, or the PR bumps multiple packages in different ways."
+    }
+  },
+  "changelog": {
+    "type": "noul",
+    "instructions": "Are the full release notes or changelog contents directly embedded in the Renovate PR description? IE a list of changes / commits and not just a link to a release page?"
+  }
+}

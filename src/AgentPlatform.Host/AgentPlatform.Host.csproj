@@ -11,6 +11,9 @@
     <PackageReference Include="Temporalio.Extensions.Hosting" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="RenovateTriage\JevQuestions.json" LogicalName="JevQuestions.json" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\AgentPlatform.ServiceDefaults\AgentPlatform.ServiceDefaults.csproj" />
   </ItemGroup>
 </Project>

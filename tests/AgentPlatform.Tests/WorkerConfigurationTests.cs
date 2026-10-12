@@ -1,4 +1,5 @@
 using AgentPlatform.Host;
+using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Support;
@@ -171,5 +172,78 @@ public class WorkerConfigurationTests
         });
 
         Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void AgentPlatformWorker_RegistersTheRenovateTriageServices()
+    {
+        using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
+
+        Assert.NotNull(provider.GetService<IJevClient>());
+        Assert.NotNull(provider.GetService<TriageVerdictStore>());
+        Assert.NotNull(provider.GetService<RenovateTriageActivities>());
+        Assert.Equal(TriageMode.Shadow, provider.GetRequiredService<IOptions<RenovateTriageOptions>>().Value.Mode);
+    }
+
+    [Fact]
+    public void AgentPlatformWorker_RunsTheRenovateTriageActivities()
+    {
+        using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(typeof(RenovateTriageWorkflow), options.Workflows.Select(w => w.Type));
+        Assert.Contains(options.Activities, a => a.Name == RenovateTriageActivities.AssessName);
+    }
+
+    [Fact]
+    public void TheRenovateTriageActivities_AreScoped_SoTypedHttpClientsRotate()
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["ConnectionStrings:rundata"] = Connection,
+        };
+        GitHubPayloads.AddWorkerSettings(settings);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddAgentPlatformWorker(configuration);
+
+        Assert.Equal(ServiceLifetime.Scoped, services.Last(d => d.ServiceType == typeof(RenovateTriageActivities)).Lifetime);
+    }
+
+    [Fact]
+    public void TheLiteLlmBaseUrl_DefaultsToTheInClusterService()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["LiteLlm:ApiKey"] = "test-key" }).Build();
+        var services = new ServiceCollection();
+        services.AddRenovateTriage(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Equal("http://litellm.litellm.svc.cluster.local:4000", provider.GetRequiredService<IOptions<LiteLlmOptions>>().Value.BaseUrl);
+    }
+
+    [Theory]
+    [InlineData("LiteLlm:BaseUrl", "litellm.example")]
+    [InlineData("LiteLlm:ApiKey", null)]
+    [InlineData("LiteLlm:ApiKey", "  ")]
+    public void MissingOrInvalidLiteLlmSettings_FailAtStartup(string name, string? value)
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            [name] = value,
+        }));
+    }
+
+    [Fact]
+    public void LiveTriageMode_FailsAtStartup()
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["RenovateTriage:Mode"] = "Live",
+        }));
     }
 }

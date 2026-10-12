@@ -69,6 +69,8 @@ public class WorkerFaultExitTests
             builder.UseSetting("ConnectionStrings:rundata", "Host=localhost;Database=agent_platform");
             builder.UseSetting("GitHub:AppId", "12345");
             builder.UseSetting("GitHub:PrivateKey", GitHubPayloads.PrivateKeyPem);
+            builder.UseSetting("LiteLlm:BaseUrl", "http://litellm.example:4000");
+            builder.UseSetting("LiteLlm:ApiKey", "test-key");
             builder.UseSetting("Temporal:Address", temporal.Address);
             builder.ConfigureTestServices(services => services.AddSingleton<IExitCodeSetter>(exitCode));
         });
@@ -92,6 +94,8 @@ public class WorkerFaultExitTests
             builder.UseSetting("ConnectionStrings:rundata", "Host=localhost;Database=agent_platform");
             builder.UseSetting("GitHub:AppId", "12345");
             builder.UseSetting("GitHub:PrivateKey", GitHubPayloads.PrivateKeyPem);
+            builder.UseSetting("LiteLlm:BaseUrl", "http://litellm.example:4000");
+            builder.UseSetting("LiteLlm:ApiKey", "test-key");
             builder.UseSetting("Temporal:Address", env.Client.Connection.Options.TargetHost);
             builder.ConfigureTestServices(services => services.AddSingleton<IExitCodeSetter>(exitCode));
         });

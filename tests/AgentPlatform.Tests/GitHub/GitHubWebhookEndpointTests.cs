@@ -117,13 +117,26 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
     [Fact]
     public async Task ACompletedRenovateCheckSuite_IsForwardedWithTheDeliveryId()
     {
-        using var response = await PostSignedAsync(GitHubPayloads.CheckSuite(), "check_suite", "delivery-77");
+        var delivery = Guid.NewGuid().ToString();
+
+        using var response = await PostSignedAsync(GitHubPayloads.CheckSuite(), "check_suite", delivery);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var signal = Assert.Single(_signaler.Signals);
         Assert.Equal(GitHubPayloads.Repo, signal.Repo);
         Assert.Equal(7, signal.PrNumber);
-        Assert.Equal("delivery-77", signal.DeliveryId);
+        Assert.Equal(delivery, signal.DeliveryId);
+    }
+
+    [Theory]
+    [InlineData("not-a-guid")]
+    [InlineData("forged INFO fake log line")]
+    public async Task ADeliveryHeaderThatIsNotAGuid_IsForwardedWithAnEmptyDeliveryId(string delivery)
+    {
+        using var response = await PostSignedAsync(GitHubPayloads.CheckSuite(), "check_suite", delivery);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(string.Empty, Assert.Single(_signaler.Signals).DeliveryId);
     }
 
     [Fact]
@@ -292,6 +305,22 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         Assert.Empty(_signaler.Signals);
+    }
+
+    [Fact]
+    public async Task ABodyOverTheSizeLimit_IsLoggedAtDebug()
+    {
+        var delivery = Guid.NewGuid().ToString();
+        var body = new string(' ', GitHubWebhookEndpoint.MaxBodyBytes + 1);
+
+        using var response = await PostAsync(body, "check_suite", GitHubPayloads.Sign(body), delivery);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        lock (_logs.Messages)
+        {
+            var entry = Assert.Single(_logs.Entries, e => e.Message.Contains(delivery, StringComparison.Ordinal));
+            Assert.Equal(LogLevel.Debug, entry.Level);
+        }
     }
 
     [Fact]

@@ -28,7 +28,8 @@ public static partial class GitHubWebhookEndpoint
         CancellationToken cancellationToken)
     {
         var delivery = request.Headers[DeliveryHeader].ToString();
-        var loggedDelivery = Guid.TryParse(delivery, out var deliveryGuid) ? deliveryGuid.ToString() : "unknown";
+        var validDelivery = Guid.TryParse(delivery, out var deliveryGuid);
+        var loggedDelivery = validDelivery ? deliveryGuid.ToString() : "unknown";
         var signature = request.Headers[WebhookSignature.HeaderName].ToString();
         if (signature.Length == 0)
         {
@@ -58,7 +59,7 @@ public static partial class GitHubWebhookEndpoint
         IReadOnlyList<CheckSuiteCompletedSignal> signals;
         try
         {
-            signals = CheckSuiteEvent.ToSignals(body, delivery);
+            signals = CheckSuiteEvent.ToSignals(body, validDelivery ? loggedDelivery : string.Empty);
         }
         catch (JsonException)
         {
@@ -96,7 +97,7 @@ public static partial class GitHubWebhookEndpoint
     [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub webhook delivery {DeliveryId} rejected: signature missing or invalid.")]
     private static partial void LogRejected(ILogger logger, string deliveryId);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub webhook delivery {DeliveryId} rejected: body over the size limit.")]
+    [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub webhook delivery {DeliveryId} rejected: body over the size limit.")]
     private static partial void LogTooLarge(ILogger logger, string deliveryId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub webhook delivery {DeliveryId} has a malformed check_suite body.")]
