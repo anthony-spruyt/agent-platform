@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.4.1...v1.5.0) (2026-10-12)
+
+
+### Features
+
+* add RenovateTriage Live mode, GitHub writes and the bump-type guard ([#39](https://github.com/anthony-spruyt/agent-platform/issues/39)) ([761eec1](https://github.com/anthony-spruyt/agent-platform/commit/761eec12c8138833af56cc319de4ce7361dd269d))
+
 ## [1.4.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.4.0...v1.4.1) (2026-10-12)
 
 
