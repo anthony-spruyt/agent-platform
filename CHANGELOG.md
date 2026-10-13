@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.6.0...v1.7.0) (2026-10-13)
+
+
+### Features
+
+* **triage:** stop reading the old agent/needs-review label ([#48](https://github.com/anthony-spruyt/agent-platform/issues/48)) ([5ead30e](https://github.com/anthony-spruyt/agent-platform/commit/5ead30e11b1ebe4d1f3734de03699e7b75bc2d6b))
+
 ## [1.6.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.5.0...v1.6.0) (2026-10-13)
 
 
