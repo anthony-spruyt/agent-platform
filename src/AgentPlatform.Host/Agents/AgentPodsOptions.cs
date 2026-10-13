@@ -5,7 +5,7 @@ public sealed class AgentPodsOptions
     public const string SectionName = "AgentPods";
 
     public const string DefaultImage =
-        "ghcr.io/anthony-spruyt/claude-agent-read:1.0.109@sha256:e25e2704535d2bbe07332e764b1c8265c624b64c45bf206f4935591fe4947cef";
+        "ghcr.io/anthony-spruyt/claude-agent-read:1.1.0@sha256:18bcca88120c6f3861cca4bbb80ee74fe5a73d34cc0dbecf358ba15dc8c1f3f2";
 
     public string Namespace { get; set; } = "agent-platform-agents";
 

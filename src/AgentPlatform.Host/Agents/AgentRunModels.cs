@@ -31,7 +31,13 @@ public sealed record AgentRunUsage(
     double? CostUsd,
     long? DurationMs,
     int? NumTurns,
-    string? SessionId);
+    string? SessionId)
+{
+    private const double MaxStorableCostUsd = 9_999_999_999d;
+
+    public static decimal? ToCostUsd(double? cost) =>
+        cost is { } value && double.IsFinite(value) && Math.Abs(value) <= MaxStorableCostUsd ? (decimal)value : null;
+}
 
 public sealed record AgentRunResult(
     AgentRunOutcome Outcome,

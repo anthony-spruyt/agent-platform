@@ -150,7 +150,7 @@ public partial class SpikeWorkflow
                     Model: agent.Model,
                     InputTokens: usage?.InputTokens,
                     OutputTokens: usage?.OutputTokens,
-                    CostUsd: usage?.CostUsd is { } cost ? (decimal)cost : null));
+                    CostUsd: AgentRunUsage.ToCostUsd(usage?.CostUsd)));
                 await RunRecorder.CompleteAsync(new CompleteRunInput(
                     run.RunId,
                     status == SpikeStatus.Succeeded ? RunStatus.Succeeded : RunStatus.Failed,
