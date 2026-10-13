@@ -107,14 +107,13 @@ public class RenovateTriageActivitiesTests
         public async Task InShadowMode_ABlockedOrRevertLabel_SkipsThePr(string label)
         {
             var rig = Create();
-            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-human-review", "agent/needs-review", label] };
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-human-review", label] };
 
             Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel), await Assess(rig));
         }
 
         [Theory]
         [InlineData("agent/needs-human-review")]
-        [InlineData("agent/needs-review")]
         [InlineData("agent/auto-approved")]
         public async Task InShadowMode_ALabelFromTheLivePath_DoesNotSkipThePr(string label)
         {
@@ -126,7 +125,6 @@ public class RenovateTriageActivitiesTests
 
         [Theory]
         [InlineData("agent/needs-human-review")]
-        [InlineData("agent/needs-review")]
         [InlineData("agent/revert")]
         [InlineData("blocked")]
         public async Task InLiveMode_EveryBlockingLabel_SkipsThePr(string label)
@@ -556,26 +554,22 @@ public class RenovateTriageActivitiesTests
             Assert.Equal(AssessStatus.Decided, (await Assess(rig)).Status);
         }
 
-        [Theory]
-        [InlineData("agent/needs-human-review")]
-        [InlineData("agent/needs-review")]
-        public async Task AnUnappliedNeedsReviewVerdict_IsReappliedDespiteTheNeedsReviewLabelOfItsOwnWrites(string label)
+        [Fact]
+        public async Task AnUnappliedNeedsReviewVerdict_IsReappliedDespiteTheNeedsReviewLabelOfItsOwnWrites()
         {
             var rig = Live();
             await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
-            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-human-review"] };
 
             Assert.Equal(AssessStatus.Decided, (await Assess(rig)).Status);
         }
 
-        [Theory]
-        [InlineData("agent/needs-human-review")]
-        [InlineData("agent/needs-review")]
-        public async Task AnUnappliedApproveVerdict_IsStillHeldBackByAHumansNeedsReviewLabel(string label)
+        [Fact]
+        public async Task AnUnappliedApproveVerdict_IsStillHeldBackByAHumansNeedsReviewLabel()
         {
             var rig = Live();
             await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, "**Auto-approved:** digest bump."), TriageMode.Live, Ct);
-            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-human-review"] };
 
             var result = await Assess(rig);
 
@@ -1131,14 +1125,12 @@ public class RenovateTriageActivitiesTests
             Assert.Contains(logs.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("review 1", StringComparison.Ordinal));
         }
 
-        [Theory]
-        [InlineData("agent/needs-human-review")]
-        [InlineData("agent/needs-review")]
-        public async Task Approve_IsRefusedWhenThePrCarriesEitherNeedsReviewName_AndStaysUnapplied(string label)
+        [Fact]
+        public async Task Approve_IsRefusedWhenThePrCarriesTheNeedsReviewLabel_AndStaysUnapplied()
         {
             var rig = Live();
             await Record(rig, _approve);
-            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-human-review"] };
 
             var result = await Apply(rig, _approve);
 
@@ -1147,19 +1139,29 @@ public class RenovateTriageActivitiesTests
             Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
         }
 
-        [Theory]
-        [InlineData("agent/needs-human-review")]
-        [InlineData("agent/needs-review")]
-        public async Task NeedsReview_IsStillAppliedWhenThePrCarriesEitherNeedsReviewName(string label)
+        [Fact]
+        public async Task NeedsReview_IsStillAppliedWhenThePrCarriesTheNeedsReviewLabel()
         {
             var rig = Live();
             await Record(rig, _needsReview);
-            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [label] };
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-human-review"] };
 
             var result = await Apply(rig, _needsReview);
 
             Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
             Assert.Equal(["agent/needs-human-review"], rig.Github.AddedLabels);
+        }
+
+        [Fact]
+        public async Task Approve_IsNotRefusedByTheOldNeedsReviewName()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-review"] };
+
+            var result = await Apply(rig, _approve);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
         }
 
         [Fact]

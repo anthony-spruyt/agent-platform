@@ -116,7 +116,7 @@ Each `Assess` pass returns the mode it ran in, and the workflow passes that mode
 In order; the first that applies decides:
 
 1. The repository is not owned by `anthony-spruyt`, the pull request is not open, or its head or base is in another repository: skipped. In `Shadow` mode a merged pull request is not skipped (Mergify may merge it before CI is complete); one closed without merging still is.
-2. The author is not Renovate, or the pull request has an `agent/needs-human-review`, `agent/needs-review` (the old name of the same label, read until a later release drops it), `agent/revert` or `blocked` label: skipped. In `Shadow` mode the `agent/needs-human-review`, `agent/needs-review` and `agent/auto-approved` labels are ignored.
+2. The author is not Renovate, or the pull request has an `agent/needs-human-review`, `agent/revert` or `blocked` label: skipped. In `Shadow` mode the `agent/needs-human-review` and `agent/auto-approved` labels are ignored.
 3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved. In `Shadow` mode reviews by the triage App are ignored.
 4. A verdict already exists for the head sha and mode: nothing to do. In `Live` only a verdict that `Apply` has written counts; an unapplied one is applied again on the next signal, without asking Jev again (see Writes).
 5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
@@ -141,8 +141,8 @@ Jev stays the judge; the code only guards the diff.
 - Needs review: the label `agent/needs-human-review`, the verdict comment, and a dismissal of every approval by the App, including one on the same commit. GitHub refusing a dismissal (`422`) is logged as a warning and the rest carries on.
 - One sticky comment per pull request, found by the hidden marker `<!-- agent-platform:renovate-triage -->` on a comment by the App. It is created once and edited for each new head sha, never duplicated.
 - When the writes are done the verdict row gets `applied_at`.
-- An unapplied verdict is applied again with the App's own approval and the `agent/auto-approved` label ignored, and `agent/needs-human-review` or `agent/needs-review` ignored when the verdict is needs review. `blocked`, `agent/revert` and human approvals still skip it, and so does either needs-review name when the verdict is approve.
-- `Apply` itself refuses an approve verdict (`blocking-label`, nothing written, the verdict stays unapplied) while the pull request carries either needs-review name.
+- An unapplied verdict is applied again with the App's own approval and the `agent/auto-approved` label ignored, and `agent/needs-human-review` ignored when the verdict is needs review. `blocked`, `agent/revert` and human approvals still skip it, and so does `agent/needs-human-review` when the verdict is approve.
+- `Apply` itself refuses an approve verdict (`blocking-label`, nothing written, the verdict stays unapplied) while the pull request carries `agent/needs-human-review`.
 
 The comments:
 
