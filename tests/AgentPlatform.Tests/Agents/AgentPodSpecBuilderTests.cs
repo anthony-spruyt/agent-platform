@@ -290,6 +290,15 @@ public class AgentPodSpecBuilderTests
     }
 
     [Fact]
+    public void Container_CapsSpendInvariantly()
+    {
+        var container = Agent(Build(configure: o => o.MaxBudgetUsd = 1.25m));
+
+        Assert.Equal("1.25", ArgAfter(container, "--max-budget-usd"));
+        Assert.Equal("2", ArgAfter(Agent(Build()), "--max-budget-usd"));
+    }
+
+    [Fact]
     public void Container_UsesOnlyTheMcpConfigFileFromTheSecret()
     {
         var pod = Build();

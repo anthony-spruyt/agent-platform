@@ -290,6 +290,8 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
         options.Model,
         "--max-turns",
         options.MaxTurns.ToString(CultureInfo.InvariantCulture),
+        "--max-budget-usd",
+        options.MaxBudgetUsd.ToString(CultureInfo.InvariantCulture),
         "--setting-sources",
         "user,project",
         "--append-system-prompt",

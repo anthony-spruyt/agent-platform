@@ -12,9 +12,15 @@ public sealed record ClaudeOutputSummary(
     bool UsageLimitReached,
     string? UsageLimitMessage,
     AgentRunUsage? Usage,
-    string? LimitBreach = null,
     int SkippedLines = 0)
 {
+    public string? LimitStop => Subtype switch
+    {
+        "error_max_turns" => "Claude Code stopped at the configured turn limit (--max-turns).",
+        "error_max_budget_usd" => "Claude Code stopped at the configured budget limit (--max-budget-usd).",
+        _ => null,
+    };
+
     public bool IsTruncated =>
         !HasResultEvent
         || Subtype != "success"
@@ -35,10 +41,7 @@ public static partial class ClaudeOutputAnalyzer
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex UsageLimitText();
 
-    public static Task<ClaudeOutputSummary> AnalyzeAsync(TextReader reader, CancellationToken cancellationToken) =>
-        AnalyzeAsync(reader, null, cancellationToken);
-
-    public static async Task<ClaudeOutputSummary> AnalyzeAsync(TextReader reader, Action<string>? observe, CancellationToken cancellationToken)
+    public static async Task<ClaudeOutputSummary> AnalyzeAsync(TextReader reader, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -48,20 +51,26 @@ public static partial class ClaudeOutputAnalyzer
         var lines = new BoundedLineReader(reader);
         while (await lines.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
-            observe?.Invoke(line);
-            if (!TryParseEvent(line, out var document))
+            try
             {
-                continue;
-            }
-
-            using (document)
-            {
-                var root = document.RootElement;
-                limitMessage ??= FindUsageLimit(root);
-                if (GetString(root, "type") == "result")
+                if (!TryParseEvent(line, out var document))
                 {
-                    result = ReadResult(root);
+                    continue;
                 }
+
+                using (document)
+                {
+                    var root = document.RootElement;
+                    limitMessage ??= FindUsageLimit(root);
+                    if (GetString(root, "type") == "result")
+                    {
+                        result = ReadResult(root);
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+            {
+                // A string holding a lone surrogate escape parses but cannot be read.
             }
         }
 

@@ -27,9 +27,7 @@ public sealed class AgentPodsOptions
 
     public int MaxTurns { get; set; } = 40;
 
-    public long MaxTokens { get; set; } = 400_000;
-
-    public int MaxSubagents { get; set; } = 3;
+    public decimal MaxBudgetUsd { get; set; } = 2m;
 
     public bool UseMcpHeadersHelper { get; set; }
 

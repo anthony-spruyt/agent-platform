@@ -70,14 +70,9 @@ public static class WorkerServiceCollectionExtensions
             throw new InvalidOperationException("AgentPods:MaxTurns must be at least 1.");
         }
 
-        if (pods.MaxTokens < 1)
+        if (pods.MaxBudgetUsd <= 0)
         {
-            throw new InvalidOperationException("AgentPods:MaxTokens must be at least 1.");
-        }
-
-        if (pods.MaxSubagents < 1)
-        {
-            throw new InvalidOperationException("AgentPods:MaxSubagents must be at least 1.");
+            throw new InvalidOperationException("AgentPods:MaxBudgetUsd must be greater than 0.");
         }
 
         if (pods.SchedulingGraceSeconds is < 0 or > AgentRunTimeouts.SchedulingGraceSeconds)

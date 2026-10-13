@@ -29,23 +29,18 @@ public sealed partial class KubernetesAgentRunner(
 
         using var waitCap = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         waitCap.CancelAfter(TimeSpan.FromSeconds(podDeadline + options.SchedulingGraceSeconds));
-        using var monitorCap = CancellationTokenSource.CreateLinkedTokenSource(waitCap.Token);
 
         AgentRunResult result;
-        var wait = WaitForEndAsync(name, waitCap.Token);
-        var monitor = MonitorLimitsAsync(name, monitorCap.Token);
         try
         {
-            result = await AwaitOutcomeAsync(name, wait, monitor, waitCap, cancellationToken).ConfigureAwait(false);
+            var (finalPod, failure) = await WaitForEndAsync(name, waitCap.Token).ConfigureAwait(false);
+            result = failure is null
+                ? await InterpretAsync(finalPod!, cancellationToken).ConfigureAwait(false)
+                : new AgentRunResult(AgentRunOutcome.PodFailed, name, null, null, failure, null);
         }
         catch (OperationCanceledException) when (waitCap.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             result = new AgentRunResult(AgentRunOutcome.TimedOut, name, null, null, "Pod did not finish within the run deadline plus scheduling grace.", null);
-        }
-        finally
-        {
-            await monitorCap.CancelAsync().ConfigureAwait(false);
-            await SwallowAsync(monitor).ConfigureAwait(false);
         }
 
         LogRunEnded(logger, name, result.Outcome);
@@ -56,40 +51,6 @@ public sealed partial class KubernetesAgentRunner(
     {
         ArgumentNullException.ThrowIfNull(request);
         return DeletePodAsync(AgentPodNaming.PodName(request.WorkflowId, request.RunId, request.Step), cancellationToken);
-    }
-
-    private async Task<AgentRunResult> AwaitOutcomeAsync(
-        string name,
-        Task<(V1Pod? Pod, string? Failure)> wait,
-        Task<string?> monitor,
-        CancellationTokenSource waitCap,
-        CancellationToken cancellationToken)
-    {
-        var first = await Task.WhenAny(wait, monitor).ConfigureAwait(false);
-        if (first == monitor && await monitor.ConfigureAwait(false) is { } breach)
-        {
-            await waitCap.CancelAsync().ConfigureAwait(false);
-            await SwallowAsync(wait).ConfigureAwait(false);
-            await DeletePodAsync(name, cancellationToken).ConfigureAwait(false);
-            return new AgentRunResult(AgentRunOutcome.LimitExceeded, name, null, null, breach, null);
-        }
-
-        var (finalPod, failure) = await wait.ConfigureAwait(false);
-        return failure is null
-            ? await InterpretAsync(finalPod!, cancellationToken).ConfigureAwait(false)
-            : new AgentRunResult(AgentRunOutcome.PodFailed, name, null, null, failure, null);
-    }
-
-    private static async Task SwallowAsync(Task task)
-    {
-        try
-        {
-            await task.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (task.IsCanceled)
-        {
-            return;
-        }
     }
 
     private async Task<V1Pod> StartAsync(AgentRunRequest request, string name, CancellationToken cancellationToken)
@@ -366,9 +327,9 @@ public sealed partial class KubernetesAgentRunner(
             return Result(AgentRunOutcome.UsageLimit, summary.UsageLimitMessage);
         }
 
-        if (summary.LimitBreach is not null)
+        if (summary.LimitStop is not null)
         {
-            return Result(AgentRunOutcome.LimitExceeded, summary.LimitBreach);
+            return Result(AgentRunOutcome.LimitExceeded, summary.LimitStop);
         }
 
         if (pod.Status?.Phase == "Failed" || exitCode is not (null or 0))
@@ -384,74 +345,6 @@ public sealed partial class KubernetesAgentRunner(
             new(outcome, name, exitCode, summary.ResultText, detail, summary.Usage);
     }
 
-    private async Task<string?> MonitorLimitsAsync(string name, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await FollowLimitsAsync(name, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            LogMonitorFaulted(logger, name, ex);
-            return null;
-        }
-    }
-
-    private async Task<string?> FollowLimitsAsync(string name, CancellationToken cancellationToken)
-    {
-        var tracker = new ClaudeLimitTracker(options.MaxTokens, options.MaxSubagents);
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                var stream = await kubernetes.CoreV1.ReadNamespacedPodLogAsync(
-                    name,
-                    options.Namespace,
-                    container: AgentPodSpecBuilder.AgentContainerName,
-                    follow: true,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-                await using (stream.ConfigureAwait(false))
-                {
-                    using var streamReader = new StreamReader(stream);
-                    var lines = new BoundedLineReader(streamReader);
-                    try
-                    {
-                        while (await lines.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
-                        {
-                            if (tracker.Observe(line) is { } breach)
-                            {
-                                return breach;
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        LogSkippedLines(logger, name, lines.SkippedLines);
-                    }
-                }
-            }
-            catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
-            {
-                return null;
-            }
-            catch (Exception ex) when (ex is HttpOperationException or HttpRequestException or IOException)
-            {
-                LogMonitorRetry(logger, name, ex);
-            }
-
-            try
-            {
-                await Task.Delay(_watchRetryDelay, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
-
     private async Task<ClaudeOutputSummary> ReadSummaryAsync(string name, CancellationToken cancellationToken)
     {
         var stream = await kubernetes.CoreV1.ReadNamespacedPodLogAsync(
@@ -463,11 +356,9 @@ public sealed partial class KubernetesAgentRunner(
         await using (stream.ConfigureAwait(false))
         {
             using var reader = new StreamReader(stream);
-            var tracker = new ClaudeLimitTracker(options.MaxTokens, options.MaxSubagents);
-            string? breach = null;
-            var summary = await ClaudeOutputAnalyzer.AnalyzeAsync(reader, line => breach ??= tracker.Observe(line), cancellationToken).ConfigureAwait(false);
+            var summary = await ClaudeOutputAnalyzer.AnalyzeAsync(reader, cancellationToken).ConfigureAwait(false);
             LogSkippedLines(logger, name, summary.SkippedLines);
-            return summary with { LimitBreach = breach };
+            return summary;
         }
     }
 
@@ -518,12 +409,6 @@ public sealed partial class KubernetesAgentRunner(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Watch on agent pod {PodName} failed; retrying.")]
     private static partial void LogWatchRetry(ILogger logger, string podName, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Debug, Message = "Log follow on agent pod {PodName} failed; retrying.")]
-    private static partial void LogMonitorRetry(ILogger logger, string podName, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Limit monitor on agent pod {PodName} faulted; relying on the final log read.")]
-    private static partial void LogMonitorFaulted(ILogger logger, string podName, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Skipped {SkippedLines} oversized log lines from agent pod {PodName}.")]
     private static partial void LogSkippedLinesCore(ILogger logger, int skippedLines, string podName);

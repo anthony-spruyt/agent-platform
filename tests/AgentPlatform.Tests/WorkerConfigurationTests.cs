@@ -130,9 +130,8 @@ public class WorkerConfigurationTests
     [Theory]
     [InlineData("MaxTurns", "0")]
     [InlineData("MaxTurns", "-1")]
-    [InlineData("MaxTokens", "0")]
-    [InlineData("MaxSubagents", "0")]
-    [InlineData("MaxSubagents", "-3")]
+    [InlineData("MaxBudgetUsd", "0")]
+    [InlineData("MaxBudgetUsd", "-1.5")]
     public void InvalidRunLimit_FailsAtStartup(string option, string value)
     {
         Assert.Throws<InvalidOperationException>(() => Build(new()

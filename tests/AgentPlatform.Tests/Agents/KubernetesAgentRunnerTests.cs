@@ -21,6 +21,13 @@ public class KubernetesAgentRunnerTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    private static CancellationTokenSource Bounded()
+    {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+        return cts;
+    }
+
     private sealed class ExtraSecretData(IReadOnlyDictionary<string, string> data, DateTimeOffset? expiresAt = null) : IRunSecretContributor
     {
         public int Calls { get; private set; }
@@ -302,7 +309,7 @@ public class KubernetesAgentRunnerTests
         var api = ApiWith(Success);
         var held = new PodBehavior { Logs = Success };
         api.SetBehavior(PodName, held);
-        using var cancelFirst = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        using var cancelFirst = Bounded();
 
         var first = NewRunner(api).RunAsync(Request, cancelFirst.Token);
         await WaitUntilAsync(() => api.Secrets.ContainsKey(PodName));
@@ -311,7 +318,8 @@ public class KubernetesAgentRunnerTests
         Assert.Single(api.Pods);
 
         held.Release.SetResult();
-        var second = await NewRunner(api).RunAsync(Request, Ct);
+        using var secondCap = Bounded();
+        var second = await NewRunner(api).RunAsync(Request, secondCap.Token);
 
         Assert.Equal(AgentRunOutcome.Succeeded, second.Outcome);
         Assert.Equal(1, api.PodCreateAttempts);
@@ -338,7 +346,7 @@ public class KubernetesAgentRunnerTests
     {
         var api = ApiWith(Success);
         api.SetBehavior(PodName, new PodBehavior { Logs = Success });
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        using var cts = Bounded();
 
         var run = NewRunner(api).RunAsync(Request, cts.Token);
         await WaitUntilAsync(() => api.Secrets.ContainsKey(PodName));
@@ -369,7 +377,7 @@ public class KubernetesAgentRunnerTests
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":3}}""")]
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":3}}""")]
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"x","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}""")]
-    [InlineData("""{"type":"result","subtype":"error_max_turns","is_error":true,"result":"x","usage":{"input_tokens":1,"output_tokens":3}}""")]
+    [InlineData("""{"type":"result","subtype":"error_during_execution","is_error":true,"result":"x","usage":{"input_tokens":1,"output_tokens":3}}""")]
     public async Task Run_WhenStdoutIsEmptyOrCutOff_ReportsTruncated(string logs)
     {
         var api = ApiWith(logs);
@@ -517,8 +525,9 @@ public class KubernetesAgentRunnerTests
     {
         var api = ApiWith(Success);
         api.SetBehavior(PodName, new PodBehavior { Logs = Success, WaitingReason = "ImagePullBackOff" });
+        using var cts = Bounded();
 
-        var result = await NewRunner(api).RunAsync(Request, Ct);
+        var result = await NewRunner(api).RunAsync(Request, cts.Token);
 
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Contains("ImagePullBackOff", result.Detail, StringComparison.Ordinal);
@@ -531,7 +540,8 @@ public class KubernetesAgentRunnerTests
         api.SetBehavior(PodName, new PodBehavior { Logs = Success, WaitingReason = "CreateContainerConfigError" });
 
         var later = new FixedTime(DateTimeOffset.UtcNow.AddMinutes(10));
-        var result = await NewRunner(api, time: later).RunAsync(Request, Ct);
+        using var cts = Bounded();
+        var result = await NewRunner(api, time: later).RunAsync(Request, cts.Token);
 
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Contains("CreateContainerConfigError", result.Detail, StringComparison.Ordinal);
@@ -573,8 +583,9 @@ public class KubernetesAgentRunnerTests
         var api = ApiWith(Success);
         api.SetBehavior(PodName, new PodBehavior { Logs = Success, InitWaitingReason = reason });
         api.Interceptor = FailLogReads;
+        using var cts = Bounded();
 
-        var result = await NewRunner(api).RunAsync(Request, Ct);
+        var result = await NewRunner(api).RunAsync(Request, cts.Token);
 
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Contains(AgentPodSpecBuilder.CloneInitContainerName, result.Detail, StringComparison.Ordinal);
@@ -651,20 +662,6 @@ public class KubernetesAgentRunnerTests
         Assert.NotEmpty(limits);
     }
 
-    [Fact]
-    public async Task Run_WhenTheLimitMonitorFaultsAfterAGoodResult_StillReportsTheResult()
-    {
-        var api = ApiWith(Success);
-        api.Interceptor = http =>
-            http.RequestUri!.AbsolutePath.EndsWith("/log", StringComparison.Ordinal) && http.RequestUri.Query.Contains("follow=true", StringComparison.Ordinal)
-                ? throw new InvalidOperationException("monitor fault")
-                : null;
-
-        var result = await NewRunner(api).RunAsync(Request, Ct);
-
-        Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
-    }
-
     private static string BigLine(int length) =>
         "{\"type\":\"assistant\",\"message\":{\"id\":\"big\",\"content\":[{\"type\":\"text\",\"text\":\"" + new string('a', length) + "\"}]}}";
 
@@ -679,69 +676,31 @@ public class KubernetesAgentRunnerTests
             ? new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("""{"kind":"Status","apiVersion":"v1","status":"Failure","code":400,"reason":"BadRequest"}""") }
             : null;
 
-    private static string HeavyUsage(int tokens) =>
-        """{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":""" + tokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + ""","output_tokens":1}}}""";
-
-    [Fact]
-    public async Task Run_WhenStreamedUsageCrossesTheCeilingWhileThePodRuns_StopsThePodAndReportsLimitExceeded()
+    [Theory]
+    [InlineData("error_max_turns", 1, "Failed", "turn")]
+    [InlineData("error_max_budget_usd", 1, "Failed", "budget")]
+    [InlineData("error_max_turns", 0, "Succeeded", "turn")]
+    [InlineData("error_max_budget_usd", 0, "Succeeded", "budget")]
+    public async Task Run_WhenTheCliStopsAtALimit_ReportsLimitExceeded(string subtype, int exitCode, string phase, string expected)
     {
-        var api = ApiWith(Success);
-        api.SetBehavior(PodName, new PodBehavior { Logs = HeavyUsage(5000) });
+        var logs = Success + "\n" + $$$"""{"type":"result","subtype":"{{{subtype}}}","is_error":true,"usage":{"input_tokens":1,"output_tokens":3}}""";
+        var api = ApiWith(logs, exitCode, phase);
 
-        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
+        var result = await NewRunner(api).RunAsync(Request, Ct);
 
         Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
-        Assert.Contains("Token ceiling", result.Detail, StringComparison.Ordinal);
-        Assert.Contains($"DELETE pod {PodName}", api.Operations);
-        Assert.DoesNotContain(PodName, api.Pods.Keys);
-    }
-
-    private const string HugeUsage =
-        """
-        {"type":"assistant","message":{"id":"m1","content":[],"usage":{"input_tokens":500,"output_tokens":0}}}
-        {"type":"assistant","message":{"id":"m2","content":[],"usage":{"input_tokens":9223372036854775807,"output_tokens":0}}}
-        """;
-
-    [Fact]
-    public async Task Run_WhenStreamedUsageIsHugeWhileThePodRuns_StopsThePodAndReportsLimitExceeded()
-    {
-        var api = ApiWith(Success);
-        api.SetBehavior(PodName, new PodBehavior { Logs = HugeUsage });
-
-        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
-
-        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
-        Assert.Contains($"DELETE pod {PodName}", api.Operations);
+        Assert.Contains(expected, result.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Run_WhenTheFinalLogHasHugeUsage_ReportsLimitExceeded()
+    public async Task Run_WhenALogLineHasAnUnreadableEscape_StillReportsTheResult()
     {
-        var api = ApiWith(HugeUsage + "\n" + Success);
+        var api = ApiWith("""{"type":"result","subtype":"success","result":"\uD800"}""" + "\n" + Success);
 
-        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
-
-        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
-    }
-
-    [Fact]
-    public async Task Run_WhenThePodEndedBeforeTheMonitorCaughtTheBreach_StillReportsLimitExceeded()
-    {
-        var api = ApiWith(HeavyUsage(5000) + "\n" + Success);
-
-        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
-
-        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
-    }
-
-    [Fact]
-    public async Task Run_WhenUsageStaysUnderTheCeiling_Succeeds()
-    {
-        var api = ApiWith(HeavyUsage(500) + "\n" + Success);
-
-        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
+        var result = await NewRunner(api).RunAsync(Request, Ct);
 
         Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
+        Assert.Equal("all good", result.ResultText);
     }
 
     [Fact]
