@@ -137,12 +137,27 @@ public class AgentSessionTokensTests
     [InlineData("garbage")]
     [InlineData("v1.a.b")]
     [InlineData("v1.a.b.c.d")]
-    [InlineData("v3.d2Y.cnVu.AAAA")]
-    [InlineData("v3.d2Y.cnVu.Y2xhdWRl.1.not-a-number.AAAA")]
-    [InlineData("v3.!!!.???.!!!.1.1.***")]
+    [InlineData("v4.d2Y.cnVu.AAAA")]
+    [InlineData("v4.d2Y.cnVu.Y2xhdWRl.1.not-a-number.AAAA")]
+    [InlineData("v4.!!!.???.!!!.1.1.***")]
     public void TryValidate_RejectsMalformedTokens(string token)
     {
         Assert.False(At(Now).TryValidate(token, out _));
+    }
+
+    [Fact]
+    public void Issue_StampsVersionFour()
+    {
+        Assert.StartsWith("v4.", At(Now).Issue("wf", "run", "claude", 1, Expiry), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryValidate_RejectsATokenFromAnEarlierVersion()
+    {
+        var tokens = At(Now);
+        var current = tokens.Issue("wf", "run", "claude", 1, Expiry);
+
+        Assert.False(tokens.TryValidate("v3" + current[2..], out _));
     }
 
     [Fact]

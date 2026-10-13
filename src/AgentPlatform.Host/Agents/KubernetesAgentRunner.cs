@@ -334,7 +334,7 @@ public sealed partial class KubernetesAgentRunner(
             }
 
             if (status.State?.Waiting?.Reason is { } reason
-                && (reason is "ErrImagePull" or "ImagePullBackOff" or "InvalidImageName"
+                && (reason is "ImagePullBackOff" or "InvalidImageName"
                     || (reason == "CreateContainerConfigError" && PastConfigErrorGrace(pod))))
             {
                 return $"init container {status.Name} is waiting with {reason}";

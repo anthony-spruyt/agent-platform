@@ -128,4 +128,51 @@ public class ClaudeLimitTrackerTests
 
         Assert.NotNull(tracker.Observe(Assistant("m2", 40, 20)));
     }
+
+    private static string RawUsage(string id, string input, string output = "1", string cacheCreation = "0") =>
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"" + id + "\",\"content\":[],\"usage\":{\"input_tokens\":" + input
+        + ",\"output_tokens\":" + output + ",\"cache_creation_input_tokens\":" + cacheCreation + "}}}";
+
+    [Theory]
+    [InlineData("9223372036854775807", "9223372036854775807", "9223372036854775807")]
+    [InlineData("9223372036854775807", "1", "0")]
+    [InlineData("4611686018427387904", "4611686018427387904", "1")]
+    public void Observe_WhenCountsAreHugeInOneMessage_ReportsTheTokenLimitWithoutThrowing(string input, string output, string cacheCreation)
+    {
+        var tracker = new ClaudeLimitTracker(1000, 3);
+
+        var breach = tracker.Observe(RawUsage("m1", input, output, cacheCreation));
+
+        Assert.NotNull(breach);
+        Assert.Contains("token", breach, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Observe_WhenAHugeMessageFollowsAnEarlierOne_ReportsTheTokenLimitWithoutThrowing()
+    {
+        var tracker = new ClaudeLimitTracker(1000, 3);
+
+        Assert.Null(tracker.Observe(RawUsage("m1", "500")));
+        Assert.NotNull(tracker.Observe(RawUsage("m2", "9223372036854775807", "0")));
+    }
+
+    [Fact]
+    public void Observe_WhenTheCeilingIsTheMaximum_NeverThrowsOrReports()
+    {
+        var tracker = new ClaudeLimitTracker(long.MaxValue, 3);
+
+        Assert.Null(tracker.Observe(RawUsage("m1", "9223372036854775807")));
+        Assert.Null(tracker.Observe(RawUsage("m2", "9223372036854775807")));
+    }
+
+    [Fact]
+    public void Observe_NegativeCountsDoNotLowerTheTotal()
+    {
+        var tracker = new ClaudeLimitTracker(1000, 3);
+
+        Assert.Null(tracker.Observe(RawUsage("m1", "600")));
+        Assert.Null(tracker.Observe(RawUsage("m2", "-9223372036854775807", "-5", "-1")));
+        Assert.Null(tracker.Observe(RawUsage("m3", "-100", "-100", "-100")));
+        Assert.NotNull(tracker.Observe(RawUsage("m4", "400")));
+    }
 }

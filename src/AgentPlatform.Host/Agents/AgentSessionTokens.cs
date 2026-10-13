@@ -7,7 +7,7 @@ namespace AgentPlatform.Host.Agents;
 
 public sealed class AgentSessionTokens
 {
-    private const string Version = "v3";
+    private const string Version = "v4";
     private const int MinimumKeyLength = 32;
 
     private readonly byte[] _key;

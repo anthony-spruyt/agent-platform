@@ -4,6 +4,7 @@ namespace AgentPlatform.Host.Agents;
 
 public sealed class ClaudeLimitTracker(long maxTokens, int maxSubagents)
 {
+    private readonly long _ceiling = maxTokens >= long.MaxValue ? long.MaxValue : Math.Max(maxTokens, 0) + 1;
     private readonly Dictionary<string, long> _tokensByMessage = [];
     private readonly HashSet<string> _subagentCalls = [];
 
@@ -41,9 +42,14 @@ public sealed class ClaudeLimitTracker(long maxTokens, int maxSubagents)
             return null;
         }
 
-        var count = Count(usage, "input_tokens") + Count(usage, "output_tokens") + Count(usage, "cache_creation_input_tokens");
+        var count = Add(Add(Count(usage, "input_tokens"), Count(usage, "output_tokens")), Count(usage, "cache_creation_input_tokens"));
         _tokensByMessage[messageId] = Math.Max(count, _tokensByMessage.GetValueOrDefault(messageId));
-        var total = _tokensByMessage.Values.Sum();
+        var total = 0L;
+        foreach (var messageTokens in _tokensByMessage.Values)
+        {
+            total = Add(total, messageTokens);
+        }
+
         return total > maxTokens ? $"Token ceiling of {maxTokens} exceeded ({total} tokens streamed)." : null;
     }
 
@@ -71,6 +77,10 @@ public sealed class ClaudeLimitTracker(long maxTokens, int maxSubagents)
     private static bool IsString(JsonElement element, string name, string expected) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.ValueEquals(expected);
 
-    private static long Count(JsonElement usage, string name) =>
-        usage.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number : 0;
+    private long Add(long total, long count) => count >= _ceiling - total ? _ceiling : total + count;
+
+    private long Count(JsonElement usage, string name) =>
+        usage.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number)
+            ? Math.Clamp(number, 0, _ceiling)
+            : 0;
 }

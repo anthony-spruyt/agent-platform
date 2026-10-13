@@ -567,7 +567,6 @@ public class KubernetesAgentRunnerTests
 
     [Theory]
     [InlineData("ImagePullBackOff")]
-    [InlineData("ErrImagePull")]
     [InlineData("InvalidImageName")]
     public async Task Run_WhenAnInitContainerImageCannotBePulled_FailsFastNamingTheContainer(string reason)
     {
@@ -580,6 +579,19 @@ public class KubernetesAgentRunnerTests
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Contains(AgentPodSpecBuilder.CloneInitContainerName, result.Detail, StringComparison.Ordinal);
         Assert.Contains(reason, result.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Run_WhenAnInitContainerImagePullIsRetrying_KeepsWaiting()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, new PodBehavior { Logs = Success, InitWaitingReason = "ErrImagePull" });
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NewRunner(api).RunAsync(Request, cts.Token));
+
+        Assert.Contains(PodName, api.Pods.Keys);
     }
 
     [Fact]
@@ -682,6 +694,34 @@ public class KubernetesAgentRunnerTests
         Assert.Contains("Token ceiling", result.Detail, StringComparison.Ordinal);
         Assert.Contains($"DELETE pod {PodName}", api.Operations);
         Assert.DoesNotContain(PodName, api.Pods.Keys);
+    }
+
+    private const string HugeUsage =
+        """
+        {"type":"assistant","message":{"id":"m1","content":[],"usage":{"input_tokens":500,"output_tokens":0}}}
+        {"type":"assistant","message":{"id":"m2","content":[],"usage":{"input_tokens":9223372036854775807,"output_tokens":0}}}
+        """;
+
+    [Fact]
+    public async Task Run_WhenStreamedUsageIsHugeWhileThePodRuns_StopsThePodAndReportsLimitExceeded()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, new PodBehavior { Logs = HugeUsage });
+
+        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
+        Assert.Contains($"DELETE pod {PodName}", api.Operations);
+    }
+
+    [Fact]
+    public async Task Run_WhenTheFinalLogHasHugeUsage_ReportsLimitExceeded()
+    {
+        var api = ApiWith(HugeUsage + "\n" + Success);
+
+        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
     }
 
     [Fact]
