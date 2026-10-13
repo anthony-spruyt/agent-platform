@@ -10,7 +10,7 @@ public sealed partial class PromptActivities(AgentPromptsOptions options, ILogge
     public const string LoadPromptName = "LoadPrompt";
     public const int MaxOverrideBytes = 64 * 1024;
 
-    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+    private static readonly UTF8Encoding _strictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     [Activity(LoadPromptName)]
     public async Task<string> LoadPromptAsync(string name)
@@ -64,7 +64,7 @@ public sealed partial class PromptActivities(AgentPromptsOptions options, ILogge
         string body;
         try
         {
-            body = StrictUtf8.GetString(buffer, 0, length);
+            body = _strictUtf8.GetString(buffer, 0, length);
         }
         catch (DecoderFallbackException ex)
         {
