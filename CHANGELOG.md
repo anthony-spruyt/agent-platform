@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.7.0...v1.8.0) (2026-10-13)
+
+
+### Features
+
+* **triage:** run repository-scoped agents on the read tier ([#53](https://github.com/anthony-spruyt/agent-platform/issues/53)) ([cf3c7a5](https://github.com/anthony-spruyt/agent-platform/commit/cf3c7a5fe4d104add3eea958d45362d7d6a00359))
+
 ## [1.7.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.6.0...v1.7.0) (2026-10-13)
 
 
