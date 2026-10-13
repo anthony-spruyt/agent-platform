@@ -424,15 +424,15 @@ public class GitHubApiClientTests
     [Fact]
     public async Task AddLabelsAsync_PostsTheLabelNames()
     {
-        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""[{"name":"agent/needs-review"}]"""));
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""[{"name":"agent/needs-human-review"}]"""));
 
-        await client.AddLabelsAsync("octo/widgets", 7, ["agent/needs-review"], Ct);
+        await client.AddLabelsAsync("octo/widgets", 7, ["agent/needs-human-review"], Ct);
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal("/repos/octo/widgets/issues/7/labels", request.Uri.AbsolutePath);
         using var body = JsonDocument.Parse(request.Body!);
-        Assert.Equal("agent/needs-review", Assert.Single(body.RootElement.GetProperty("labels").EnumerateArray()).GetString());
+        Assert.Equal("agent/needs-human-review", Assert.Single(body.RootElement.GetProperty("labels").EnumerateArray()).GetString());
         Assert.Equal(_pullRequestsWrite, Assert.Single(tokens.Requests).Permissions);
     }
 
