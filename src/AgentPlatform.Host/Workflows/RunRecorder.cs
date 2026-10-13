@@ -8,7 +8,7 @@ namespace AgentPlatform.Host.Workflows;
 
 internal static partial class RunRecorder
 {
-    private static readonly ActivityOptions _options = new()
+    internal static readonly ActivityOptions Options = new()
     {
         StartToCloseTimeout = TimeSpan.FromSeconds(30),
         ScheduleToCloseTimeout = TimeSpan.FromMinutes(5),
@@ -28,7 +28,7 @@ internal static partial class RunRecorder
     {
         try
         {
-            return await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.BeginRunAsync(input), _options);
+            return await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.BeginRunAsync(input), Options);
         }
         catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {
@@ -41,7 +41,7 @@ internal static partial class RunRecorder
     {
         try
         {
-            await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.RecordStepAsync(input), _options);
+            await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.RecordStepAsync(input), Options);
         }
         catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {
@@ -53,7 +53,7 @@ internal static partial class RunRecorder
     {
         try
         {
-            await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.CompleteRunAsync(input), _options);
+            await Workflow.ExecuteActivityAsync((RunDataActivities activities) => activities.CompleteRunAsync(input), Options);
         }
         catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {
@@ -69,9 +69,9 @@ internal static partial class RunRecorder
                 (RunDataActivities activities) => activities.CompleteRunAsync(new CompleteRunInput(runId, RunStatus.Failed, Workflow.UtcNow, model)),
                 new ActivityOptions
                 {
-                    StartToCloseTimeout = _options.StartToCloseTimeout,
-                    ScheduleToCloseTimeout = _options.ScheduleToCloseTimeout,
-                    RetryPolicy = _options.RetryPolicy,
+                    StartToCloseTimeout = Options.StartToCloseTimeout,
+                    ScheduleToCloseTimeout = Options.ScheduleToCloseTimeout,
+                    RetryPolicy = Options.RetryPolicy,
                     CancellationToken = CancellationToken.None,
                 });
         }

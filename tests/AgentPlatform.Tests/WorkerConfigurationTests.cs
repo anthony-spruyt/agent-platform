@@ -1,4 +1,5 @@
 using AgentPlatform.Host;
+using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
@@ -100,6 +101,28 @@ public class WorkerConfigurationTests
         using var db = provider.GetRequiredService<IDbContextFactory<RunDataDbContext>>().CreateDbContext();
 
         Assert.Contains("db.example", db.Database.GetConnectionString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PromptDirectory_IsOptionalAndBoundFromConfig()
+    {
+        using var unset = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
+        using var set = Build(new() { ["AgentGateway:SessionTokenKey"] = Key, ["AgentPrompts:Directory"] = "/prompts" });
+
+        Assert.Null(unset.GetRequiredService<AgentPromptsOptions>().Directory);
+        Assert.Equal("/prompts", set.GetRequiredService<AgentPromptsOptions>().Directory);
+    }
+
+    [Theory]
+    [InlineData("  ")]
+    [InlineData("relative/prompts")]
+    public void InvalidPromptDirectory_FailsAtStartup(string directory)
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["AgentPrompts:Directory"] = directory,
+        }));
     }
 
     [Theory]

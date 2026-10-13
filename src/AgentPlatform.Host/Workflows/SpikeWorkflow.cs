@@ -110,7 +110,7 @@ public partial class SpikeWorkflow
     {
         var info = Workflow.Info;
         var started = Workflow.UtcNow;
-        var (promptName, template, repo) = ResolvePrompt(input);
+        var (promptName, template, repo) = await ResolvePromptAsync(input);
         var prompt = repo is null ? template : AgentPrompts.Render(template, repo);
         _triageHeadSha = promptName == AgentPrompts.RenovateTriage ? repo?.HeadSha : null;
         var run = await RunRecorder.BeginAsync(new BeginRunInput(
@@ -179,7 +179,7 @@ public partial class SpikeWorkflow
         _ => JsonNamingPolicy.SnakeCaseLower.ConvertName(outcome.ToString()),
     };
 
-    private static (string PromptName, string Template, AgentRepoContext? Repo) ResolvePrompt(SpikeInput input)
+    private static async Task<(string PromptName, string Template, AgentRepoContext? Repo)> ResolvePromptAsync(SpikeInput input)
     {
         var repo = input.Repo is null ? null : new AgentRepoContext(input.Repo, input.PullRequest, input.HeadSha ?? string.Empty);
         if (repo is not null && (!GitHubRepoName.TryParse(repo.Repo, out _, out _) || !IsFullSha(repo.HeadSha)))
@@ -204,7 +204,10 @@ public partial class SpikeWorkflow
             throw InvalidInput("A named prompt needs repo, pullRequest and headSha.");
         }
 
-        return (input.PromptName, AgentPrompts.Load(input.PromptName), repo);
+        var body = await Workflow.ExecuteActivityAsync(
+            (PromptActivities activities) => activities.LoadPromptAsync(input.PromptName),
+            RunRecorder.Options);
+        return (input.PromptName, body, repo);
     }
 
     private static bool IsFullSha(string value) =>

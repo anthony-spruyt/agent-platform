@@ -65,16 +65,19 @@ public class SpikeWorkflowTests
         TCleanup cleanup,
         Func<Task<T>> body,
         InMemoryRunData? data = null,
-        object? runDataActivities = null)
+        object? runDataActivities = null,
+        object? promptActivities = null)
         where TPod : class
         where TCleanup : class
     {
         var recording = runDataActivities ?? (data ?? InMemoryRunData.Create()).Activities;
+        var prompts = promptActivities ?? new PromptActivities(new AgentPromptsOptions(), NullLogger<PromptActivities>.Instance);
         using var workflows = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<SpikeWorkflow>()
                 .AddAllActivities(cleanup)
+                .AddAllActivities(prompts.GetType(), prompts)
                 .AddAllActivities(recording.GetType(), recording));
         using var pods = new TemporalWorker(
             env.Client,
@@ -764,6 +767,58 @@ public class SpikeWorkflowTests
         Assert.Contains(Sha, input.Prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("{{", input.Prompt, StringComparison.Ordinal);
         Assert.Equal(1, input.Attempt);
+    }
+
+    private sealed class StubPrompts(Func<string, string> onLoad)
+    {
+        public List<string> Loads { get; } = [];
+
+        [Activity("LoadPrompt")]
+        public Task<string> LoadPromptAsync(string name)
+        {
+            Loads.Add(name);
+            return Task.FromResult(onLoad(name));
+        }
+    }
+
+    [Fact]
+    public async Task ATriageRun_GetsThePromptBodyFromTheLoadPromptActivityAndRecordsThatBody()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities();
+        var prompts = new StubPrompts(_ => "override for {{repo}} #{{pr}} at {{head_sha}}");
+        var data = InMemoryRunData.Create();
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env, TriageInput());
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Triage("SAFE")));
+            var output = await handle.GetResultAsync();
+            await HistoryStore.RecordAsync(handle, "spike-named-prompt");
+            return output;
+        }, data, promptActivities: prompts);
+
+        Assert.Equal(AgentPrompts.RenovateTriage, Assert.Single(prompts.Loads));
+        Assert.Equal($"override for octo/widgets #7 at {Sha}", Assert.Single(activities.Inputs).Prompt);
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal("override for {{repo}} #{{pr}} at {{head_sha}}", (await db.Prompts.SingleAsync(Ct)).Body);
+    }
+
+    [Fact]
+    public async Task ATriageRunWhosePromptCannotBeLoaded_FailsBeforeStartingAPod()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities();
+        var prompts = new StubPrompts(_ => throw new ApplicationFailureException("The prompt override is empty.", nonRetryable: true));
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env, TriageInput());
+            await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            return 0;
+        }, promptActivities: prompts);
+
+        Assert.Empty(activities.Inputs);
     }
 
     [Theory]
