@@ -12,7 +12,14 @@ public interface IGitHubInstallationTokenProvider
     Task<string> GetTokenAsync(string repo, IReadOnlyDictionary<string, string> permissions, CancellationToken cancellationToken);
 }
 
-public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenProvider, IDisposable
+public sealed record InstallationToken(string Token, DateTimeOffset ExpiresAt);
+
+public interface IGitHubTokenMinter
+{
+    Task<InstallationToken> MintTokenAsync(string repo, IReadOnlyDictionary<string, string> permissions, CancellationToken cancellationToken);
+}
+
+public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenProvider, IGitHubTokenMinter, IDisposable
 {
     private static readonly TimeSpan _refreshMargin = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan _jwtBackdate = TimeSpan.FromSeconds(60);
@@ -23,7 +30,7 @@ public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenPr
     private readonly TimeProvider _time;
     private readonly RSA _key = RSA.Create();
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly Dictionary<string, CachedToken> _cache = [];
+    private readonly Dictionary<string, InstallationToken> _cache = [];
 
     public GitHubInstallationTokenProvider(IHttpClientFactory httpClients, IOptions<GitHubAppOptions> options, TimeProvider time)
     {
@@ -45,8 +52,6 @@ public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenPr
         }
     }
 
-    private sealed record CachedToken(string Token, DateTimeOffset ExpiresAt);
-
     private sealed record Installation(long Id);
 
     private sealed record AccessToken(string? Token, DateTimeOffset? ExpiresAt);
@@ -57,16 +62,17 @@ public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenPr
         _gate.Dispose();
     }
 
+    public async Task<InstallationToken> MintTokenAsync(string repo, IReadOnlyDictionary<string, string> permissions, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        var sorted = SortPermissions(permissions);
+        return await MintAsync(owner, name, sorted.ToDictionary(p => p.Key, p => p.Value), cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<string> GetTokenAsync(string repo, IReadOnlyDictionary<string, string> permissions, CancellationToken cancellationToken)
     {
         var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
-        ArgumentNullException.ThrowIfNull(permissions);
-        if (permissions.Count == 0)
-        {
-            throw new ArgumentException("At least one permission is required.", nameof(permissions));
-        }
-
-        var sorted = permissions.OrderBy(p => p.Key, StringComparer.Ordinal).ToList();
+        var sorted = SortPermissions(permissions);
         var cacheKey = $"{repo}|{string.Join(',', sorted.Select(p => $"{p.Key}={p.Value}"))}";
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -87,7 +93,18 @@ public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenPr
         }
     }
 
-    private async Task<CachedToken> MintAsync(string owner, string name, Dictionary<string, string> permissions, CancellationToken cancellationToken)
+    private static List<KeyValuePair<string, string>> SortPermissions(IReadOnlyDictionary<string, string> permissions)
+    {
+        ArgumentNullException.ThrowIfNull(permissions);
+        if (permissions.Count == 0)
+        {
+            throw new ArgumentException("At least one permission is required.", nameof(permissions));
+        }
+
+        return [.. permissions.OrderBy(p => p.Key, StringComparer.Ordinal)];
+    }
+
+    private async Task<InstallationToken> MintAsync(string owner, string name, Dictionary<string, string> permissions, CancellationToken cancellationToken)
     {
         using var http = _httpClients.CreateClient(GitHubHttp.ClientName);
 
@@ -115,7 +132,7 @@ public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenPr
             throw new GitHubApiException("GitHub installation token response lacked a token or an expiry.");
         }
 
-        return new CachedToken(token.Token, expiresAt);
+        return new InstallationToken(token.Token, expiresAt);
     }
 
     private string CreateJwt()

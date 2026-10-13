@@ -208,4 +208,44 @@ public class ClaudeOutputAnalyzerTests
         Assert.False(summary.IsTruncated);
         Assert.True(summary.ResultText!.Length <= ClaudeOutputAnalyzer.MaxResultTextLength);
     }
+
+    [Fact]
+    public async Task ALineOverTheLineCap_IsSkippedAndCountedWhileTheRestIsRead()
+    {
+        var huge = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"" + new string('a', BoundedLineReader.MaxLineChars + 10) + "\"}]}}";
+
+        var summary = await Analyze(Init, huge, Result());
+
+        Assert.Equal(1, summary.SkippedLines);
+        Assert.Equal("done", summary.ResultText);
+    }
+
+    [Fact]
+    public async Task ALineWithALoneSurrogateEscape_IsSkippedAndTheLaterResultIsStillRead()
+    {
+        const string unreadable = """{"type":"result","subtype":"success","is_error":false,"result":"\uD800"}""";
+
+        var summary = await Analyze(Init, unreadable, Result());
+
+        Assert.Equal("done", summary.ResultText);
+        Assert.False(summary.IsTruncated);
+    }
+
+    [Theory]
+    [InlineData("error_max_turns", "turn")]
+    [InlineData("error_max_budget_usd", "budget")]
+    public async Task ResultStoppedByACliLimit_ExposesTheLimitStop(string subtype, string expected)
+    {
+        var summary = await Analyze(Init, Result(subtype: subtype, isError: true));
+
+        Assert.Contains(expected, summary.LimitStop, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SuccessfulResult_HasNoLimitStop()
+    {
+        var summary = await Analyze(Init, Result());
+
+        Assert.Null(summary.LimitStop);
+    }
 }

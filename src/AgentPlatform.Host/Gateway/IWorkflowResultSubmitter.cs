@@ -22,3 +22,5 @@ public sealed class RunNotActiveException : Exception
     {
     }
 }
+
+public sealed class InvalidResultException(string reason) : Exception($"The result was rejected: {reason}");

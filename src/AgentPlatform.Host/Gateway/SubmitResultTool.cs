@@ -42,9 +42,9 @@ public sealed class SubmitResultTool(IHttpContextAccessor httpContextAccessor, I
 
         try
         {
-            await submitter.SubmitResultAsync(run, new SubmitResultPayload(status.Trim(), summary, data), cancellationToken).ConfigureAwait(false);
+            await submitter.SubmitResultAsync(run, new SubmitResultPayload(status.Trim(), summary, data, run.Step, run.Attempt), cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is RunNotActiveException or ResultAlreadySubmittedException)
+        catch (Exception ex) when (ex is RunNotActiveException or ResultAlreadySubmittedException or InvalidResultException)
         {
             throw new McpException(ex.Message, ex);
         }

@@ -101,6 +101,19 @@ public class AgentPodActivitiesTests
     }
 
     [Fact]
+    public async Task RunAgentPod_PassesTheAttemptAndRepoContextToTheRunner()
+    {
+        var runner = new FakeRunner();
+        var repo = new AgentRepoContext("octo/widgets", 7, new string('a', 40));
+
+        await Environment().RunAsync(() => Activities(runner).RunAgentPodAsync(Input with { Attempt = 3, Repo = repo }));
+
+        var request = Assert.Single(runner.Runs);
+        Assert.Equal(3, request.Attempt);
+        Assert.Equal(repo, request.Repo);
+    }
+
+    [Fact]
     public async Task RunAgentPod_WhenCancelledByTheWorkflow_DeletesThePod()
     {
         var runner = new FakeRunner { OnRun = async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return null!; } };
@@ -157,7 +170,7 @@ public class AgentPodActivitiesTests
         await WaitUntilAsync(() => api.Secrets.ContainsKey(podName));
         var secondAttempt = Environment();
         var second = secondAttempt.RunAsync(() => activities.RunAgentPodAsync(Input));
-        await WaitUntilAsync(() => api.PodCreateAttempts == 2);
+        await WaitUntilAsync(() => api.CountOperations($"POST secret {podName}") == 2);
         firstAttempt.Cancel(ActivityCancelReason.Timeout);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
         held.Release.SetResult();

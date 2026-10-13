@@ -21,10 +21,10 @@ public class AgentSessionTokensTests
     {
         var tokens = At(Now);
 
-        var token = tokens.Issue("renovate-triage/anthony-spruyt/repo/1", "run-1", Expiry);
+        var token = tokens.Issue("renovate-triage/anthony-spruyt/repo/1", "run-1", "claude", 1, Expiry);
 
         Assert.True(tokens.TryValidate(token, out var run));
-        Assert.Equal(new AgentRunIdentity("renovate-triage/anthony-spruyt/repo/1", "run-1"), run);
+        Assert.Equal(new AgentRunIdentity("renovate-triage/anthony-spruyt/repo/1", "run-1", "claude", 1), run);
     }
 
     [Fact]
@@ -32,7 +32,7 @@ public class AgentSessionTokensTests
     {
         var tokens = At(Now);
 
-        Assert.Equal(tokens.Issue("wf", "run", Expiry), tokens.Issue("wf", "run", Expiry));
+        Assert.Equal(tokens.Issue("wf", "run", "claude", 1, Expiry), tokens.Issue("wf", "run", "claude", 1, Expiry));
     }
 
     [Fact]
@@ -40,15 +40,51 @@ public class AgentSessionTokensTests
     {
         var tokens = At(Now);
 
-        Assert.NotEqual(tokens.Issue("wf", "run-1", Expiry), tokens.Issue("wf", "run-2", Expiry));
-        Assert.NotEqual(tokens.Issue("wf-1", "run", Expiry), tokens.Issue("wf-2", "run", Expiry));
-        Assert.NotEqual(tokens.Issue("wf", "run", Expiry), tokens.Issue("wf", "run", Expiry.AddMinutes(1)));
+        Assert.NotEqual(tokens.Issue("wf", "run-1", "claude", 1, Expiry), tokens.Issue("wf", "run-2", "claude", 1, Expiry));
+        Assert.NotEqual(tokens.Issue("wf-1", "run", "claude", 1, Expiry), tokens.Issue("wf-2", "run", "claude", 1, Expiry));
+        Assert.NotEqual(tokens.Issue("wf", "run", "claude", 1, Expiry), tokens.Issue("wf", "run", "claude", 1, Expiry.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void Issue_DiffersPerStepAndAttempt()
+    {
+        var tokens = At(Now);
+
+        Assert.NotEqual(tokens.Issue("wf", "run", "claude", 1, Expiry), tokens.Issue("wf", "run", "claude", 2, Expiry));
+        Assert.NotEqual(tokens.Issue("wf", "run", "claude", 1, Expiry), tokens.Issue("wf", "run", "other", 1, Expiry));
+    }
+
+    [Fact]
+    public void TryValidate_ReturnsTheStepAndAttemptTheTokenWasIssuedFor()
+    {
+        var tokens = At(Now);
+
+        Assert.True(tokens.TryValidate(tokens.Issue("wf", "run", "claude", 2, Expiry), out var run));
+        Assert.Equal("claude", run.Step);
+        Assert.Equal(2, run.Attempt);
+    }
+
+    [Fact]
+    public void TryValidate_RejectsAnAttemptNumberSwappedIntoAnotherAttemptsToken()
+    {
+        var tokens = At(Now);
+        var first = tokens.Issue("wf", "run", "claude", 1, Expiry).Split('.');
+        var second = tokens.Issue("wf", "run", "claude", 2, Expiry).Split('.');
+        first[4] = second[4];
+
+        Assert.False(tokens.TryValidate(string.Join('.', first), out _));
+    }
+
+    [Fact]
+    public void TryValidate_RejectsTheTokenFormatWithoutAStepAndAttempt()
+    {
+        Assert.False(At(Now).TryValidate("v2.d2Y.cnVu.1893499200.AAAA", out _));
     }
 
     [Fact]
     public void TryValidate_AcceptsATokenUntilItsExpiry()
     {
-        var token = At(Now).Issue("wf", "run", Expiry);
+        var token = At(Now).Issue("wf", "run", "claude", 1, Expiry);
 
         Assert.True(At(Expiry.AddSeconds(-1)).TryValidate(token, out _));
     }
@@ -59,7 +95,7 @@ public class AgentSessionTokensTests
     [InlineData(3600)]
     public void TryValidate_RejectsAnExpiredToken(int secondsPastExpiry)
     {
-        var token = At(Now).Issue("wf", "run", Expiry);
+        var token = At(Now).Issue("wf", "run", "claude", 1, Expiry);
 
         Assert.False(At(Expiry.AddSeconds(secondsPastExpiry)).TryValidate(token, out _));
     }
@@ -67,7 +103,7 @@ public class AgentSessionTokensTests
     [Fact]
     public void TryValidate_RejectsTokenSignedWithAnotherKey()
     {
-        var token = At(Now).Issue("wf", "run", Expiry);
+        var token = At(Now).Issue("wf", "run", "claude", 1, Expiry);
 
         Assert.False(At(Now, "another-key-another-key-another-key").TryValidate(token, out _));
     }
@@ -76,8 +112,8 @@ public class AgentSessionTokensTests
     public void TryValidate_RejectsTamperedIdentity()
     {
         var tokens = At(Now);
-        var genuine = tokens.Issue("wf", "run", Expiry);
-        var other = tokens.Issue("other-wf", "run", Expiry);
+        var genuine = tokens.Issue("wf", "run", "claude", 1, Expiry);
+        var other = tokens.Issue("other-wf", "run", "claude", 1, Expiry);
         var parts = genuine.Split('.');
         var forged = string.Join('.', [parts[0], other.Split('.')[1], .. parts[2..]]);
 
@@ -88,8 +124,8 @@ public class AgentSessionTokensTests
     public void TryValidate_RejectsAnExtendedExpiry()
     {
         var tokens = At(Now);
-        var genuine = tokens.Issue("wf", "run", Expiry).Split('.');
-        var later = tokens.Issue("wf", "run", Expiry.AddDays(30)).Split('.');
+        var genuine = tokens.Issue("wf", "run", "claude", 1, Expiry).Split('.');
+        var later = tokens.Issue("wf", "run", "claude", 1, Expiry.AddDays(30)).Split('.');
         genuine[^2] = later[^2];
 
         Assert.False(tokens.TryValidate(string.Join('.', genuine), out _));
@@ -101,12 +137,27 @@ public class AgentSessionTokensTests
     [InlineData("garbage")]
     [InlineData("v1.a.b")]
     [InlineData("v1.a.b.c.d")]
-    [InlineData("v2.d2Y.cnVu.AAAA")]
-    [InlineData("v2.d2Y.cnVu.not-a-number.AAAA")]
-    [InlineData("v2.!!!.???.1.***")]
+    [InlineData("v4.d2Y.cnVu.AAAA")]
+    [InlineData("v4.d2Y.cnVu.Y2xhdWRl.1.not-a-number.AAAA")]
+    [InlineData("v4.!!!.???.!!!.1.1.***")]
     public void TryValidate_RejectsMalformedTokens(string token)
     {
         Assert.False(At(Now).TryValidate(token, out _));
+    }
+
+    [Fact]
+    public void Issue_StampsVersionFour()
+    {
+        Assert.StartsWith("v4.", At(Now).Issue("wf", "run", "claude", 1, Expiry), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryValidate_RejectsATokenFromAnEarlierVersion()
+    {
+        var tokens = At(Now);
+        var current = tokens.Issue("wf", "run", "claude", 1, Expiry);
+
+        Assert.False(tokens.TryValidate("v3" + current[2..], out _));
     }
 
     [Fact]
@@ -122,4 +173,18 @@ public class AgentSessionTokensTests
     {
         Assert.Throws<ArgumentException>(() => new AgentSessionTokens(key));
     }
+
+    [Fact]
+    public void TryValidate_RejectsAFieldBoundaryShiftedAcrossANewline()
+    {
+        var tokens = At(Now);
+        var original = tokens.Issue("a", "b\nc", "claude", 1, Expiry).Split('.');
+
+        var shifted = string.Join('.', original[0], B64("a\nb"), B64("c"), original[3], original[4], original[5], original[6]);
+
+        Assert.False(tokens.TryValidate(shifted, out _));
+    }
+
+    private static string B64(string value) =>
+        Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(value)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
