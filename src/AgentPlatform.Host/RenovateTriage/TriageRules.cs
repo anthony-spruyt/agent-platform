@@ -64,6 +64,9 @@ public static partial class TriageRules
     public const string NoChangelog = "no-changelog";
     public const string BumpTypeMismatch = "bump-type-mismatch";
     public const string DigestMismatch = "digest-mismatch";
+    public const string PrecheckDiff = "precheck-diff";
+    public const string PrecheckFlagged = "precheck-flagged";
+    public const string PrecheckUnchecked = "precheck-unchecked";
 
     public const string NonRenovateCommitComment = "**Needs review:** this PR has commits that Renovate didn't make.";
     public const string CiTimeoutComment = "**Needs review:** CI didn't finish within 2 hours.";
@@ -71,6 +74,9 @@ public static partial class TriageRules
     public const string NoChangelogComment = "**Needs review:** no changelog found for this bump.";
     public const string JevErrorComment = "**Needs review:** the triage check couldn't run (Jev error).";
     public const string DigestMismatchComment = "**Needs review:** marked as a digest bump, but more than a digest changed.";
+    public const string PrecheckDiffComment = "**Needs review:** this PR changes more than version and digest updates.";
+    public const string PrecheckFlaggedComment = "**Needs review:** some of this PR's content is held for a human look.";
+    public const string PrecheckUncheckedComment = "**Needs review:** some of this PR's content could not be checked.";
     public const string DigestApprovalComment = "**Auto-approved:** digest bump.";
     public const string AllowlistedApprovalComment = "**Auto-approved:** allowlisted.";
 
@@ -88,6 +94,8 @@ public static partial class TriageRules
     private static readonly string[] _trustedAssociations = ["OWNER", "MEMBER", "COLLABORATOR"];
 
     private static readonly string[] _blockingLabels = [NeedsReviewLabel, "agent/revert", "blocked"];
+
+    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason];
 
     private static readonly string[] _livePathLabels = [NeedsReviewLabel, "agent/auto-approved"];
 
@@ -257,6 +265,20 @@ public static partial class TriageRules
         }
 
         return new TriageDecision(TriageVerdict.NeedsReview, CiFailed, comment.ToString());
+    }
+
+    public static TriageDecision PrecheckDecision(PrecheckVerdict verdict) => verdict switch
+    {
+        PrecheckVerdict.DiffNotVersionOnly => new TriageDecision(TriageVerdict.NeedsReview, PrecheckDiff, PrecheckDiffComment),
+        PrecheckVerdict.BodyFlagged => new TriageDecision(TriageVerdict.NeedsReview, PrecheckFlagged, PrecheckFlaggedComment),
+        PrecheckVerdict.BodyUnchecked => new TriageDecision(TriageVerdict.NeedsReview, PrecheckUnchecked, PrecheckUncheckedComment),
+        _ => throw new ArgumentOutOfRangeException(nameof(verdict), verdict, "A passed precheck has no decision."),
+    };
+
+    public static bool Climbs(TriageDecision decision)
+    {
+        ArgumentNullException.ThrowIfNull(decision);
+        return decision.Verdict == TriageVerdict.NeedsReview && !_neverClimb.Contains(decision.Reason, StringComparer.Ordinal);
     }
 
     public static TriageDecision CiTimeoutDecision() => new(TriageVerdict.NeedsReview, CiTimeout, CiTimeoutComment);

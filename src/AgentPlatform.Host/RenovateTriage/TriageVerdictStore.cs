@@ -31,11 +31,12 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
         return new TriageDecision(row.Verdict, reason, row.Comment);
     }
 
-    public async Task MarkAppliedAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
+    // Only the row of the verdict that was written counts: a flag written over an unapplied approval leaves that approval unapplied.
+    public async Task MarkAppliedAsync(string repo, int prNumber, string headSha, TriageVerdict verdict, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.TriageVerdicts
-            .SingleOrDefaultAsync(v => v.Repo == repo && v.PrNumber == prNumber && v.HeadSha == headSha && v.Mode == TriageMode.Live && v.AppliedAt == null, cancellationToken)
+            .SingleOrDefaultAsync(v => v.Repo == repo && v.PrNumber == prNumber && v.HeadSha == headSha && v.Mode == TriageMode.Live && v.Verdict == verdict && v.AppliedAt == null, cancellationToken)
             .ConfigureAwait(false);
         if (row is null)
         {

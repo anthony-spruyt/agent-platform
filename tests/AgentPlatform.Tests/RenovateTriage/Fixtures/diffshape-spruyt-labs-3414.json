@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "90aa830c684df6c88c0279d7398b88413e319c81",
+  "files": [
+    {
+      "path": "cluster/apps/traefik/traefik/app/release.yaml",
+      "status": "modified",
+      "patch": "@@ -8,7 +8,7 @@ spec:\n   chart:\n     spec:\n       chart: traefik\n-      version: 41.6.0\n+      version: 41.6.1\n       sourceRef:\n         kind: HelmRepository\n         name: traefik-charts"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "90aa830c684df6c88c0279d7398b88413e319c81",
+      "message": "chore(deps): update helm release traefik to v41.6.1\n\n| datasource | package | from   | to     |\n| ---------- | ------- | ------ | ------ |\n| helm       | traefik | 41.6.0 | 41.6.1 |"
+    }
+  ]
+}

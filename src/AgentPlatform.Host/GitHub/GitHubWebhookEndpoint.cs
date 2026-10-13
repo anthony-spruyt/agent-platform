@@ -59,7 +59,7 @@ public static partial class GitHubWebhookEndpoint
         IReadOnlyList<CheckSuiteCompletedSignal> signals;
         try
         {
-            signals = CheckSuiteEvent.ToSignals(body, validDelivery ? loggedDelivery : string.Empty);
+            signals = CheckSuiteEvent.ToSignals(body, validDelivery ? loggedDelivery : string.Empty, GitHubAppOptions.RequireAppId(options.Value.AppId));
         }
         catch (JsonException)
         {

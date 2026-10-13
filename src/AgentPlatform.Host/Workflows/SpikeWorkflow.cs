@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using Temporalio.Common;
 using Temporalio.Exceptions;
@@ -48,6 +49,8 @@ public partial class SpikeWorkflow
 
     private const int MaxInvalidSubmits = 2;
 
+    private const string ContextPatch = "spike-triage-context-v1";
+
     private static readonly ActivityOptions _loadPromptOptions = new()
     {
         StartToCloseTimeout = TimeSpan.FromSeconds(30),
@@ -65,6 +68,10 @@ public partial class SpikeWorkflow
     private bool _submitted;
     private int _invalidSubmits;
     private string? _triageHeadSha;
+    private TriageContext? _context;
+
+    [WorkflowQuery(TriageContextQueries.GetTriageContext)]
+    public TriageContext? GetTriageContext() => _context;
 
     [WorkflowUpdate(AgentResultUpdates.SubmitResult)]
     public Task SubmitResultAsync(SubmitResultPayload payload)
@@ -134,6 +141,11 @@ public partial class SpikeWorkflow
 
         try
         {
+            if (_triageHeadSha is not null && repo is not null && Workflow.Patched(ContextPatch))
+            {
+                await BuildContextAsync(repo, input.PullRequest);
+            }
+
             var agentStarted = Workflow.UtcNow;
             var agent = await RunAgentPodAsync(input, prompt, repo);
             await DeletePodAsync();
@@ -180,6 +192,21 @@ public partial class SpikeWorkflow
             }
 
             throw;
+        }
+    }
+
+    private async Task BuildContextAsync(AgentRepoContext repo, int pullRequest)
+    {
+        try
+        {
+            var built = await Workflow.ExecuteActivityAsync(
+                (RenovateTriageCodeActivities activities) => activities.BuildContextAsync(new BuildContextInput(repo.Repo, pullRequest, repo.HeadSha, null)),
+                RenovateTriageWorkflow.ScanOptions);
+            _context = built.Context;
+        }
+        catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
+        {
+            LogContextFailed(Workflow.Logger, ex);
         }
     }
 
@@ -276,6 +303,9 @@ public partial class SpikeWorkflow
             LogPodCleanupFailed(Workflow.Logger, ex);
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not build the triage context; the run starts without it.")]
+    private static partial void LogContextFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not delete the agent pod after the run.")]
     private static partial void LogPodCleanupFailed(ILogger logger, Exception exception);

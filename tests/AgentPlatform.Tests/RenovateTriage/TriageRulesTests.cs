@@ -899,4 +899,56 @@ public class TriageRulesTests
             Assert.Equal(allowed, TriageRules.IsAllowedOwner(repo));
         }
     }
+
+    public class PrecheckAndClimbing
+    {
+        [Theory]
+        [InlineData(PrecheckVerdict.DiffNotVersionOnly, TriageRules.PrecheckDiff)]
+        [InlineData(PrecheckVerdict.BodyFlagged, TriageRules.PrecheckFlagged)]
+        [InlineData(PrecheckVerdict.BodyUnchecked, TriageRules.PrecheckUnchecked)]
+        public void AFailedPrecheck_IsANeverClimbingNeedsReviewWithANeutralComment(PrecheckVerdict verdict, string reason)
+        {
+            var decision = TriageRules.PrecheckDecision(verdict);
+
+            Assert.Equal(TriageVerdict.NeedsReview, decision.Verdict);
+            Assert.Equal(reason, decision.Reason);
+            Assert.StartsWith("**Needs review:**", decision.Comment, StringComparison.Ordinal);
+            Assert.False(TriageRules.Climbs(decision));
+        }
+
+        [Fact]
+        public void APassedPrecheck_HasNoDecision()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() => TriageRules.PrecheckDecision(PrecheckVerdict.Passed));
+        }
+
+        [Theory]
+        [InlineData(TriageRules.CiFailed)]
+        [InlineData(TriageRules.CiTimeout)]
+        [InlineData(TriageRules.Breaking)]
+        [InlineData(TriageRules.MajorBump)]
+        [InlineData(TriageRules.CalverBump)]
+        [InlineData(TriageRules.HighRisk)]
+        [InlineData(TriageRules.JevError)]
+        [InlineData(TriageRules.NoChangelog)]
+        [InlineData(TriageRules.OtherBump)]
+        public void EveryOtherNeedsReviewReason_Climbs(string reason)
+        {
+            Assert.True(TriageRules.Climbs(new TriageDecision(TriageVerdict.NeedsReview, reason, "c")));
+        }
+
+        [Theory]
+        [InlineData(TriageRules.NonRenovateCommit)]
+        [InlineData(MigrationDetector.Reason)]
+        public void TheNeverClimbReasons_DoNotClimb(string reason)
+        {
+            Assert.False(TriageRules.Climbs(new TriageDecision(TriageVerdict.NeedsReview, reason, "c")));
+        }
+
+        [Fact]
+        public void AnApproval_DoesNotClimb()
+        {
+            Assert.False(TriageRules.Climbs(new TriageDecision(TriageVerdict.Approve, TriageRules.Allowlisted, "c")));
+        }
+    }
 }

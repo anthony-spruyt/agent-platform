@@ -41,13 +41,17 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public Action? OnPullRequestRead { get; set; }
 
-    public static GitHubCommit RenovateCommit(string sha = "c0ffee0") =>
-        new(sha, "renovate[bot]", TriageRules.RenovateUserId, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true);
+    public Func<Task>? OnCheckRunsRead { get; set; }
+
+    public const string CommitMessage = "chore(deps): update dep to v1.0.1\n\n| datasource | package | from | to |\n| --- | --- | --- | --- |\n| npm | dep | 1.0.0 | 1.0.1 |";
+
+    public static GitHubCommit RenovateCommit(string sha = Sha, string message = CommitMessage) =>
+        new(sha, "renovate[bot]", TriageRules.RenovateUserId, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true, message);
 
     public const string Body = "This PR contains the following updates:\n\n| Package | Change |\n|---|---|\n| [dep](https://example.test/dep) | `1.0.0` -> `1.0.1` |\n\n---\n\n### Release Notes\n";
 
     public static GitHubPullRequest Renovate(string branch = "renovate/czkawka", string sha = Sha, string? body = null) =>
-        new(7, "Update dep", body ?? Body, "open", false, false, "clean", "renovate[bot]", TriageRules.RenovateUserId, branch, sha, "anthony-spruyt/widgets", "anthony-spruyt/widgets", "main", ["dependencies"], 1);
+        new(7, "Update dep", body ?? Body, "open", false, false, "clean", "renovate[bot]", TriageRules.RenovateUserId, branch, sha, "anthony-spruyt/widgets", "anthony-spruyt/widgets", "main", ["dependencies"], 1, 1);
 
     public Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken)
     {
@@ -56,10 +60,15 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         return Result(PullRequest);
     }
 
-    public Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
     {
         Calls.Add($"checks:{sha}");
-        return Result<IReadOnlyList<GitHubCheckRun>>([.. Checks]);
+        if (OnCheckRunsRead is { } hook)
+        {
+            await hook().ConfigureAwait(false);
+        }
+
+        return await Result<IReadOnlyList<GitHubCheckRun>>([.. Checks]).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<GitHubCheckSuite>> ListCheckSuitesAsync(string repo, string sha, CancellationToken cancellationToken)
@@ -182,6 +191,91 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         return Task.CompletedTask;
     }
 
+    public List<(long Id, GitHubCheckRunWrite Run)> StoredCheckRuns { get; } = [];
+
+    public List<string> CheckRunWrites { get; } = [];
+
+    public Task<long> CreateCheckRunAsync(string repo, GitHubCheckRunWrite run, CancellationToken cancellationToken)
+    {
+        if (WriteFailure is not null)
+        {
+            return Task.FromException<long>(WriteFailure);
+        }
+
+        var id = 700 + StoredCheckRuns.Count;
+        CheckRunWrites.Add($"check-create:{id}:{run.Status}");
+        StoredCheckRuns.Add((id, run));
+        return Task.FromResult((long)id);
+    }
+
+    public Task UpdateCheckRunAsync(string repo, long checkRunId, GitHubCheckRunWrite run, CancellationToken cancellationToken)
+    {
+        if (WriteFailure is not null)
+        {
+            return Task.FromException(WriteFailure);
+        }
+
+        CheckRunWrites.Add($"check-update:{checkRunId}:{run.Status}");
+        var index = StoredCheckRuns.FindIndex(c => c.Id == checkRunId);
+        StoredCheckRuns[index] = (checkRunId, StoredCheckRuns[index].Run with { Status = run.Status, Conclusion = run.Conclusion, Title = run.Title, Summary = run.Summary });
+        return Task.CompletedTask;
+    }
+
+    public Task<GitHubCheckRun?> FindCheckRunAsync(string repo, string sha, string name, string externalId, CancellationToken cancellationToken)
+    {
+        Calls.Add($"check-find:{sha}");
+        var found = StoredCheckRuns.Where(c => c.Run.HeadSha == sha && c.Run.Name == name && c.Run.ExternalId == externalId).Select(c => (GitHubCheckRun?)new GitHubCheckRun(c.Id, c.Run.Name, c.Run.Status, c.Run.Conclusion, null, null, c.Run.ExternalId)).FirstOrDefault();
+        return Failure is null ? Task.FromResult(found) : Task.FromException<GitHubCheckRun?>(Failure);
+    }
+
+    public Dictionary<string, GitHubRelease> Releases { get; } = [];
+
+    public Dictionary<string, string> FileContents { get; } = [];
+
+    public Dictionary<long, GitHubJob> Jobs { get; } = [];
+
+    public Dictionary<long, string> JobLogs { get; } = [];
+
+    public List<long> Reruns { get; } = [];
+
+    public Task<GitHubRelease?> GetReleaseByTagAsync(string repo, string sourceRepo, string tag, CancellationToken cancellationToken)
+    {
+        Calls.Add($"release:{sourceRepo}:{tag}");
+        return Result(Releases.GetValueOrDefault($"{sourceRepo}:{tag}"));
+    }
+
+    public Task<string?> GetFileContentAsync(string repo, string sourceRepo, string path, string gitRef, int maxChars, CancellationToken cancellationToken)
+    {
+        Calls.Add($"file:{sourceRepo}:{path}@{gitRef}");
+        var text = FileContents.GetValueOrDefault($"{sourceRepo}:{path}@{gitRef}");
+        return Result(text is null ? null : text[..Math.Min(text.Length, maxChars)]);
+    }
+
+    public Task<GitHubJob?> GetJobAsync(string repo, long jobId, CancellationToken cancellationToken)
+    {
+        Calls.Add($"job:{jobId}");
+        return Result(Jobs.GetValueOrDefault(jobId));
+    }
+
+    public Task<string?> GetJobLogTailAsync(string repo, long jobId, int maxChars, CancellationToken cancellationToken)
+    {
+        Calls.Add($"log:{jobId}");
+        var log = JobLogs.GetValueOrDefault(jobId);
+        return Result(log is null ? null : log[Math.Max(0, log.Length - maxChars)..]);
+    }
+
+    public Task RerunFailedJobsAsync(string repo, long runId, CancellationToken cancellationToken)
+    {
+        if (WriteFailure is not null)
+        {
+            return Task.FromException(WriteFailure);
+        }
+
+        Writes.Add($"rerun:{runId}");
+        Reruns.Add(runId);
+        return Task.CompletedTask;
+    }
+
     private Task<T> Result<T>(T value) => Failure is null ? Task.FromResult(value) : Task.FromException<T>(Failure);
 }
 
@@ -196,6 +290,23 @@ internal sealed class FakeJev : IJevClient
     public List<string?> Bodies { get; } = [];
 
     public List<string?> Diffs { get; } = [];
+
+    public CiFailureKind CiKind { get; set; } = CiFailureKind.Unsure;
+
+    public List<string> CiLogs { get; } = [];
+
+    public Func<Task>? OnClassifyCi { get; set; }
+
+    public async Task<CiFailureKind> ClassifyCiAsync(string ciLogs, CancellationToken cancellationToken)
+    {
+        CiLogs.Add(ciLogs);
+        if (OnClassifyCi is { } hook)
+        {
+            await hook().ConfigureAwait(false);
+        }
+
+        return Failure is null ? CiKind : throw Failure;
+    }
 
     public Task<JevAnswers> AskAsync(string? prBody, string? prDiff, CancellationToken cancellationToken)
     {

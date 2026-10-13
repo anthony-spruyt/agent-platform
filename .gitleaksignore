@@ -1,0 +1,2 @@
+# go.sum hashes in a recorded Renovate diff; DiffShape skips modified lockfiles by name.
+tests/AgentPlatform.Tests/RenovateTriage/Fixtures/diffshape-spruyt-labs-3502.json:generic-api-key:13
