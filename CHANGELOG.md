@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.5.0...v1.6.0) (2026-10-13)
+
+
+### Features
+
+* **triage:** write agent/needs-human-review and read both names ([#44](https://github.com/anthony-spruyt/agent-platform/issues/44)) ([f446a3e](https://github.com/anthony-spruyt/agent-platform/commit/f446a3e3a4a6a676f838d21a34ee076fd2aa56c2))
+
 ## [1.5.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.4.1...v1.5.0) (2026-10-12)
 
 
