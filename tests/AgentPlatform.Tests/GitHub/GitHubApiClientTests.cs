@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Tests.Support;
+using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Tests.GitHub;
 
@@ -27,7 +28,7 @@ public class GitHubApiClientTests
         var handler = new StubHttpHandler(respond);
         var tokens = new RecordingTokens();
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        return (new GitHubApiClient(http, tokens), handler, tokens);
+        return (new GitHubApiClient(http, tokens, Options.Create(new GitHubAppOptions { AppId = "3233443" })), handler, tokens);
     }
 
     private static string CheckRunsPage(int from, int count, int total) =>
@@ -63,7 +64,7 @@ public class GitHubApiClientTests
              "mergeable_state":"clean","user":{"login":"renovate[bot]","id":29139614},
              "head":{"ref":"renovate/dep","sha":"abc","repo":{"full_name":"octo/widgets"}},
              "base":{"ref":"main","repo":{"full_name":"octo/widgets-base"}},
-             "commits":3,"labels":[{"name":"dependencies"},{"name":"blocked"}]}
+             "commits":3,"changed_files":12,"labels":[{"name":"dependencies"},{"name":"blocked"}]}
             """));
 
         var pr = await client.GetPullRequestAsync("octo/widgets", 7, Ct);
@@ -84,6 +85,7 @@ public class GitHubApiClientTests
         Assert.Equal("main", pr.BaseRef);
         Assert.Equal(["dependencies", "blocked"], pr.Labels);
         Assert.Equal(3, pr.Commits);
+        Assert.Equal(12, pr.ChangedFiles);
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal("/repos/octo/widgets/pulls/7", request.Uri.AbsolutePath);
@@ -107,6 +109,7 @@ public class GitHubApiClientTests
         Assert.Null(pr.MergeableState);
         Assert.Empty(pr.Labels);
         Assert.Equal(0, pr.Commits);
+        Assert.Equal(0, pr.ChangedFiles);
     }
 
     [Fact]
@@ -235,6 +238,7 @@ public class GitHubApiClientTests
                 committer = new { login = "web-flow", id = 19864447 },
                 commit = new
                 {
+                    message = $"chore(deps): update dep {i}\n\n| datasource | package | from | to |",
                     author = new { email = "29139614+renovate[bot]@users.noreply.github.com" },
                     committer = new { email = "noreply@github.com" },
                     verification = new { verified = i != 3, reason = "valid" },
@@ -244,7 +248,7 @@ public class GitHubApiClientTests
         var commits = await client.ListCommitsAsync("octo/widgets", 7, Ct);
 
         Assert.Equal(130, commits.Count);
-        Assert.Equal(new GitHubCommit("sha-1", "renovate[bot]", 29139614, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true), commits[0]);
+        Assert.Equal(new GitHubCommit("sha-1", "renovate[bot]", 29139614, "29139614+renovate[bot]@users.noreply.github.com", "noreply@github.com", true, "chore(deps): update dep 1\n\n| datasource | package | from | to |"), commits[0]);
         Assert.Null(commits[1].AuthorLogin);
         Assert.Null(commits[1].AuthorId);
         Assert.False(commits[2].Verified);
@@ -263,6 +267,7 @@ public class GitHubApiClientTests
         Assert.Null(commit.AuthorEmail);
         Assert.Null(commit.CommitterEmail);
         Assert.False(commit.Verified);
+        Assert.Equal(string.Empty, commit.Message);
     }
 
     [Fact]
@@ -277,7 +282,8 @@ public class GitHubApiClientTests
 
         Assert.Equal(101, files.Count);
         Assert.Equal(new GitHubPullRequestFile("src/file-1.txt", "@@ -1 +1 @@\n-old 1\n+new 1"), files[0]);
-        Assert.Equal(new GitHubPullRequestFile("image.png", null), files[1]);
+        Assert.Equal(new GitHubPullRequestFile("image.png", null, "added"), files[1]);
+        Assert.Equal("modified", files[0].Status);
         Assert.Equal(2, handler.Requests.Count);
         Assert.All(handler.Requests, r => Assert.Equal("/repos/octo/widgets/pulls/7/files", r.Uri.AbsolutePath));
         Assert.Equal(new Dictionary<string, string> { ["pull_requests"] = "read" }, tokens.Requests[0].Permissions);

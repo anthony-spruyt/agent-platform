@@ -1,0 +1,27 @@
+{
+  "ci_failure": {
+    "type": "choice",
+    "instructions": {
+      "question": "Did this CI run fail because of a transient problem rather than a defect in the change?",
+      "focus": "Read the tails of the failing job logs in `ci_logs` (each job is introduced by a line starting with `### `). Decide whether re-running the same jobs would plausibly pass without any code change.",
+      "flaky_signals": [
+        "Network or registry timeouts, connection resets, DNS failures, rate limits (HTTP 429, 502, 503, 504) while downloading packages, images or actions",
+        "The runner was lost, cancelled, out of disk or out of memory, or the job hit its time limit while the steps before it were healthy",
+        "An intermittent test failure that names no assertion about the changed dependency, such as a timing race or a port already in use",
+        "A package or image that could not be fetched from the upstream service"
+      ],
+      "real_signals": [
+        "A compile, type, lint or formatting error",
+        "A test assertion that fails with a concrete expected and actual value",
+        "A dependency resolution conflict, a missing or removed package version or a failing checksum",
+        "An error that names the updated dependency or its API",
+        "The same failure is plausible on every run"
+      ]
+    },
+    "criteria": {
+      "flaky": "The logs show a transient infrastructure or network problem, and re-running the failed jobs would plausibly pass.",
+      "real": "The logs show a deterministic failure in the code, the tests, the build or the dependency itself.",
+      "unsure": "The logs are empty, cut off before the failure, or do not make the cause clear."
+    }
+  }
+}

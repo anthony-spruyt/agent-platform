@@ -17,6 +17,7 @@ public class WebHealthTests : IClassFixture<WebApplicationFactory<Program>>
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
             builder.UseSetting("GitHub:WebhookSecret", GitHubPayloads.Secret);
+            builder.UseSetting("GitHub:AppId", "12345");
         });
 
     [Fact]

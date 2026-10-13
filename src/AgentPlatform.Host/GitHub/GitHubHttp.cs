@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 
 namespace AgentPlatform.Host.GitHub;
@@ -64,11 +65,79 @@ internal static class GitHubHttp
         }
     }
 
+    public static async Task<T?> SendOrNullAsync<T>(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
+        where T : class
+    {
+        using (request)
+        {
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            EnsureSuccess(response, operation);
+            try
+            {
+                return await response.Content.ReadFromJsonAsync<T>(GitHubJson.Options, cancellationToken).ConfigureAwait(false)
+                    ?? throw new GitHubApiException($"GitHub {operation} returned an empty body.", response.StatusCode);
+            }
+            catch (JsonException ex)
+            {
+                throw new GitHubApiException($"GitHub {operation} returned an unreadable body.", response.StatusCode, ex);
+            }
+        }
+    }
+
+    public static async Task<string?> ReadTextOrNullAsync(HttpClient client, HttpRequestMessage request, string operation, int maxChars, bool keepTail, CancellationToken cancellationToken)
+    {
+        using (request)
+        {
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+            {
+                return null;
+            }
+
+            EnsureSuccess(response, operation);
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            await using (stream.ConfigureAwait(false))
+            {
+                using var reader = new StreamReader(stream);
+                return await ReadBoundedAsync(reader, maxChars, keepTail, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
     private static void EnsureSuccess(HttpResponseMessage response, string operation)
     {
         if (!response.IsSuccessStatusCode)
         {
             throw new GitHubApiException($"GitHub {operation} failed with status {(int)response.StatusCode}.", response.StatusCode);
         }
+    }
+
+    private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxChars, bool keepTail, CancellationToken cancellationToken)
+    {
+        var text = new StringBuilder();
+        var buffer = new char[8192];
+        int read;
+        while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            text.Append(buffer, 0, read);
+            if (!keepTail && text.Length >= maxChars)
+            {
+                break;
+            }
+
+            if (keepTail && text.Length > 2 * maxChars)
+            {
+                text.Remove(0, text.Length - maxChars);
+            }
+        }
+
+        return keepTail
+            ? text.ToString(Math.Max(0, text.Length - maxChars), Math.Min(text.Length, maxChars))
+            : text.ToString(0, Math.Min(text.Length, maxChars));
     }
 }

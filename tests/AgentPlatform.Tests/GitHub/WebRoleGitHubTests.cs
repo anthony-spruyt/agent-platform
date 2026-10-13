@@ -8,7 +8,7 @@ namespace AgentPlatform.Tests.GitHub;
 
 public class WebRoleGitHubTests
 {
-    private static WebApplicationFactory<Program> Factory(string? secret, string? privateKey = null) =>
+    private static WebApplicationFactory<Program> Factory(string? secret, string? privateKey = null, string? appId = "123") =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("AgentPlatform:Role", "Web");
@@ -18,10 +18,14 @@ public class WebRoleGitHubTests
                 builder.UseSetting("GitHub:WebhookSecret", secret);
             }
 
+            if (appId is not null)
+            {
+                builder.UseSetting("GitHub:AppId", appId);
+            }
+
             if (privateKey is not null)
             {
                 builder.UseSetting("GitHub:PrivateKey", privateKey);
-                builder.UseSetting("GitHub:AppId", "123");
             }
         });
 
@@ -36,6 +40,21 @@ public class WebRoleGitHubTests
         var failure = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
 
         Assert.Contains("WebhookSecret", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Iv1.abc123")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    public void WithoutANumericAppId_TheWebRoleFailsAtStartup(string? appId)
+    {
+        using var factory = Factory(GitHubPayloads.Secret, appId: appId);
+
+        var failure = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+
+        Assert.Contains("GitHub:AppId", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -29,6 +29,7 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", "0123456789abcdef0123456789abcdef");
             builder.UseSetting("GitHub:WebhookSecret", GitHubPayloads.Secret);
+            builder.UseSetting("GitHub:AppId", "3233443");
             builder.UseSetting("Logging:LogLevel:Default", "Debug");
             builder.ConfigureTestServices(services =>
             {
@@ -126,6 +127,15 @@ public sealed class GitHubWebhookEndpointTests : IAsyncDisposable
         Assert.Equal(GitHubPayloads.Repo, signal.Repo);
         Assert.Equal(7, signal.PrNumber);
         Assert.Equal(delivery, signal.DeliveryId);
+    }
+
+    [Fact]
+    public async Task ACheckSuiteFromOurOwnApp_IsDroppedWith200()
+    {
+        using var response = await PostSignedAsync(GitHubPayloads.CheckSuite(appSlug: "skynet-rw", appId: 3233443), "check_suite");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(_signaler.Signals);
     }
 
     [Theory]

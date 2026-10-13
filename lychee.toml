@@ -1,0 +1,2 @@
+# The torch index root answers 403 to link checkers; it appears as context in a recorded diff.
+exclude = ['^https://download\.pytorch\.org/']

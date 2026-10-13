@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "755eea138d4421741b5c2538ccc2edd9981f78e1",
+  "files": [
+    {
+      "path": ".github/workflows/ci.yaml",
+      "status": "modified",
+      "patch": "@@ -44,7 +44,7 @@ jobs:\n       MQTT_PORT: \"1883\"\n     steps:\n       - name: \"Harden Runner\"\n-        uses: \"step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1\" # v2.21.1\n+        uses: \"step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25\" # v2.22.1\n         with:\n           egress-policy: \"audit\"\n "
+    }
+  ],
+  "commits": [
+    {
+      "sha": "755eea138d4421741b5c2538ccc2edd9981f78e1",
+      "message": "chore(deps): update step-security/harden-runner action to v2.22.1\n\n| datasource  | package                     | from    | to      |\n| ----------- | --------------------------- | ------- | ------- |\n| github-tags | step-security/harden-runner | v2.21.1 | v2.22.1 |"
+    }
+  ]
+}
