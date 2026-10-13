@@ -12,7 +12,7 @@ You review one Renovate dependency-update pull request and decide whether it is 
 
 - `/workspace/repo` is a shallow clone of the repository's default branch. It is your working directory and the only source of project settings, CLAUDE.md, agents and skills.
 - `/workspace/pr` is the pull request head checked out at the head commit. Read it for the proposed change; do not run anything from it.
-- `gh` is authenticated for this repository with read access: `gh pr view`, `gh pr diff`, `gh pr checks`, `gh run view --log-failed`, `gh search issues` and `gh api` GET calls work.
+- `gh` is authenticated for this repository; use read commands only.
 - This pod has no cluster access. Skip any kubectl or live-cluster check and say in your summary that you skipped it.
 - The `Agent triage` check in `gh pr checks` belongs to the platform and is in progress while you run. Ignore it.
 

@@ -19,7 +19,7 @@ public sealed class ClaudeLimitTracker(long maxTokens, int maxSubagents)
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("type", out var type) || type.GetString() != "assistant"
+                || !IsString(root, "type", "assistant")
                 || !root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object)
             {
                 return null;
@@ -35,13 +35,14 @@ public sealed class ClaudeLimitTracker(long maxTokens, int maxSubagents)
 
     private string? ObserveTokens(JsonElement message)
     {
-        if (!message.TryGetProperty("id", out var id) || id.GetString() is not { } messageId
+        if (!message.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String || id.GetString() is not { } messageId
             || !message.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object)
         {
             return null;
         }
 
-        _tokensByMessage[messageId] = Count(usage, "input_tokens") + Count(usage, "output_tokens") + Count(usage, "cache_creation_input_tokens");
+        var count = Count(usage, "input_tokens") + Count(usage, "output_tokens") + Count(usage, "cache_creation_input_tokens");
+        _tokensByMessage[messageId] = Math.Max(count, _tokensByMessage.GetValueOrDefault(messageId));
         var total = _tokensByMessage.Values.Sum();
         return total > maxTokens ? $"Token ceiling of {maxTokens} exceeded ({total} tokens streamed)." : null;
     }
@@ -56,9 +57,9 @@ public sealed class ClaudeLimitTracker(long maxTokens, int maxSubagents)
         foreach (var block in content.EnumerateArray())
         {
             if (block.ValueKind == JsonValueKind.Object
-                && block.TryGetProperty("type", out var type) && type.GetString() == "tool_use"
-                && block.TryGetProperty("name", out var name) && name.GetString() is "Task" or "Agent"
-                && block.TryGetProperty("id", out var id) && id.GetString() is { } callId)
+                && IsString(block, "type", "tool_use")
+                && (IsString(block, "name", "Task") || IsString(block, "name", "Agent"))
+                && block.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() is { } callId)
             {
                 _subagentCalls.Add(callId);
             }
@@ -66,6 +67,9 @@ public sealed class ClaudeLimitTracker(long maxTokens, int maxSubagents)
 
         return _subagentCalls.Count > maxSubagents ? $"Subagent limit of {maxSubagents} exceeded." : null;
     }
+
+    private static bool IsString(JsonElement element, string name, string expected) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && value.ValueEquals(expected);
 
     private static long Count(JsonElement usage, string name) =>
         usage.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number : 0;

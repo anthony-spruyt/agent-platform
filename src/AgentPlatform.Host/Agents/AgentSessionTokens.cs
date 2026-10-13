@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -68,10 +69,26 @@ public sealed class AgentSessionTokens
         return true;
     }
 
-    private byte[] Sign(string workflowId, string runId, string step, int attempt, long expiry) =>
-        HMACSHA256.HashData(
-            _key,
-            Encoding.UTF8.GetBytes($"{Version}\n{workflowId}\n{runId}\n{step}\n{attempt.ToString(CultureInfo.InvariantCulture)}\n{expiry.ToString(CultureInfo.InvariantCulture)}"));
+    private byte[] Sign(string workflowId, string runId, string step, int attempt, long expiry)
+    {
+        using var message = new MemoryStream();
+        Write(message, Version);
+        Write(message, workflowId);
+        Write(message, runId);
+        Write(message, step);
+        Write(message, attempt.ToString(CultureInfo.InvariantCulture));
+        Write(message, expiry.ToString(CultureInfo.InvariantCulture));
+        return HMACSHA256.HashData(_key, message.ToArray());
+    }
+
+    private static void Write(MemoryStream message, string field)
+    {
+        var bytes = Encoding.UTF8.GetBytes(field);
+        Span<byte> length = stackalloc byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
+        message.Write(length);
+        message.Write(bytes);
+    }
 
     private static string Encode(string value) => Base64Url(Encoding.UTF8.GetBytes(value));
 

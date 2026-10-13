@@ -12,7 +12,8 @@ public sealed record ClaudeOutputSummary(
     bool UsageLimitReached,
     string? UsageLimitMessage,
     AgentRunUsage? Usage,
-    string? LimitBreach = null)
+    string? LimitBreach = null,
+    int SkippedLines = 0)
 {
     public bool IsTruncated =>
         !HasResultEvent
@@ -44,7 +45,8 @@ public static partial class ClaudeOutputAnalyzer
         ClaudeOutputSummary result = new(false, null, null, false, null, false, null, null);
         string? limitMessage = null;
 
-        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+        var lines = new BoundedLineReader(reader);
+        while (await lines.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
             observe?.Invoke(line);
             if (!TryParseEvent(line, out var document))
@@ -63,7 +65,7 @@ public static partial class ClaudeOutputAnalyzer
             }
         }
 
-        return result with { UsageLimitReached = limitMessage is not null, UsageLimitMessage = limitMessage };
+        return result with { UsageLimitReached = limitMessage is not null, UsageLimitMessage = limitMessage, SkippedLines = lines.SkippedLines };
     }
 
     private static bool TryParseEvent(string line, out JsonDocument document)

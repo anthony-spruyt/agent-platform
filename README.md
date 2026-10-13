@@ -58,9 +58,9 @@ In the cluster the run-data connection string uses `SSL Mode=VerifyFull` with `R
 1. The workflow runs the `RunAgentPod` activity on task queue `agent-pods`.
 2. The activity (`KubernetesAgentRunner`) creates a Claude Code pod in `AgentPods:Namespace` and then a per-run Secret owned by the pod. It watches the pod to completion, heartbeating. The workflow then runs the `DeleteAgentPod` activity as a local activity, also when the run activity fails, so cleanup never waits behind long runs on the `agent-pods` queue.
 3. The agent calls the `submit_result` tool of AgentGateway. The gateway checks the per-run session token and sends the result to the waiting workflow as a Temporal Update. The workflow accepts the first result and rejects any further one, so a repeated `submit_result` call gets an error.
-4. The workflow returns the submitted result with the run metadata (`Status`, `Result`, `Agent`, `Tier`, `WorkflowId`, `RunId`).
+4. The workflow returns the submitted result with the run metadata (`Status`, `Result`, `Agent`, `Tier`, `WorkflowId`, `RunId`, and `Triage` for a triage run).
 
-Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod and re-attaches instead of creating a second one. A re-attach also reuses the pod's per-run Secret and mints no new GitHub token; the Secret is only recreated when it is missing. The runner's Role needs `create`, `get` and `delete` on Secrets. A pod that vanished while the activity waited is reported
+Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod and re-attaches instead of creating a second one. A re-attach keeps the pod's per-run Secret and its deadline: it asks for the run's credentials again (the installation token provider returns its cached token), creates the Secret, and leaves an existing one untouched on `AlreadyExists`. The runner's Role needs only `create` and `delete` on Secrets. A pod that vanished while the activity waited is reported
 as `PodFailed` and is not recreated.
 
 Pod deletion has two owners. The activity deletes the pod when the workflow cancels it and when the run crosses the token or subagent limit. An attempt that ends any other way (heartbeat timeout, worker shutdown, a transient API failure) leaves the pod for the retry to re-attach to. The workflow's `DeleteAgentPod` removes the pod once the run ends or fails for good, with the pod's `activeDeadlineSeconds` and the cluster's pod cleanup as the
@@ -71,15 +71,15 @@ an empty result), `UsageLimit`, `LimitExceeded`, `PodFailed` or `TimedOut`. Any 
 
 ### Repository runs on the read tier
 
-A run with `repo`, `pullRequest` and `headSha` and a `promptName` runs a named prompt (embedded under `Prompts/`; `renovate-triage` today) against one pull request.
+A run with `repo`, `pullRequest` and `headSha` and a `promptName` runs a named prompt (embedded under `Prompts/`; `renovate-triage`) against one pull request.
 
-- The `GitHub:ReadApp` App mints an installation token for that one repository with `contents`, `pull_requests`, `checks`, `statuses`, `issues` and `actions` read. The provider's `expires_at` caps the pod deadline: `min(configured, expires_at - now - token grace - scheduling grace)`.
+- The `GitHub:ReadApp` App mints a read-only installation token for that one repository. The provider's `expires_at` caps the pod deadline: `min(configured, expires_at - now - token grace - scheduling grace)`.
 - The per-run Secret holds the MCP config, the prompt, the session token, the GitHub token and a git credential file. The pod gets the tokens only as environment variables (`AP_MCP_SESSION_KEY`, `AP_LITELLM_API_KEY`, `GH_TOKEN`) and reads the prompt from stdin; no token or prompt text appears in a command line.
 - The `git-clone` init container clones the default branch (depth 1) into `/workspace/repo` and fetches the pull request head by sha into `/workspace/pr`. It is the only container that mounts the git credential. The `plugins` init container runs `/usr/local/bin/claude-plugins-bootstrap /workspace/repo`, which installs the plugins into the shared `claude-home` volume.
 - The agent container runs in `/workspace/repo` with `--setting-sources user,project` and `--strict-mcp-config`, and mounts only the `mcp-config.json` key of the Secret. The MCP config references `${AP_MCP_SESSION_KEY}` and `${AP_LITELLM_API_KEY}`. Tool content is not exported to telemetry on the read tier.
 - The session token carries the step and attempt of the run. The workflow rejects a `submit_result` whose step or attempt is not the current one.
-- For `renovate-triage` the workflow validates the submitted result (verdict `SAFE`, `FIXABLE`, `BLOCKED` or `NEEDS_REVIEW`, the echoed `head_sha`, and field length caps). An invalid result comes back to the agent as a tool error, so it can resubmit.
-- The runner stops a run that crosses `AgentPods:MaxTokens` or `AgentPods:MaxSubagents`; Claude Code stops itself at `AgentPods:MaxTurns`.
+- For `renovate-triage` the workflow validates the submitted result (verdict `SAFE`, `FIXABLE`, `BLOCKED` or `NEEDS_REVIEW`, the echoed `head_sha`, and field length caps). An invalid result comes back to the agent as a tool error, so it can resubmit once; a second invalid result ends the run with status `InvalidResult`, and the workflow returns the parsed result, not the raw payload.
+- The runner reads pod logs line by line with a 1 MiB cap per line (longer lines are skipped and counted) and caps the final read in bytes. A failed or unpullable init container ends the run as `PodFailed`, naming the container. The runner stops a run that crosses `AgentPods:MaxTokens` or `AgentPods:MaxSubagents`; Claude Code stops itself at `AgentPods:MaxTurns`.
 
 Start a run with the Temporal CLI in the admin-tools pod, which the frontend already accepts connections from:
 

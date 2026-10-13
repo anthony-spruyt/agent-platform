@@ -208,4 +208,17 @@ public class ClaudeOutputAnalyzerTests
         Assert.False(summary.IsTruncated);
         Assert.True(summary.ResultText!.Length <= ClaudeOutputAnalyzer.MaxResultTextLength);
     }
+
+    [Fact]
+    public async Task ALineOverTheLineCap_IsSkippedAndCountedWhileTheRestIsRead()
+    {
+        var huge = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"" + new string('a', BoundedLineReader.MaxLineChars + 10) + "\"}]}}";
+        var observed = new List<string>();
+
+        var summary = await ClaudeOutputAnalyzer.AnalyzeAsync(new StringReader(string.Join('\n', Init, huge, Result())), observed.Add, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, summary.SkippedLines);
+        Assert.Equal("done", summary.ResultText);
+        Assert.All(observed, l => Assert.True(l.Length <= BoundedLineReader.MaxLineChars));
+    }
 }

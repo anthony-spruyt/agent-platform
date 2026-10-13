@@ -352,7 +352,7 @@ public class SpikeWorkflowTests
         var result = await InWorkersAsync(env, activities, activities, async () =>
         {
             var handle = await StartAsync(env);
-            await WaitUntilAsync(() => api.HasOperation($"GET secret {AgentPodNaming.PodName(handle.Id, handle.ResultRunId!, "spike")}"));
+            await WaitUntilAsync(() => api.HasOperation($"POST secret {AgentPodNaming.PodName(handle.Id, handle.ResultRunId!, "spike")}"));
             await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
             return await handle.GetResultAsync();
         });
@@ -644,6 +644,103 @@ public class SpikeWorkflowTests
             Triage("SAFE"));
 
         Assert.Equal(AgentResultUpdates.InvalidResultErrorType, Assert.IsType<ApplicationFailureException>(rejected.InnerException).ErrorType);
+    }
+
+    private static async Task<(SpikeResult Result, WorkflowUpdateFailedException[] Rejections)> SubmitAsync(
+        SpikeInput input,
+        InMemoryRunData data,
+        params SubmitResultPayload[] submits)
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var running = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var activities = new ScriptedActivities
+        {
+            OnRun = async _ =>
+            {
+                running.SetResult();
+                await release.Task;
+                return Succeeded();
+            },
+        };
+
+        return await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env, input);
+            await running.Task;
+            var rejections = new List<WorkflowUpdateFailedException>();
+            foreach (var submit in submits)
+            {
+                try
+                {
+                    await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(submit));
+                }
+                catch (WorkflowUpdateFailedException ex)
+                {
+                    rejections.Add(ex);
+                }
+            }
+
+            release.SetResult();
+            return (await handle.GetResultAsync(), rejections.ToArray());
+        }, data);
+    }
+
+    [Fact]
+    public async Task ATriageRun_FailsWhenTheSecondSubmitIsInvalidToo()
+    {
+        var data = InMemoryRunData.Create();
+
+        var (result, rejections) = await SubmitAsync(TriageInput(), data, Triage("MAYBE"), Triage("NOPE"), Triage("SAFE"));
+
+        Assert.Equal(SpikeStatus.InvalidResult, result.Status);
+        Assert.Null(result.Triage);
+        Assert.Equal(3, rejections.Length);
+        Assert.All(rejections, r => Assert.Equal(AgentResultUpdates.InvalidResultErrorType, Assert.IsType<ApplicationFailureException>(r.InnerException).ErrorType));
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(RunStatus.Failed, (await db.Runs.SingleAsync(Ct)).Status);
+        Assert.Equal("invalid_result", (await db.RunSteps.SingleAsync(Ct)).StopReason);
+    }
+
+    [Fact]
+    public async Task ATriageRun_SucceedsWhenTheResubmitIsValid_AndReturnsTheParsedResult()
+    {
+        var data = InMemoryRunData.Create();
+
+        var (result, rejections) = await SubmitAsync(TriageInput(), data, Triage("MAYBE"), Triage("SAFE"));
+
+        Assert.Equal(SpikeStatus.Succeeded, result.Status);
+        Assert.Single(rejections);
+        Assert.Equal("SAFE", result.Triage!.Verdict);
+        Assert.Equal(Sha, result.Triage.HeadSha);
+        Assert.Null(result.Result);
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var submitted = JsonDocument.Parse((await db.RunSteps.SingleAsync(Ct)).Output!).RootElement.GetProperty("submitted");
+        Assert.Equal("SAFE", submitted.GetProperty("verdict").GetString());
+    }
+
+    [Theory]
+    [InlineData("octo", Sha)]
+    [InlineData("octo/widgets/extra", Sha)]
+    [InlineData("octo/wid gets", Sha)]
+    [InlineData("octo/widgets", "abc123")]
+    [InlineData("octo/widgets", "0123456789ABCDEF0123456789abcdef01234567")]
+    [InlineData("octo/widgets", "0123456789abcdef0123456789abcdef0123456z")]
+    [InlineData("octo/widgets", "")]
+    public async Task ARunWithAMalformedRepoOrHeadSha_FailsBeforeStartingAPod(string repo, string headSha)
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities();
+
+        await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env, TriageInput(repo, headSha));
+            var failed = await Assert.ThrowsAsync<WorkflowFailedException>(() => handle.GetResultAsync());
+            Assert.Equal(SpikeWorkflow.InvalidInputErrorType, Assert.IsType<ApplicationFailureException>(failed.InnerException).ErrorType);
+            return 0;
+        });
+
+        Assert.Empty(activities.Inputs);
     }
 
     [Fact]

@@ -65,6 +65,21 @@ public static class WorkerServiceCollectionExtensions
             throw new InvalidOperationException("AgentPods:MaxConcurrentActivities must be at least 1.");
         }
 
+        if (pods.MaxTurns < 1)
+        {
+            throw new InvalidOperationException("AgentPods:MaxTurns must be at least 1.");
+        }
+
+        if (pods.MaxTokens < 1)
+        {
+            throw new InvalidOperationException("AgentPods:MaxTokens must be at least 1.");
+        }
+
+        if (pods.MaxSubagents < 1)
+        {
+            throw new InvalidOperationException("AgentPods:MaxSubagents must be at least 1.");
+        }
+
         if (pods.SchedulingGraceSeconds is < 0 or > AgentRunTimeouts.SchedulingGraceSeconds)
         {
             throw new InvalidOperationException($"AgentPods:SchedulingGraceSeconds must be between 0 and {AgentRunTimeouts.SchedulingGraceSeconds}.");

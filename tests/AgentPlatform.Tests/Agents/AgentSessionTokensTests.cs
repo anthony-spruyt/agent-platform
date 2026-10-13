@@ -158,4 +158,18 @@ public class AgentSessionTokensTests
     {
         Assert.Throws<ArgumentException>(() => new AgentSessionTokens(key));
     }
+
+    [Fact]
+    public void TryValidate_RejectsAFieldBoundaryShiftedAcrossANewline()
+    {
+        var tokens = At(Now);
+        var original = tokens.Issue("a", "b\nc", "claude", 1, Expiry).Split('.');
+
+        var shifted = string.Join('.', original[0], B64("a\nb"), B64("c"), original[3], original[4], original[5], original[6]);
+
+        Assert.False(tokens.TryValidate(shifted, out _));
+    }
+
+    private static string B64(string value) =>
+        Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(value)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }

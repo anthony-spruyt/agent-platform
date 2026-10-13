@@ -15,6 +15,7 @@ public sealed partial class KubernetesAgentRunner(
     ILogger<KubernetesAgentRunner> logger) : IAgentRunner
 {
     private const int WatchTimeoutSeconds = 300;
+    private const int SummaryLogLimitBytes = 64 * 1024 * 1024;
     private static readonly TimeSpan _configErrorGrace = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan _watchRetryDelay = TimeSpan.FromSeconds(2);
 
@@ -168,11 +169,6 @@ public sealed partial class KubernetesAgentRunner(
         CancellationToken cancellationToken)
     {
         var name = pod.Metadata.Name;
-        if (!replaceExisting && await SecretExistsAsync(name, cancellationToken).ConfigureAwait(false))
-        {
-            return;
-        }
-
         contributions ??= await ContributeAsync(request, cancellationToken).ConfigureAwait(false);
         var data = new Dictionary<string, string>(podSpecs.BuildStaticSecretData(request))
         {
@@ -207,25 +203,13 @@ public sealed partial class KubernetesAgentRunner(
         {
             if (!replaceExisting)
             {
+                LogSecretKept(logger, name);
                 return;
             }
 
             LogSecretReplaced(logger, name);
             await DeleteSecretAsync(name, cancellationToken).ConfigureAwait(false);
             await kubernetes.CoreV1.CreateNamespacedSecretAsync(secret, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async Task<bool> SecretExistsAsync(string name, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await kubernetes.CoreV1.ReadNamespacedSecretAsync(name, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return true;
-        }
-        catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
-        {
-            return false;
         }
     }
 
@@ -320,10 +304,15 @@ public sealed partial class KubernetesAgentRunner(
             return true;
         }
 
+        stuckReason = InitContainerFailure(pod);
+        if (stuckReason is not null)
+        {
+            return true;
+        }
+
         var waiting = pod.Status?.ContainerStatuses?.Select(s => s.State?.Waiting?.Reason).FirstOrDefault(r => r is not null);
-        var age = time.GetUtcNow() - new DateTimeOffset(pod.Metadata.CreationTimestamp ?? time.GetUtcNow().UtcDateTime);
         if (waiting is "ImagePullBackOff" or "InvalidImageName"
-            || (waiting is "CreateContainerConfigError" && age > _configErrorGrace))
+            || (waiting is "CreateContainerConfigError" && PastConfigErrorGrace(pod)))
         {
             stuckReason = waiting;
             return true;
@@ -332,10 +321,44 @@ public sealed partial class KubernetesAgentRunner(
         return false;
     }
 
+    private bool PastConfigErrorGrace(V1Pod pod) =>
+        time.GetUtcNow() - new DateTimeOffset(pod.Metadata.CreationTimestamp ?? time.GetUtcNow().UtcDateTime) > _configErrorGrace;
+
+    private string? InitContainerFailure(V1Pod pod)
+    {
+        foreach (var status in pod.Status?.InitContainerStatuses ?? [])
+        {
+            if (status.State?.Terminated is { ExitCode: not 0 } terminated)
+            {
+                return $"init container {status.Name} exited with code {terminated.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            }
+
+            if (status.State?.Waiting?.Reason is { } reason
+                && (reason is "ErrImagePull" or "ImagePullBackOff" or "InvalidImageName"
+                    || (reason == "CreateContainerConfigError" && PastConfigErrorGrace(pod))))
+            {
+                return $"init container {status.Name} is waiting with {reason}";
+            }
+        }
+
+        return null;
+    }
+
     private async Task<AgentRunResult> InterpretAsync(V1Pod pod, CancellationToken cancellationToken)
     {
         var name = pod.Metadata.Name;
         var exitCode = pod.Status?.ContainerStatuses?.FirstOrDefault()?.State?.Terminated?.ExitCode;
+
+        if (pod.Status?.Reason == "DeadlineExceeded")
+        {
+            return new AgentRunResult(AgentRunOutcome.TimedOut, name, exitCode, null, "The pod hit its activeDeadlineSeconds.", null);
+        }
+
+        if (InitContainerFailure(pod) is { } initFailure)
+        {
+            return new AgentRunResult(AgentRunOutcome.PodFailed, name, exitCode, null, $"Pod stuck: {initFailure}", null);
+        }
+
         var summary = await ReadSummaryAsync(name, cancellationToken).ConfigureAwait(false);
 
         if (summary.UsageLimitReached)
@@ -346,11 +369,6 @@ public sealed partial class KubernetesAgentRunner(
         if (summary.LimitBreach is not null)
         {
             return Result(AgentRunOutcome.LimitExceeded, summary.LimitBreach);
-        }
-
-        if (pod.Status?.Reason == "DeadlineExceeded")
-        {
-            return Result(AgentRunOutcome.TimedOut, "The pod hit its activeDeadlineSeconds.");
         }
 
         if (pod.Status?.Phase == "Failed" || exitCode is not (null or 0))
@@ -368,6 +386,19 @@ public sealed partial class KubernetesAgentRunner(
 
     private async Task<string?> MonitorLimitsAsync(string name, CancellationToken cancellationToken)
     {
+        try
+        {
+            return await FollowLimitsAsync(name, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogMonitorFaulted(logger, name, ex);
+            return null;
+        }
+    }
+
+    private async Task<string?> FollowLimitsAsync(string name, CancellationToken cancellationToken)
+    {
         var tracker = new ClaudeLimitTracker(options.MaxTokens, options.MaxSubagents);
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -381,13 +412,21 @@ public sealed partial class KubernetesAgentRunner(
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 await using (stream.ConfigureAwait(false))
                 {
-                    using var reader = new StreamReader(stream);
-                    while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+                    using var streamReader = new StreamReader(stream);
+                    var lines = new BoundedLineReader(streamReader);
+                    try
                     {
-                        if (tracker.Observe(line) is { } breach)
+                        while (await lines.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
                         {
-                            return breach;
+                            if (tracker.Observe(line) is { } breach)
+                            {
+                                return breach;
+                            }
                         }
+                    }
+                    finally
+                    {
+                        LogSkippedLines(logger, name, lines.SkippedLines);
                     }
                 }
             }
@@ -419,6 +458,7 @@ public sealed partial class KubernetesAgentRunner(
             name,
             options.Namespace,
             container: AgentPodSpecBuilder.AgentContainerName,
+            limitBytes: SummaryLogLimitBytes,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         await using (stream.ConfigureAwait(false))
         {
@@ -426,7 +466,16 @@ public sealed partial class KubernetesAgentRunner(
             var tracker = new ClaudeLimitTracker(options.MaxTokens, options.MaxSubagents);
             string? breach = null;
             var summary = await ClaudeOutputAnalyzer.AnalyzeAsync(reader, line => breach ??= tracker.Observe(line), cancellationToken).ConfigureAwait(false);
+            LogSkippedLines(logger, name, summary.SkippedLines);
             return summary with { LimitBreach = breach };
+        }
+    }
+
+    private static void LogSkippedLines(ILogger logger, string podName, int skippedLines)
+    {
+        if (skippedLines > 0)
+        {
+            LogSkippedLinesCore(logger, skippedLines, podName);
         }
     }
 
@@ -461,6 +510,9 @@ public sealed partial class KubernetesAgentRunner(
     [LoggerMessage(Level = LogLevel.Debug, Message = "Per-run Secret {SecretName} already exists; replacing it so the current pod owns it.")]
     private static partial void LogSecretReplaced(ILogger logger, string secretName);
 
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Per-run Secret {SecretName} already exists; keeping it.")]
+    private static partial void LogSecretKept(ILogger logger, string secretName);
+
     [LoggerMessage(Level = LogLevel.Debug, Message = "Per-run Secret {SecretName} was already gone.")]
     private static partial void LogSecretAlreadyGone(ILogger logger, string secretName);
 
@@ -469,6 +521,12 @@ public sealed partial class KubernetesAgentRunner(
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Log follow on agent pod {PodName} failed; retrying.")]
     private static partial void LogMonitorRetry(ILogger logger, string podName, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Limit monitor on agent pod {PodName} faulted; relying on the final log read.")]
+    private static partial void LogMonitorFaulted(ILogger logger, string podName, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Skipped {SkippedLines} oversized log lines from agent pod {PodName}.")]
+    private static partial void LogSkippedLinesCore(ILogger logger, int skippedLines, string podName);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Agent pod {PodName} ended with {Outcome}.")]
     private static partial void LogRunEnded(ILogger logger, string podName, AgentRunOutcome outcome);

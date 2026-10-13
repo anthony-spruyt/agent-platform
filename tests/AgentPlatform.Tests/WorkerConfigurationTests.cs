@@ -128,6 +128,21 @@ public class WorkerConfigurationTests
     }
 
     [Theory]
+    [InlineData("MaxTurns", "0")]
+    [InlineData("MaxTurns", "-1")]
+    [InlineData("MaxTokens", "0")]
+    [InlineData("MaxSubagents", "0")]
+    [InlineData("MaxSubagents", "-3")]
+    public void InvalidRunLimit_FailsAtStartup(string option, string value)
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            [$"AgentPods:{option}"] = value,
+        }));
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("too-short")]

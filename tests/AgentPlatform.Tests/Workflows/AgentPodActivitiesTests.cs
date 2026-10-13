@@ -170,7 +170,7 @@ public class AgentPodActivitiesTests
         await WaitUntilAsync(() => api.Secrets.ContainsKey(podName));
         var secondAttempt = Environment();
         var second = secondAttempt.RunAsync(() => activities.RunAgentPodAsync(Input));
-        await WaitUntilAsync(() => api.HasOperation($"GET secret {podName}"));
+        await WaitUntilAsync(() => api.CountOperations($"POST secret {podName}") == 2);
         firstAttempt.Cancel(ActivityCancelReason.Timeout);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
         held.Release.SetResult();

@@ -331,6 +331,7 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
             Literal("OTEL_LOGS_EXPORTER", "otlp"),
             Literal("OTEL_TRACES_EXPORTER", "otlp"),
             Literal("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+            // Exact paths; spruyt-labs agent egress policy allows only these
             Literal("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428/opentelemetry/v1/metrics"),
             Literal("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://victoria-logs-single-server.observability.svc:9428/insert/opentelemetry/v1/logs"),
             Literal("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://victoria-traces-single-vt-single-server.observability.svc:10428/insert/opentelemetry/v1/traces"),

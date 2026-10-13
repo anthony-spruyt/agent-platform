@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.RunData;
 using Temporalio.Common;
 using Temporalio.Exceptions;
@@ -22,6 +23,7 @@ public enum SpikeStatus
     Succeeded,
     AgentFailed,
     ResultTimeout,
+    InvalidResult,
 }
 
 public sealed record SpikeResult(
@@ -30,7 +32,8 @@ public sealed record SpikeResult(
     AgentRunResult Agent,
     AgentTier Tier,
     string WorkflowId,
-    string RunId);
+    string RunId,
+    TriageResult? Triage = null);
 
 [Workflow]
 public partial class SpikeWorkflow
@@ -43,13 +46,33 @@ public partial class SpikeWorkflow
 
     private const int RunAttempt = 1;
 
+    private const int MaxInvalidSubmits = 2;
+
     private SubmitResultPayload? _result;
+    private TriageResult? _triage;
+    private bool _submitted;
+    private int _invalidSubmits;
     private string? _triageHeadSha;
 
     [WorkflowUpdate(AgentResultUpdates.SubmitResult)]
     public Task SubmitResultAsync(SubmitResultPayload payload)
     {
-        _result = payload;
+        ArgumentNullException.ThrowIfNull(payload);
+        if (_triageHeadSha is null)
+        {
+            _result = payload;
+        }
+        else if (TriageResult.TryParse(payload, _triageHeadSha, out var parsed, out var error))
+        {
+            _triage = parsed;
+        }
+        else
+        {
+            _invalidSubmits++;
+            throw new ApplicationFailureException(error!, errorType: AgentResultUpdates.InvalidResultErrorType, nonRetryable: true);
+        }
+
+        _submitted = true;
         return Task.CompletedTask;
     }
 
@@ -65,7 +88,7 @@ public partial class SpikeWorkflow
                 nonRetryable: true);
         }
 
-        if (_result is not null)
+        if (_submitted)
         {
             throw new ApplicationFailureException(
                 "A result was already submitted for this run.",
@@ -73,9 +96,12 @@ public partial class SpikeWorkflow
                 nonRetryable: true);
         }
 
-        if (_triageHeadSha is not null && !TriageResult.TryParse(payload, _triageHeadSha, out _, out var error))
+        if (_invalidSubmits >= MaxInvalidSubmits)
         {
-            throw new ApplicationFailureException(error!, errorType: AgentResultUpdates.InvalidResultErrorType, nonRetryable: true);
+            throw new ApplicationFailureException(
+                "The run already failed after repeated invalid results.",
+                errorType: AgentResultUpdates.InvalidResultErrorType,
+                nonRetryable: true);
         }
     }
 
@@ -103,8 +129,8 @@ public partial class SpikeWorkflow
             var status = SpikeStatus.AgentFailed;
             if (agent.Outcome == AgentRunOutcome.Succeeded)
             {
-                var arrived = await Workflow.WaitConditionAsync(() => _result is not null, ResultTimeout);
-                status = arrived ? SpikeStatus.Succeeded : SpikeStatus.ResultTimeout;
+                var arrived = await Workflow.WaitConditionAsync(() => _submitted || _invalidSubmits >= MaxInvalidSubmits, ResultTimeout);
+                status = !arrived ? SpikeStatus.ResultTimeout : _submitted ? SpikeStatus.Succeeded : SpikeStatus.InvalidResult;
             }
 
             if (run is not null)
@@ -119,7 +145,7 @@ public partial class SpikeWorkflow
                     agentStarted,
                     RunRecorder.ElapsedMs(agentStarted),
                     Input: RunRecorder.ToJson(new { tier = input.Tier }),
-                    Output: RunRecorder.ToJson(new { outcome = agent.Outcome, resultText = agent.ResultText, detail = agent.Detail, submitted = _result }),
+                    Output: RunRecorder.ToJson(new { outcome = agent.Outcome, resultText = agent.ResultText, detail = agent.Detail, submitted = (object?)_triage ?? _result }),
                     PromptHash: run.PromptHash,
                     Model: agent.Model,
                     InputTokens: usage?.InputTokens,
@@ -132,7 +158,7 @@ public partial class SpikeWorkflow
                     agent.Model));
             }
 
-            return new SpikeResult(status, _result, agent, input.Tier, info.WorkflowId, info.RunId);
+            return new SpikeResult(status, _result, agent, input.Tier, info.WorkflowId, info.RunId, _triage);
         }
         catch (Exception ex) when (ex is ActivityFailureException or OperationCanceledException)
         {
@@ -149,12 +175,18 @@ public partial class SpikeWorkflow
     {
         SpikeStatus.Succeeded => "submitted",
         SpikeStatus.ResultTimeout => "result_timeout",
+        SpikeStatus.InvalidResult => "invalid_result",
         _ => JsonNamingPolicy.SnakeCaseLower.ConvertName(outcome.ToString()),
     };
 
     private static (string PromptName, string Template, AgentRepoContext? Repo) ResolvePrompt(SpikeInput input)
     {
         var repo = input.Repo is null ? null : new AgentRepoContext(input.Repo, input.PullRequest, input.HeadSha ?? string.Empty);
+        if (repo is not null && (!GitHubRepoName.TryParse(repo.Repo, out _, out _) || !IsFullSha(repo.HeadSha)))
+        {
+            throw InvalidInput("repo must be owner/name and headSha a 40-character lowercase hex commit.");
+        }
+
         if (input.PromptName is null)
         {
             return repo is null
@@ -174,6 +206,9 @@ public partial class SpikeWorkflow
 
         return (input.PromptName, AgentPrompts.Load(input.PromptName), repo);
     }
+
+    private static bool IsFullSha(string value) =>
+        value.Length == 40 && value.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f'));
 
     private static ApplicationFailureException InvalidInput(string message) =>
         new(message, errorType: InvalidInputErrorType, nonRetryable: true);

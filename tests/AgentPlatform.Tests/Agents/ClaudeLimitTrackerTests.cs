@@ -104,4 +104,28 @@ public class ClaudeLimitTrackerTests
         Assert.Null(tracker.Observe(""));
         Assert.Null(tracker.Observe("[1,2]"));
     }
+
+    [Theory]
+    [InlineData("""{"type":1,"message":{"id":"m","usage":{"input_tokens":1}}}""")]
+    [InlineData("""{"type":"assistant","message":{"id":5,"usage":{"input_tokens":1}}}""")]
+    [InlineData("""{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","name":7,"id":"x"}]}}""")]
+    [InlineData("""{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","name":"Task","id":{"a":1}}]}}""")]
+    [InlineData("""{"type":"assistant","message":{"id":"m","content":[{"type":9,"name":"Task","id":"x"}]}}""")]
+    public void Observe_IgnoresNonStringTypeNameAndIdWithoutThrowing(string line)
+    {
+        var tracker = new ClaudeLimitTracker(10, 0);
+
+        Assert.Null(tracker.Observe(line));
+    }
+
+    [Fact]
+    public void Observe_KeepsTheLargestCountSeenForAMessageId()
+    {
+        var tracker = new ClaudeLimitTracker(1000, 3);
+
+        Assert.Null(tracker.Observe(Assistant("m1", 900, 50)));
+        Assert.Null(tracker.Observe(Assistant("m1", 10, 1)));
+
+        Assert.NotNull(tracker.Observe(Assistant("m2", 40, 20)));
+    }
 }
