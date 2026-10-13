@@ -20,6 +20,10 @@ public sealed class PodBehavior
 
     public string? WaitingReason { get; set; }
 
+    public string? InitWaitingReason { get; set; }
+
+    public int? InitExitCode { get; set; }
+
     public DateTime? CreatedAt { get; set; }
 
     public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -46,6 +50,22 @@ public sealed partial class FakeKubeApi : DelegatingHandler
     public List<string> Operations { get; } = [];
 
     public int PodCreateAttempts { get; private set; }
+
+    public bool HasOperation(string operation)
+    {
+        lock (_gate)
+        {
+            return Operations.Contains(operation);
+        }
+    }
+
+    public int CountOperations(string operation)
+    {
+        lock (_gate)
+        {
+            return Operations.Count(o => o == operation);
+        }
+    }
 
     public int PodsCreated { get; private set; }
 
@@ -139,9 +159,12 @@ public sealed partial class FakeKubeApi : DelegatingHandler
             return await CreateSecretAsync(request, cancellationToken);
         }
 
-        if (SingleSecret().Match(path) is { Success: true } singleSecret && request.Method == HttpMethod.Delete)
+        if (SingleSecret().Match(path) is { Success: true } singleSecret)
         {
-            return DeleteSecret(singleSecret.Groups[2].Value);
+            if (request.Method == HttpMethod.Delete)
+            {
+                return DeleteSecret(singleSecret.Groups[2].Value);
+            }
         }
 
         return Json(HttpStatusCode.NotFound, Status(404, "NotFound", $"unhandled {request.Method} {path}"));
@@ -257,7 +280,12 @@ public sealed partial class FakeKubeApi : DelegatingHandler
                 behavior = _behaviors.GetValueOrDefault(name) ?? DefaultBehavior;
                 if (_pods.TryGetValue(name, out var pod) && pod.Status.Phase == "Pending")
                 {
-                    pod.Status = new V1PodStatus { Phase = behavior.WaitingReason is null ? "Running" : "Pending", ContainerStatuses = WaitingStatus(behavior) };
+                    pod.Status = new V1PodStatus
+                    {
+                        Phase = behavior.WaitingReason is null && behavior.InitWaitingReason is null ? "Running" : "Pending",
+                        ContainerStatuses = WaitingStatus(behavior),
+                        InitContainerStatuses = InitWaitingStatus(behavior),
+                    };
                     pod.Metadata.ResourceVersion = "2";
                 }
             }
@@ -271,17 +299,17 @@ public sealed partial class FakeKubeApi : DelegatingHandler
                 {
                     pod.Status = new V1PodStatus
                     {
-                        Phase = behavior.TerminalPhase,
+                        Phase = behavior.InitExitCode is null ? behavior.TerminalPhase : "Failed",
                         Reason = behavior.TerminalReason,
+                        InitContainerStatuses = InitTerminatedStatus(behavior),
                         ContainerStatuses =
                         [
                             new V1ContainerStatus
                             {
                                 Name = "claude-code",
-                                State = new V1ContainerState
-                                {
-                                    Terminated = new V1ContainerStateTerminated { ExitCode = behavior.ExitCode, Reason = behavior.TerminalReason },
-                                },
+                                State = behavior.InitExitCode is not null
+                                    ? new V1ContainerState { Waiting = new V1ContainerStateWaiting { Reason = "PodInitializing" } }
+                                    : new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = behavior.ExitCode, Reason = behavior.TerminalReason } },
                             },
                         ],
                     };
@@ -319,6 +347,16 @@ public sealed partial class FakeKubeApi : DelegatingHandler
         behavior.WaitingReason is null
             ? null
             : [new V1ContainerStatus { Name = "claude-code", State = new V1ContainerState { Waiting = new V1ContainerStateWaiting { Reason = behavior.WaitingReason } } }];
+
+    private static IList<V1ContainerStatus>? InitWaitingStatus(PodBehavior behavior) =>
+        behavior.InitWaitingReason is null
+            ? null
+            : [new V1ContainerStatus { Name = "git-clone", State = new V1ContainerState { Waiting = new V1ContainerStateWaiting { Reason = behavior.InitWaitingReason } } }];
+
+    private static IList<V1ContainerStatus>? InitTerminatedStatus(PodBehavior behavior) =>
+        behavior.InitExitCode is not { } code
+            ? null
+            : [new V1ContainerStatus { Name = "git-clone", State = new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = code, Reason = "Error" } } }];
 
     private static V1Pod Snapshot(V1Pod pod) => KubernetesJson.Deserialize<V1Pod>(KubernetesJson.Serialize(pod));
 

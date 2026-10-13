@@ -1,10 +1,13 @@
 using System.Security.Cryptography;
+using AgentPlatform.Host.Agents;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AgentPlatform.Host.GitHub;
 
 public static class GitHubServiceCollectionExtensions
 {
+    private const string ReadAppKey = "read-app";
+
     public static IServiceCollection AddGitHubWebhookIntake(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -32,22 +35,58 @@ public static class GitHubServiceCollectionExtensions
 
         services.Configure<GitHubAppOptions>(section);
         services.TryAddSingleton(TimeProvider.System);
-        services.AddHttpClient(GitHubHttp.ClientName, GitHubHttp.Configure);
+        AddGitHubHttpClient(services);
         services.AddSingleton<IGitHubInstallationTokenProvider, GitHubInstallationTokenProvider>();
         services.AddHttpClient<IGitHubApiClient, GitHubApiClient>(GitHubHttp.Configure);
         return services;
     }
 
-    private static void Validate(GitHubAppOptions options)
+    public static IServiceCollection AddGitHubReadApp(this IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var options = configuration.GetSection(GitHubAppOptions.ReadAppSectionName).Get<GitHubAppOptions>() ?? new GitHubAppOptions();
+        if (string.IsNullOrWhiteSpace(options.AppId) && string.IsNullOrWhiteSpace(options.PrivateKey))
+        {
+            return services;
+        }
+
+        Validate(options, GitHubAppOptions.ReadAppSectionName);
+        services.TryAddSingleton(TimeProvider.System);
+        AddGitHubHttpClient(services);
+        services.AddKeyedSingleton<IGitHubTokenMinter>(
+            ReadAppKey,
+            (provider, _) => new GitHubInstallationTokenProvider(
+                provider.GetRequiredService<IHttpClientFactory>(),
+                Microsoft.Extensions.Options.Options.Create(options),
+                provider.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<IRunSecretContributor>(provider =>
+            new ReadAppSecretContributor(provider.GetRequiredKeyedService<IGitHubTokenMinter>(ReadAppKey)));
+        return services;
+    }
+
+    private static void AddGitHubHttpClient(IServiceCollection services)
+    {
+        if (services.Any(d => d.ServiceType == typeof(GitHubHttpClientMarker)))
+        {
+            return;
+        }
+
+        services.AddSingleton<GitHubHttpClientMarker>();
+        services.AddHttpClient(GitHubHttp.ClientName, GitHubHttp.Configure);
+    }
+
+    private static void Validate(GitHubAppOptions options, string section = GitHubAppOptions.SectionName)
     {
         if (string.IsNullOrWhiteSpace(options.AppId))
         {
-            throw new InvalidOperationException("GitHub:AppId is required.");
+            throw new InvalidOperationException($"{section}:AppId is required.");
         }
 
         if (string.IsNullOrWhiteSpace(options.PrivateKey))
         {
-            throw new InvalidOperationException("GitHub:PrivateKey is required.");
+            throw new InvalidOperationException($"{section}:PrivateKey is required.");
         }
 
         try
@@ -57,7 +96,9 @@ public static class GitHubServiceCollectionExtensions
         }
         catch (Exception ex) when (ex is ArgumentException or CryptographicException)
         {
-            throw new InvalidOperationException("GitHub:PrivateKey must be an RSA private key in PEM format.", ex);
+            throw new InvalidOperationException($"{section}:PrivateKey must be an RSA private key in PEM format.", ex);
         }
     }
 }
+
+internal sealed class GitHubHttpClientMarker;

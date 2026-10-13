@@ -21,7 +21,9 @@ public static class WorkerServiceCollectionExtensions
         var temporal = configuration.GetSection(TemporalOptions.SectionName).Get<TemporalOptions>() ?? new TemporalOptions();
         var pods = configuration.GetSection(AgentPodsOptions.SectionName).Get<AgentPodsOptions>() ?? new AgentPodsOptions();
         var gateway = configuration.GetSection(AgentGatewayOptions.SectionName).Get<AgentGatewayOptions>() ?? new AgentGatewayOptions();
+        var prompts = configuration.GetSection(AgentPromptsOptions.SectionName).Get<AgentPromptsOptions>() ?? new AgentPromptsOptions();
         Validate(pods);
+        Validate(prompts);
 
         services
             .AddHostedTemporalWorker(temporal.Address, temporal.Namespace, TaskQueues.AgentPlatform)
@@ -29,6 +31,7 @@ public static class WorkerServiceCollectionExtensions
             .AddWorkflow<SpikeWorkflow>()
             .AddWorkflow<RenovateTriageWorkflow>()
             .AddSingletonActivities<PingActivities>()
+            .AddSingletonActivities<PromptActivities>()
             .AddSingletonActivities<RunDataActivities>()
             .AddScopedActivities<RenovateTriageActivities>()
             .AddScopedActivities<AgentPodActivities>();
@@ -40,8 +43,10 @@ public static class WorkerServiceCollectionExtensions
 
         services.AddRunData(configuration);
         services.AddGitHubAppClient(configuration);
+        services.AddGitHubReadApp(configuration);
         services.AddRenovateTriage(configuration);
         services.AddSingleton(pods);
+        services.AddSingleton(prompts);
         services.AddSingleton(new AgentSessionTokens(gateway.SessionTokenKey));
         services.AddSingleton<AgentPodSpecBuilder>();
         services.AddSingleton<IKubernetes>(_ => new Kubernetes(
@@ -57,11 +62,29 @@ public static class WorkerServiceCollectionExtensions
         return services;
     }
 
+    private static void Validate(AgentPromptsOptions prompts)
+    {
+        if (prompts.Directory is { Length: > 0 } directory && !Path.IsPathFullyQualified(directory))
+        {
+            throw new InvalidOperationException("AgentPrompts:Directory must be an absolute path.");
+        }
+    }
+
     private static void Validate(AgentPodsOptions pods)
     {
         if (pods.MaxConcurrentActivities < 1)
         {
             throw new InvalidOperationException("AgentPods:MaxConcurrentActivities must be at least 1.");
+        }
+
+        if (pods.MaxTurns < 1)
+        {
+            throw new InvalidOperationException("AgentPods:MaxTurns must be at least 1.");
+        }
+
+        if (pods.MaxBudgetUsd <= 0)
+        {
+            throw new InvalidOperationException("AgentPods:MaxBudgetUsd must be greater than 0.");
         }
 
         if (pods.SchedulingGraceSeconds is < 0 or > AgentRunTimeouts.SchedulingGraceSeconds)

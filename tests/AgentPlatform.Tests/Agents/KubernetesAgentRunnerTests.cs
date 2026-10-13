@@ -21,11 +21,28 @@ public class KubernetesAgentRunnerTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private sealed class ExtraSecretData(IReadOnlyDictionary<string, string> data) : IRunSecretContributor
+    private static CancellationTokenSource Bounded()
     {
-        public Task<IReadOnlyDictionary<string, string>> GetAdditionalDataAsync(AgentRunRequest request, CancellationToken cancellationToken) =>
-            Task.FromResult(data);
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+        return cts;
     }
+
+    private sealed class ExtraSecretData(IReadOnlyDictionary<string, string> data, DateTimeOffset? expiresAt = null) : IRunSecretContributor
+    {
+        public int Calls { get; private set; }
+
+        public Task<RunSecretContribution> ContributeAsync(AgentRunRequest request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(new RunSecretContribution(data, expiresAt));
+        }
+    }
+
+    private static readonly AgentRepoContext Repo = new("octo/widgets", 7, new string('a', 40));
+
+    private static ExtraSecretData ReadToken(DateTimeOffset? expiresAt = null) =>
+        new(new Dictionary<string, string> { [AgentPodSpecBuilder.GitHubTokenKey] = "ghs_read", [AgentPodSpecBuilder.GitCredentialKey] = "cred" }, expiresAt);
 
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider
     {
@@ -102,7 +119,7 @@ public class KubernetesAgentRunnerTests
         Assert.Equal("agent-platform-agents", secret.Metadata.NamespaceProperty);
         var token = secret.StringData["session-token"];
         Assert.True(new AgentSessionTokens(SessionKey).TryValidate(token, out var run));
-        Assert.Equal(new AgentRunIdentity("spike-1", "run-1"), run);
+        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "claude", 1), run);
     }
 
     [Fact]
@@ -143,22 +160,124 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
-    public async Task Run_ReplacesTheSecretWithOnlyCreateAndDelete()
+    public async Task Run_WhenThePodAlreadyExists_KeepsTheExistingSecretWithoutReplacingIt()
     {
         var api = ApiWith(Success);
-        var requests = new List<string>();
-        api.Interceptor = request =>
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo };
+
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
+        var secret = api.Secrets[PodName];
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
+
+        Assert.Same(secret, api.Secrets[PodName]);
+        Assert.DoesNotContain($"DELETE secret {PodName}", api.Operations);
+        Assert.Equal(1, api.PodsCreated);
+    }
+
+    [Fact]
+    public async Task Run_WhenTheSecretAppearsBetweenTheReattachAndTheCreate_KeepsTheExistingSecret()
+    {
+        var api = ApiWith(Success);
+        var request = Request with { Repo = Repo };
+        api.Seed(new AgentPodSpecBuilder(new AgentPodsOptions()).Build(request));
+        const string Conflict = """{"kind":"Status","apiVersion":"v1","status":"Failure","code":409,"reason":"AlreadyExists"}""";
+        const string Forbidden = """{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden"}""";
+        api.Interceptor = http =>
         {
-            requests.Add($"{request.Method} {request.RequestUri!.AbsolutePath}");
-            return null;
+            var path = http.RequestUri!.AbsolutePath;
+            if (path.Contains("/secrets", StringComparison.Ordinal) && http.Method == HttpMethod.Post)
+            {
+                return new HttpResponseMessage(HttpStatusCode.Conflict) { Content = new StringContent(Conflict) };
+            }
+
+            return path.Contains("/secrets", StringComparison.Ordinal) && http.Method != HttpMethod.Delete
+                ? new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent(Forbidden) }
+                : null;
         };
 
-        await NewRunner(api).RunAsync(Request, Ct);
-        await NewRunner(api).RunAsync(Request, Ct);
+        var result = await NewRunner(api, contributors: [ReadToken()]).RunAsync(request, Ct);
 
-        Assert.DoesNotContain(requests, r => r.StartsWith("GET", StringComparison.Ordinal) && r.Contains("/secrets", StringComparison.Ordinal));
-        Assert.Contains($"DELETE secret {PodName}", api.Operations);
-        Assert.Single(api.Secrets);
+        Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
+        Assert.DoesNotContain(api.Operations, o => o.StartsWith("DELETE secret", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Run_ReattachAfterAWorkerDiedBeforeTheSecret_MintsOnceForTheMissingSecret()
+    {
+        var api = ApiWith(Success);
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo };
+        api.Seed(new AgentPodSpecBuilder(new AgentPodsOptions()).Build(request));
+
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
+
+        Assert.Equal(1, contributor.Calls);
+        Assert.Equal("ghs_read", api.Secrets[PodName].StringData[AgentPodSpecBuilder.GitHubTokenKey]);
+    }
+
+    [Fact]
+    public async Task Run_CapsThePodDeadlineSoThePodNeverOutlivesTheToken()
+    {
+        var api = ApiWith(Success);
+        var now = new DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
+        var contributor = ReadToken(now.AddMinutes(25));
+
+        await NewRunner(api, contributors: [contributor], time: new FixedTime(now)).RunAsync(Request with { Repo = Repo }, Ct);
+
+        var expected = (25 * 60) - AgentRunTimeouts.TokenGraceSeconds - AgentRunTimeouts.SchedulingGraceSeconds;
+        Assert.Equal(expected, api.Pods[PodName].Spec.ActiveDeadlineSeconds);
+    }
+
+    [Fact]
+    public async Task Run_KeepsTheConfiguredDeadlineWhenTheTokenOutlastsIt()
+    {
+        var api = ApiWith(Success);
+        var now = new DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
+        var contributor = ReadToken(now.AddHours(1));
+
+        await NewRunner(api, o => o.SchedulingGraceSeconds = 0, [contributor], new FixedTime(now)).RunAsync(Request with { Repo = Repo, DeadlineSeconds = 600 }, Ct);
+
+        Assert.Equal(600, api.Pods[PodName].Spec.ActiveDeadlineSeconds);
+    }
+
+    [Fact]
+    public async Task Run_WhenTheTokenExpiresBeforeAnyPodCouldRun_CreatesNothing()
+    {
+        var api = ApiWith(Success);
+        var now = new DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
+        var contributor = ReadToken(now.AddMinutes(5));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => NewRunner(api, contributors: [contributor], time: new FixedTime(now)).RunAsync(Request with { Repo = Repo }, Ct));
+
+        Assert.Empty(api.Pods);
+        Assert.Empty(api.Secrets);
+    }
+
+    [Fact]
+    public async Task Run_ForARepositoryWithoutAGitHubToken_FailsAsAConfigurationErrorBeforeCreatingAnything()
+    {
+        var api = ApiWith(Success);
+
+        await Assert.ThrowsAsync<AgentConfigurationException>(() => NewRunner(api).RunAsync(Request with { Repo = Repo }, Ct));
+
+        Assert.Empty(api.Operations);
+    }
+
+    [Fact]
+    public async Task Run_PutsTheMcpConfigPromptAndSessionNonceInTheSecretButNotInThePodArgs()
+    {
+        var api = ApiWith(Success);
+
+        await NewRunner(api).RunAsync(Request with { Step = "claude", Attempt = 2 }, Ct);
+
+        var data = api.Secrets[AgentPodNaming.PodName("spike-1", "run-1", "claude")].StringData;
+        Assert.Equal("Say hello", data[AgentPodSpecBuilder.PromptKey]);
+        Assert.Contains("${AP_MCP_SESSION_KEY}", data[AgentPodSpecBuilder.McpConfigKey], StringComparison.Ordinal);
+        Assert.True(new AgentSessionTokens(SessionKey).TryValidate(data[AgentPodSpecBuilder.SessionTokenKey], out var run));
+        Assert.Equal(2, run!.Attempt);
+        Assert.DoesNotContain(api.Pods[AgentPodNaming.PodName("spike-1", "run-1", "claude")].Spec.Containers[0].Args, a => a.Contains("Say hello", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -190,7 +309,7 @@ public class KubernetesAgentRunnerTests
         var api = ApiWith(Success);
         var held = new PodBehavior { Logs = Success };
         api.SetBehavior(PodName, held);
-        using var cancelFirst = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        using var cancelFirst = Bounded();
 
         var first = NewRunner(api).RunAsync(Request, cancelFirst.Token);
         await WaitUntilAsync(() => api.Secrets.ContainsKey(PodName));
@@ -199,10 +318,11 @@ public class KubernetesAgentRunnerTests
         Assert.Single(api.Pods);
 
         held.Release.SetResult();
-        var second = await NewRunner(api).RunAsync(Request, Ct);
+        using var secondCap = Bounded();
+        var second = await NewRunner(api).RunAsync(Request, secondCap.Token);
 
         Assert.Equal(AgentRunOutcome.Succeeded, second.Outcome);
-        Assert.Equal(2, api.PodCreateAttempts);
+        Assert.Equal(1, api.PodCreateAttempts);
         Assert.Equal(1, api.PodsCreated);
         Assert.Single(api.Pods);
         Assert.Single(api.Secrets);
@@ -226,7 +346,7 @@ public class KubernetesAgentRunnerTests
     {
         var api = ApiWith(Success);
         api.SetBehavior(PodName, new PodBehavior { Logs = Success });
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        using var cts = Bounded();
 
         var run = NewRunner(api).RunAsync(Request, cts.Token);
         await WaitUntilAsync(() => api.Secrets.ContainsKey(PodName));
@@ -257,7 +377,7 @@ public class KubernetesAgentRunnerTests
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":3}}""")]
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":3}}""")]
     [InlineData("""{"type":"result","subtype":"success","is_error":false,"result":"x","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}""")]
-    [InlineData("""{"type":"result","subtype":"error_max_turns","is_error":true,"result":"x","usage":{"input_tokens":1,"output_tokens":3}}""")]
+    [InlineData("""{"type":"result","subtype":"error_during_execution","is_error":true,"result":"x","usage":{"input_tokens":1,"output_tokens":3}}""")]
     public async Task Run_WhenStdoutIsEmptyOrCutOff_ReportsTruncated(string logs)
     {
         var api = ApiWith(logs);
@@ -282,12 +402,11 @@ public class KubernetesAgentRunnerTests
     public async Task Run_WhenTheClientTimesOutOnARead_IsRetryableNotTimedOut()
     {
         var api = ApiWith(Success);
-        var timedOut = false;
+        var reads = 0;
         api.Interceptor = request =>
         {
-            if (!timedOut && request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith($"/pods/{PodName}", StringComparison.Ordinal))
+            if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith($"/pods/{PodName}", StringComparison.Ordinal) && ++reads == 2)
             {
-                timedOut = true;
                 throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException());
             }
 
@@ -406,8 +525,9 @@ public class KubernetesAgentRunnerTests
     {
         var api = ApiWith(Success);
         api.SetBehavior(PodName, new PodBehavior { Logs = Success, WaitingReason = "ImagePullBackOff" });
+        using var cts = Bounded();
 
-        var result = await NewRunner(api).RunAsync(Request, Ct);
+        var result = await NewRunner(api).RunAsync(Request, cts.Token);
 
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Contains("ImagePullBackOff", result.Detail, StringComparison.Ordinal);
@@ -420,7 +540,8 @@ public class KubernetesAgentRunnerTests
         api.SetBehavior(PodName, new PodBehavior { Logs = Success, WaitingReason = "CreateContainerConfigError" });
 
         var later = new FixedTime(DateTimeOffset.UtcNow.AddMinutes(10));
-        var result = await NewRunner(api, time: later).RunAsync(Request, Ct);
+        using var cts = Bounded();
+        var result = await NewRunner(api, time: later).RunAsync(Request, cts.Token);
 
         Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
         Assert.Contains("CreateContainerConfigError", result.Detail, StringComparison.Ordinal);
@@ -438,6 +559,148 @@ public class KubernetesAgentRunnerTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NewRunner(api).RunAsync(Request, cts.Token));
 
         Assert.Contains(PodName, api.Pods.Keys);
+    }
+
+    [Fact]
+    public async Task Run_WhenAnInitContainerFails_ReportsPodFailedNamingItWithoutReadingTheAgentLog()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, Released(new PodBehavior { Logs = Success, InitExitCode = 128 }));
+        api.Interceptor = FailLogReads;
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
+        Assert.Contains(AgentPodSpecBuilder.CloneInitContainerName, result.Detail, StringComparison.Ordinal);
+        Assert.Contains("128", result.Detail, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("ImagePullBackOff")]
+    [InlineData("InvalidImageName")]
+    public async Task Run_WhenAnInitContainerImageCannotBePulled_FailsFastNamingTheContainer(string reason)
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, new PodBehavior { Logs = Success, InitWaitingReason = reason });
+        api.Interceptor = FailLogReads;
+        using var cts = Bounded();
+
+        var result = await NewRunner(api).RunAsync(Request, cts.Token);
+
+        Assert.Equal(AgentRunOutcome.PodFailed, result.Outcome);
+        Assert.Contains(AgentPodSpecBuilder.CloneInitContainerName, result.Detail, StringComparison.Ordinal);
+        Assert.Contains(reason, result.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Run_WhenAnInitContainerImagePullIsRetrying_KeepsWaiting()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, new PodBehavior { Logs = Success, InitWaitingReason = "ErrImagePull" });
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NewRunner(api).RunAsync(Request, cts.Token));
+
+        Assert.Contains(PodName, api.Pods.Keys);
+    }
+
+    [Fact]
+    public async Task Run_WhenAnInitContainerConfigErrorIsFresh_KeepsWaitingForTheSecret()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, new PodBehavior { Logs = Success, InitWaitingReason = "CreateContainerConfigError" });
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(500));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NewRunner(api).RunAsync(Request, cts.Token));
+
+        Assert.Contains(PodName, api.Pods.Keys);
+    }
+
+    [Fact]
+    public async Task Run_WhenTheDeadlineHitsWhileAnInitContainerRuns_ReportsTimedOutWithoutReadingTheAgentLog()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, Released(new PodBehavior { Logs = Success, InitExitCode = 137, TerminalReason = "DeadlineExceeded" }));
+        api.Interceptor = FailLogReads;
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.TimedOut, result.Outcome);
+    }
+
+    [Fact]
+    public async Task Run_SkipsLogLinesOverTheLineCapAndStillReadsTheResult()
+    {
+        var api = ApiWith(BigLine(2 * 1024 * 1024) + "\n" + Success);
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
+        Assert.Equal("all good", result.ResultText);
+    }
+
+    [Fact]
+    public async Task Run_CapsTheFinalLogReadInBytes()
+    {
+        var api = ApiWith(Success);
+        var limits = new List<string>();
+        api.Interceptor = http =>
+        {
+            if (http.RequestUri!.AbsolutePath.EndsWith("/log", StringComparison.Ordinal) && !http.RequestUri.Query.Contains("follow=true", StringComparison.Ordinal))
+            {
+                limits.Add(http.RequestUri.Query);
+            }
+
+            return null;
+        };
+
+        await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.All(limits, q => Assert.Contains("limitBytes=", q, StringComparison.Ordinal));
+        Assert.NotEmpty(limits);
+    }
+
+    private static string BigLine(int length) =>
+        "{\"type\":\"assistant\",\"message\":{\"id\":\"big\",\"content\":[{\"type\":\"text\",\"text\":\"" + new string('a', length) + "\"}]}}";
+
+    private static PodBehavior Released(PodBehavior behavior)
+    {
+        behavior.Release.SetResult();
+        return behavior;
+    }
+
+    private static HttpResponseMessage? FailLogReads(HttpRequestMessage http) =>
+        http.RequestUri!.AbsolutePath.EndsWith("/log", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("""{"kind":"Status","apiVersion":"v1","status":"Failure","code":400,"reason":"BadRequest"}""") }
+            : null;
+
+    [Theory]
+    [InlineData("error_max_turns", 1, "Failed", "turn")]
+    [InlineData("error_max_budget_usd", 1, "Failed", "budget")]
+    [InlineData("error_max_turns", 0, "Succeeded", "turn")]
+    [InlineData("error_max_budget_usd", 0, "Succeeded", "budget")]
+    public async Task Run_WhenTheCliStopsAtALimit_ReportsLimitExceeded(string subtype, int exitCode, string phase, string expected)
+    {
+        var logs = Success + "\n" + $$$"""{"type":"result","subtype":"{{{subtype}}}","is_error":true,"usage":{"input_tokens":1,"output_tokens":3}}""";
+        var api = ApiWith(logs, exitCode, phase);
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
+        Assert.Contains(expected, result.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Run_WhenALogLineHasAnUnreadableEscape_StillReportsTheResult()
+    {
+        var api = ApiWith("""{"type":"result","subtype":"success","result":"\uD800"}""" + "\n" + Success);
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
+        Assert.Equal("all good", result.ResultText);
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using AgentPlatform.Host;
+using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
@@ -102,6 +103,29 @@ public class WorkerConfigurationTests
         Assert.Contains("db.example", db.Database.GetConnectionString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PromptDirectory_IsOptionalAndBoundFromConfig()
+    {
+        using var unset = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
+        using var set = Build(new() { ["AgentGateway:SessionTokenKey"] = Key, ["AgentPrompts:Directory"] = "/prompts" });
+
+        Assert.Null(unset.GetRequiredService<AgentPromptsOptions>().Directory);
+        Assert.Equal("/prompts", set.GetRequiredService<AgentPromptsOptions>().Directory);
+    }
+
+    [Theory]
+    [InlineData("  ")]
+    [InlineData("relative/prompts")]
+    [InlineData("./prompts")]
+    public void InvalidPromptDirectory_FailsAtStartup(string directory)
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            ["AgentPrompts:Directory"] = directory,
+        }));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -124,6 +148,20 @@ public class WorkerConfigurationTests
         {
             ["AgentGateway:SessionTokenKey"] = Key,
             ["AgentPods:MaxConcurrentActivities"] = cap,
+        }));
+    }
+
+    [Theory]
+    [InlineData("MaxTurns", "0")]
+    [InlineData("MaxTurns", "-1")]
+    [InlineData("MaxBudgetUsd", "0")]
+    [InlineData("MaxBudgetUsd", "-1.5")]
+    public void InvalidRunLimit_FailsAtStartup(string option, string value)
+    {
+        Assert.Throws<InvalidOperationException>(() => Build(new()
+        {
+            ["AgentGateway:SessionTokenKey"] = Key,
+            [$"AgentPods:{option}"] = value,
         }));
     }
 
@@ -194,6 +232,16 @@ public class WorkerConfigurationTests
 
         Assert.Contains(typeof(RenovateTriageWorkflow), options.Workflows.Select(w => w.Type));
         Assert.Contains(options.Activities, a => a.Name == RenovateTriageActivities.AssessName);
+    }
+
+    [Fact]
+    public void AgentPlatformWorker_RunsTheLoadPromptActivity()
+    {
+        using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(options.Activities, a => a.Name == PromptActivities.LoadPromptName);
     }
 
     [Fact]

@@ -9,11 +9,22 @@ public class AgentPodSpecBuilderTests
     private static readonly AgentRunRequest Request =
         new("spike-1", "run-1", "claude", "Summarise the repo", AgentTier.Read, 1800);
 
+    private static readonly AgentRepoContext Repo = new("octo/widgets", 7, "0123456789abcdef0123456789abcdef01234567");
+
+    private static AgentRunRequest RepoRequest => Request with { Repo = Repo };
+
     private static V1Pod Build(AgentRunRequest? request = null, Action<AgentPodsOptions>? configure = null)
     {
         var options = new AgentPodsOptions();
         configure?.Invoke(options);
         return new AgentPodSpecBuilder(options).Build(request ?? Request);
+    }
+
+    private static JsonElement McpServers(Action<AgentPodsOptions>? configure = null)
+    {
+        var options = new AgentPodsOptions();
+        configure?.Invoke(options);
+        return JsonDocument.Parse(new AgentPodSpecBuilder(options).BuildMcpConfig()).RootElement.GetProperty("mcpServers").Clone();
     }
 
     private static V1Container Agent(V1Pod pod) => Assert.Single(pod.Spec.Containers);
@@ -95,15 +106,17 @@ public class AgentPodSpecBuilderTests
     [Fact]
     public void Container_IsPodSecurityRestricted()
     {
-        var pod = Build();
-        var container = Agent(pod);
+        var pod = Build(RepoRequest);
 
         Assert.True(pod.Spec.SecurityContext.RunAsNonRoot);
         Assert.Equal(1000, pod.Spec.SecurityContext.RunAsUser);
         Assert.Equal("RuntimeDefault", pod.Spec.SecurityContext.SeccompProfile.Type);
-        Assert.False(container.SecurityContext.AllowPrivilegeEscalation);
-        Assert.Contains("ALL", container.SecurityContext.Capabilities.Drop);
-        Assert.Null(container.SecurityContext.Privileged);
+        foreach (var container in pod.Spec.InitContainers.Concat(pod.Spec.Containers))
+        {
+            Assert.False(container.SecurityContext.AllowPrivilegeEscalation);
+            Assert.Contains("ALL", container.SecurityContext.Capabilities.Drop);
+            Assert.Null(container.SecurityContext.Privileged);
+        }
     }
 
     [Fact]
@@ -127,7 +140,7 @@ public class AgentPodSpecBuilderTests
     [Fact]
     public void Container_TakesTheReadTierLiteLlmCredentialFromAgentCredentials()
     {
-        var reference = Env(Build(), "LITELLM_API_KEY").ValueFrom.SecretKeyRef;
+        var reference = Env(Build(), "AP_LITELLM_API_KEY").ValueFrom.SecretKeyRef;
 
         Assert.Equal("agent-credentials", reference.Name);
         Assert.Equal("litellm-key-read", reference.Key);
@@ -138,7 +151,7 @@ public class AgentPodSpecBuilderTests
     {
         var pod = Build(Request with { Tier = AgentTier.ClusterRead }, o => o.ClusterReadServiceAccountName = "agent-runner-cluster-read");
 
-        Assert.Equal("litellm-key-cluster-read", Env(pod, "LITELLM_API_KEY").ValueFrom.SecretKeyRef.Key);
+        Assert.Equal("litellm-key-cluster-read", Env(pod, "AP_LITELLM_API_KEY").ValueFrom.SecretKeyRef.Key);
         Assert.Equal("agent-runner-cluster-read", pod.Spec.ServiceAccountName);
         Assert.Equal("high-priority", pod.Spec.PriorityClassName);
     }
@@ -155,8 +168,8 @@ public class AgentPodSpecBuilderTests
         var env = Agent(Build()).Env.ToList();
 
         var header = Assert.Single(env, e => e.Name == "ANTHROPIC_CUSTOM_HEADERS");
-        Assert.Equal("x-litellm-api-key: Bearer $(LITELLM_API_KEY)", header.Value);
-        Assert.True(env.FindIndex(e => e.Name == "LITELLM_API_KEY") < env.IndexOf(header));
+        Assert.Equal("x-litellm-api-key: Bearer $(AP_LITELLM_API_KEY)", header.Value);
+        Assert.True(env.FindIndex(e => e.Name == "AP_LITELLM_API_KEY") < env.IndexOf(header));
     }
 
     [Fact]
@@ -171,9 +184,9 @@ public class AgentPodSpecBuilderTests
     [Fact]
     public void Container_NeverCarriesSecretValuesInline()
     {
-        var env = Agent(Build()).Env;
+        var env = Agent(Build(RepoRequest)).Env;
 
-        foreach (var name in new[] { "CLAUDE_CODE_OAUTH_TOKEN", "LITELLM_API_KEY", "AGENT_SESSION_TOKEN" })
+        foreach (var name in new[] { "CLAUDE_CODE_OAUTH_TOKEN", "AP_LITELLM_API_KEY", "AP_MCP_SESSION_KEY", "GH_TOKEN" })
         {
             var variable = Assert.Single(env, e => e.Name == name);
             Assert.Null(variable.Value);
@@ -186,7 +199,7 @@ public class AgentPodSpecBuilderTests
     {
         var pod = Build();
 
-        var reference = Env(pod, "AGENT_SESSION_TOKEN").ValueFrom.SecretKeyRef;
+        var reference = Env(pod, "AP_MCP_SESSION_KEY").ValueFrom.SecretKeyRef;
 
         Assert.Equal(pod.Metadata.Name, reference.Name);
         Assert.Equal("session-token", reference.Key);
@@ -241,12 +254,21 @@ public class AgentPodSpecBuilderTests
     {
         var container = Agent(Build());
 
-        Assert.Equal(["claude"], container.Command);
         Assert.Equal("-p", container.Args[0]);
-        Assert.Equal("Summarise the repo", container.Args[1]);
         Assert.Equal("stream-json", ArgAfter(container, "--output-format"));
         Assert.Contains("--verbose", container.Args);
         Assert.Equal("sonnet", ArgAfter(container, "--model"));
+    }
+
+    [Fact]
+    public void Container_ReadsThePromptFromStdinSoItNeverAppearsInArgs()
+    {
+        var container = Agent(Build(Request with { Prompt = "echo $(HOME) and $$" }));
+
+        Assert.Equal(["sh", "-c", "exec claude \"$@\" < /run/ap/prompt/prompt.txt", "claude"], container.Command);
+        Assert.DoesNotContain(container.Args, a => a.Contains("echo", StringComparison.Ordinal));
+        Assert.DoesNotContain(container.Args, a => a.Contains("$(", StringComparison.Ordinal));
+        Assert.DoesNotContain(container.Command, c => c.Contains("$(", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -257,40 +279,100 @@ public class AgentPodSpecBuilderTests
         Assert.Equal("haiku", ArgAfter(container, "--model"));
     }
 
-    [Theory]
-    [InlineData("echo $(HOME)", "echo $$(HOME)")]
-    [InlineData("$$(X)", "$$$$(X)")]
-    [InlineData("cost is $", "cost is $$")]
-    [InlineData("$$", "$$$$")]
-    [InlineData("no references here", "no references here")]
-    public void Container_EscapesEveryDollarInThePrompt(string prompt, string expected)
+    [Fact]
+    public void Container_CapsTurnsAndLoadsOnlyUserAndProjectSettings()
     {
-        var container = Agent(Build(Request with { Prompt = prompt }));
+        var container = Agent(Build(configure: o => o.MaxTurns = 12));
 
-        Assert.Equal(expected, container.Args[1]);
+        Assert.Equal("12", ArgAfter(container, "--max-turns"));
+        Assert.Equal("user,project", ArgAfter(container, "--setting-sources"));
+        Assert.DoesNotContain("--add-dir", container.Args);
     }
 
     [Fact]
-    public void Container_PointsTheMcpConfigAtAgentGatewayWithThePerRunToken()
+    public void Container_CapsSpendInvariantly()
     {
-        var config = ArgAfter(Agent(Build()), "--mcp-config");
+        var container = Agent(Build(configure: o => o.MaxBudgetUsd = 1.25m));
 
-        using var json = JsonDocument.Parse(config);
-        var gateway = json.RootElement.GetProperty("mcpServers").GetProperty("agentplatform");
+        Assert.Equal("1.25", ArgAfter(container, "--max-budget-usd"));
+        Assert.Equal("2", ArgAfter(Agent(Build()), "--max-budget-usd"));
+    }
+
+    [Fact]
+    public void Container_UsesOnlyTheMcpConfigFileFromTheSecret()
+    {
+        var pod = Build();
+        var container = Agent(pod);
+
+        Assert.Contains("--strict-mcp-config", container.Args);
+        Assert.Equal("/run/ap/mcp/mcp.json", ArgAfter(container, "--mcp-config"));
+        var volume = Assert.Single(pod.Spec.Volumes, v => v.Name == "mcp-config");
+        Assert.Equal(pod.Metadata.Name, volume.Secret.SecretName);
+        var item = Assert.Single(volume.Secret.Items);
+        Assert.Equal("mcp-config.json", item.Key);
+        Assert.Equal("mcp.json", item.Path);
+    }
+
+    [Fact]
+    public void Container_MountsEverySecretVolumeThroughASingleKeyItem()
+    {
+        var pod = Build(RepoRequest);
+
+        foreach (var volume in pod.Spec.Volumes.Where(v => v.Secret is not null))
+        {
+            Assert.Single(volume.Secret.Items);
+        }
+
+        Assert.DoesNotContain(Agent(pod).VolumeMounts, m => m.Name == "git-credentials");
+    }
+
+    [Fact]
+    public void McpConfig_ReferencesTheKeyVariablesByNameAndCarriesNoValues()
+    {
+        var servers = McpServers();
+
+        var gateway = servers.GetProperty("agentplatform");
         Assert.Equal("http", gateway.GetProperty("type").GetString());
         Assert.Equal("http://agent-platform-web.agent-platform.svc.cluster.local:8081/mcp", gateway.GetProperty("url").GetString());
-        Assert.Equal("Bearer $(AGENT_SESSION_TOKEN)", gateway.GetProperty("headers").GetProperty("Authorization").GetString());
+        Assert.Equal("Bearer ${AP_MCP_SESSION_KEY}", gateway.GetProperty("headers").GetProperty("Authorization").GetString());
+        var litellm = servers.GetProperty("litellm");
+        Assert.Equal("http://litellm.litellm.svc.cluster.local:4000/mcp", litellm.GetProperty("url").GetString());
+        Assert.Equal("Bearer ${AP_LITELLM_API_KEY}", litellm.GetProperty("headers").GetProperty("x-litellm-api-key").GetString());
     }
 
     [Fact]
-    public void Container_KeepsTheLiteLlmMcpGatewayForTheTierCredential()
+    public void McpConfig_InHelperModeDelegatesTheHeadersToTheImageHelper()
     {
-        var config = ArgAfter(Agent(Build()), "--mcp-config");
+        var servers = McpServers(o => o.UseMcpHeadersHelper = true);
 
-        using var json = JsonDocument.Parse(config);
-        var litellm = json.RootElement.GetProperty("mcpServers").GetProperty("litellm");
-        Assert.Equal("http://litellm.litellm.svc.cluster.local:4000/mcp", litellm.GetProperty("url").GetString());
-        Assert.Equal("Bearer $(LITELLM_API_KEY)", litellm.GetProperty("headers").GetProperty("x-litellm-api-key").GetString());
+        foreach (var name in new[] { "agentplatform", "litellm" })
+        {
+            var server = servers.GetProperty(name);
+            Assert.Equal("/usr/local/bin/ap-mcp-headers", server.GetProperty("headersHelper").GetString());
+            Assert.False(server.TryGetProperty("headers", out _));
+        }
+    }
+
+    [Fact]
+    public void McpConfig_UsesConfiguredEndpoints()
+    {
+        var servers = McpServers(o =>
+        {
+            o.LiteLlmBaseUrl = "http://llm.test:1/";
+            o.AgentGatewayUrl = "http://gw.test:2/mcp";
+        });
+
+        Assert.Equal("http://gw.test:2/mcp", servers.GetProperty("agentplatform").GetProperty("url").GetString());
+        Assert.Equal("http://llm.test:1/mcp", servers.GetProperty("litellm").GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public void StaticSecretData_HoldsThePromptAndTheMcpConfig()
+    {
+        var data = new AgentPodSpecBuilder(new AgentPodsOptions()).BuildStaticSecretData(Request);
+
+        Assert.Equal("Summarise the repo", data["prompt.txt"]);
+        Assert.Contains("${AP_MCP_SESSION_KEY}", data["mcp-config.json"], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -302,17 +384,111 @@ public class AgentPodSpecBuilderTests
     }
 
     [Fact]
-    public void Pod_UsesConfiguredEndpoints()
+    public void Pod_UsesConfiguredEndpointsAndNamespace()
     {
         var pod = Build(configure: o =>
         {
             o.LiteLlmBaseUrl = "http://llm.test:1";
-            o.AgentGatewayUrl = "http://gw.test:2/mcp";
             o.Namespace = "elsewhere";
         });
 
         Assert.Equal("http://llm.test:1", Env(pod, "ANTHROPIC_BASE_URL").Value);
         Assert.Equal("elsewhere", pod.Metadata.NamespaceProperty);
-        Assert.Contains("http://gw.test:2/mcp", ArgAfter(Agent(pod), "--mcp-config"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Pod_WithoutARepoHasNoInitContainersAndNoGitHubToken()
+    {
+        var pod = Build();
+
+        Assert.Null(pod.Spec.InitContainers);
+        Assert.DoesNotContain(Agent(pod).Env, e => e.Name == "GH_TOKEN");
+        Assert.DoesNotContain(pod.Spec.Volumes, v => v.Name == "git-credentials");
+        Assert.Equal("/workspace", Agent(pod).WorkingDir);
+    }
+
+    [Fact]
+    public void Pod_WithARepoClonesThenBootstrapsPluginsBeforeTheAgent()
+    {
+        var pod = Build(RepoRequest);
+
+        Assert.Equal(["git-clone", "plugins"], pod.Spec.InitContainers.Select(c => c.Name));
+        Assert.Equal("/workspace/repo", Agent(pod).WorkingDir);
+        var plugins = pod.Spec.InitContainers[1];
+        Assert.Equal(["/usr/local/bin/claude-plugins-bootstrap", "/workspace/repo"], plugins.Command);
+        Assert.Contains(plugins.VolumeMounts, m => m.Name == "claude-home" && m.MountPath == "/home/node/.claude");
+        Assert.Equal("1", Assert.Single(plugins.Env, e => e.Name == "CLAUDE_PLUGINS_STRICT").Value);
+    }
+
+    [Fact]
+    public void CloneInit_TakesTheDefaultBranchShallowAndFetchesThePullRequestHeadBySha()
+    {
+        var clone = Assert.Single(Build(RepoRequest).Spec.InitContainers, c => c.Name == "git-clone");
+        var script = clone.Command[2];
+
+        Assert.Equal("sh", clone.Command[0]);
+        Assert.Contains("clone --quiet --depth 1", script, StringComparison.Ordinal);
+        Assert.Contains("fetch --quiet --depth 1", script, StringComparison.Ordinal);
+        Assert.Contains("/workspace/repo", script, StringComparison.Ordinal);
+        Assert.Contains("/workspace/pr", script, StringComparison.Ordinal);
+        Assert.Equal("octo/widgets", clone.Command[4]);
+        Assert.Equal(Repo.HeadSha, clone.Command[5]);
+        Assert.DoesNotContain("--branch", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CloneInit_AloneMountsTheGitCredential()
+    {
+        var pod = Build(RepoRequest);
+
+        var mounted = pod.Spec.InitContainers.Concat(pod.Spec.Containers)
+            .Where(c => c.VolumeMounts.Any(m => m.Name == "git-credentials"))
+            .Select(c => c.Name);
+        Assert.Equal(["git-clone"], mounted);
+        var volume = Assert.Single(pod.Spec.Volumes, v => v.Name == "git-credentials");
+        Assert.Equal("git-credentials", Assert.Single(volume.Secret.Items).Key);
+    }
+
+    [Fact]
+    public void Pod_WithARepoPassesTheGitHubTokenAsEnvFromThePerRunSecret()
+    {
+        var pod = Build(RepoRequest);
+
+        var reference = Env(pod, "GH_TOKEN").ValueFrom.SecretKeyRef;
+        Assert.Equal(pod.Metadata.Name, reference.Name);
+        Assert.Equal("github-token", reference.Key);
+    }
+
+    [Fact]
+    public void Pod_NeverExpandsAVariableInACommandOrArgument()
+    {
+        var pod = Build(RepoRequest);
+
+        var all = pod.Spec.InitContainers.Concat(pod.Spec.Containers).SelectMany(c => (c.Command ?? []).Concat(c.Args ?? []));
+        Assert.DoesNotContain(all, a => a.Contains("$(", StringComparison.Ordinal));
+        Assert.DoesNotContain(all, a => a.Contains("x-access-token", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Pod_DoesNotLogToolContentOnTheReadTier()
+    {
+        Assert.DoesNotContain(Agent(Build(RepoRequest)).Env, e => e.Name == "OTEL_LOG_TOOL_CONTENT");
+    }
+
+    [Fact]
+    public void Pod_KeepsToolContentLoggingOnTheClusterReadTier()
+    {
+        var pod = Build(Request with { Tier = AgentTier.ClusterRead }, o => o.ClusterReadServiceAccountName = "agent-runner-cluster-read");
+
+        Assert.Equal("1", Env(pod, "OTEL_LOG_TOOL_CONTENT").Value);
+    }
+
+    [Fact]
+    public void Pod_RejectsAMalformedRepoContext()
+    {
+        Assert.ThrowsAny<ArgumentException>(() => Build(Request with { Repo = Repo with { Repo = "not a repo" } }));
+        Assert.ThrowsAny<ArgumentException>(() => Build(Request with { Repo = Repo with { PullRequest = 0 } }));
+        Assert.ThrowsAny<ArgumentException>(() => Build(Request with { Repo = Repo with { HeadSha = "main" } }));
+        Assert.ThrowsAny<ArgumentException>(() => Build(Request with { Repo = Repo with { HeadSha = new string('z', 40) } }));
     }
 }

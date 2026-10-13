@@ -2,13 +2,17 @@ using System.Text.Json.Serialization;
 
 namespace AgentPlatform.Host.Agents;
 
+public sealed record AgentRepoContext(string Repo, int PullRequest, string HeadSha);
+
 public sealed record AgentRunRequest(
     string WorkflowId,
     string RunId,
     string Step,
     string Prompt,
     AgentTier Tier,
-    int DeadlineSeconds);
+    int DeadlineSeconds,
+    int Attempt = 1,
+    AgentRepoContext? Repo = null);
 
 [JsonConverter(typeof(JsonStringEnumConverter<AgentRunOutcome>))]
 public enum AgentRunOutcome
@@ -18,6 +22,7 @@ public enum AgentRunOutcome
     UsageLimit,
     PodFailed,
     TimedOut,
+    LimitExceeded,
 }
 
 public sealed record AgentRunUsage(
@@ -26,7 +31,13 @@ public sealed record AgentRunUsage(
     double? CostUsd,
     long? DurationMs,
     int? NumTurns,
-    string? SessionId);
+    string? SessionId)
+{
+    private const double MaxStorableCostUsd = 9_999_999_999d;
+
+    public static decimal? ToCostUsd(double? cost) =>
+        cost is { } value && double.IsFinite(value) && Math.Abs(value) <= MaxStorableCostUsd ? (decimal)value : null;
+}
 
 public sealed record AgentRunResult(
     AgentRunOutcome Outcome,
@@ -37,4 +48,4 @@ public sealed record AgentRunResult(
     AgentRunUsage? Usage,
     string? Model = null);
 
-public sealed record AgentRunIdentity(string WorkflowId, string RunId);
+public sealed record AgentRunIdentity(string WorkflowId, string RunId, string Step, int Attempt);

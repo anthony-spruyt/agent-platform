@@ -84,6 +84,22 @@ public sealed class GitHubInstallationTokenProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task MintTokenAsync_ReturnsTheProvidersExpiryAndNeverServesACachedToken()
+    {
+        var (provider, handler) = Create();
+
+        var first = await provider.MintTokenAsync("octo/widgets", ChecksRead, Ct);
+        var second = await provider.MintTokenAsync("octo/widgets", ChecksRead, Ct);
+
+        Assert.Equal("ghs_token_1", first.Token);
+        Assert.Equal("ghs_token_2", second.Token);
+        Assert.Equal(Start + TimeSpan.FromHours(1), first.ExpiresAt);
+        Assert.Equal(2, handler.Requests.Count(r => r.Uri.AbsolutePath.EndsWith("/access_tokens", StringComparison.Ordinal)));
+        using var body = JsonDocument.Parse(handler.Requests[^1].Body!);
+        Assert.Equal(["widgets"], body.RootElement.GetProperty("repositories").EnumerateArray().Select(e => e.GetString()));
+    }
+
+    [Fact]
     public async Task TheInstallationIsLookedUpPerRepository()
     {
         var (provider, handler) = Create();

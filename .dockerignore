@@ -9,5 +9,6 @@
 tests/
 src/AgentPlatform.AppHost/
 **/*.md
+!src/AgentPlatform.Host/Prompts/*.md
 Dockerfile
 .dockerignore
