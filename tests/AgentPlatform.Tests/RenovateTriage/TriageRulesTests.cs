@@ -43,6 +43,7 @@ public class TriageRulesTests
         }
 
         [Theory]
+        [InlineData("agent/needs-human-review")]
         [InlineData("agent/needs-review")]
         [InlineData("agent/revert")]
         [InlineData("blocked")]
@@ -52,6 +53,7 @@ public class TriageRulesTests
         }
 
         [Theory]
+        [InlineData("agent/needs-human-review")]
         [InlineData("agent/needs-review")]
         [InlineData("agent/auto-approved")]
         public void InShadowMode_TheLabelsOfTheLivePath_AreIgnored(string label)
@@ -60,10 +62,33 @@ public class TriageRulesTests
         }
 
         [Fact]
-        public void TheNeedsReviewLabel_StillBlocksWhenAskedToHonourIt()
+        public void TheNeedsReviewLabel_IsTheNewName()
         {
-            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-review"], ignoreTriageSignals: true, honourNeedsReviewLabel: true));
+            Assert.Equal("agent/needs-human-review", TriageRules.NeedsReviewLabel);
+        }
+
+        [Theory]
+        [InlineData("agent/needs-human-review")]
+        [InlineData("agent/needs-review")]
+        public void EitherNeedsReviewName_StillBlocksWhenAskedToHonourIt(string label)
+        {
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, [label], ignoreTriageSignals: true, honourNeedsReviewLabel: true));
+        }
+
+        [Fact]
+        public void TheAutoApprovedLabel_DoesNotBlockWhenAskedToHonourTheNeedsReviewLabel()
+        {
             Assert.Null(TriageRules.SkipReason(29139614, ["agent/auto-approved"], ignoreTriageSignals: true, honourNeedsReviewLabel: true));
+        }
+
+        [Theory]
+        [InlineData("agent/needs-human-review", true)]
+        [InlineData("agent/needs-review", true)]
+        [InlineData("agent/auto-approved", false)]
+        [InlineData("blocked", false)]
+        public void CarriesNeedsReviewLabel_MatchesEitherName(string label, bool expected)
+        {
+            Assert.Equal(expected, TriageRules.CarriesNeedsReviewLabel(["dep/minor", label]));
         }
 
         [Theory]
@@ -71,10 +96,11 @@ public class TriageRulesTests
         [InlineData("blocked")]
         public void InShadowMode_OtherBlockingLabels_StillSkip(string label)
         {
-            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-review", label], ignoreTriageSignals: true));
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-human-review", "agent/needs-review", label], ignoreTriageSignals: true));
         }
 
         [Theory]
+        [InlineData("agent/needs-human-review")]
         [InlineData("agent/needs-review")]
         [InlineData("agent/revert")]
         [InlineData("blocked")]

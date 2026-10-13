@@ -39,7 +39,8 @@ public static partial class TriageRules
     public const string AllowedOwner = "anthony-spruyt";
 
     public const string StickyMarker = "<!-- agent-platform:renovate-triage -->";
-    public const string NeedsReviewLabel = "agent/needs-review";
+    public const string NeedsReviewLabel = "agent/needs-human-review";
+    public const string LegacyNeedsReviewLabel = "agent/needs-review";
     public const string AutoApprovedLabel = "agent/auto-approved";
 
     public const string NotOpen = "not-open";
@@ -87,9 +88,9 @@ public static partial class TriageRules
 
     private static readonly string[] _trustedAssociations = ["OWNER", "MEMBER", "COLLABORATOR"];
 
-    private static readonly string[] _blockingLabels = ["agent/needs-review", "agent/revert", "blocked"];
+    private static readonly string[] _blockingLabels = [NeedsReviewLabel, LegacyNeedsReviewLabel, "agent/revert", "blocked"];
 
-    private static readonly string[] _livePathLabels = ["agent/needs-review", "agent/auto-approved"];
+    private static readonly string[] _livePathLabels = [NeedsReviewLabel, LegacyNeedsReviewLabel, "agent/auto-approved"];
 
     private static readonly string[] _ignoredCheckPrefixes = ["Mergify", "renovate/stability-days"];
 
@@ -118,6 +119,12 @@ public static partial class TriageRules
         }
 
         return labels.Any(l => IsBlockingLabel(l, ignoreTriageSignals, honourNeedsReviewLabel)) ? BlockingLabel : null;
+    }
+
+    public static bool CarriesNeedsReviewLabel(IReadOnlyCollection<string> labels)
+    {
+        ArgumentNullException.ThrowIfNull(labels);
+        return labels.Any(IsNeedsReviewLabel);
     }
 
     public static bool IsNotOpen(string state, bool merged, bool shadow)
@@ -335,7 +342,10 @@ public static partial class TriageRules
 
     private static bool IsBlockingLabel(string label, bool ignoreTriageSignals, bool honourNeedsReviewLabel) =>
         _blockingLabels.Contains(label, StringComparer.Ordinal)
-        && !(ignoreTriageSignals && _livePathLabels.Contains(label, StringComparer.Ordinal) && !(honourNeedsReviewLabel && label == NeedsReviewLabel));
+        && !(ignoreTriageSignals && _livePathLabels.Contains(label, StringComparer.Ordinal) && !(honourNeedsReviewLabel && IsNeedsReviewLabel(label)));
+
+    private static bool IsNeedsReviewLabel(string label) =>
+        string.Equals(label, NeedsReviewLabel, StringComparison.Ordinal) || string.Equals(label, LegacyNeedsReviewLabel, StringComparison.Ordinal);
 
     private static bool IsTriageBot(GitHubReview review) => string.Equals(review.AuthorLogin, TriageBotLogin, StringComparison.Ordinal);
 

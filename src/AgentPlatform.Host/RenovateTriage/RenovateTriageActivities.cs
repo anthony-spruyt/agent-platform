@@ -173,6 +173,12 @@ public sealed partial class RenovateTriageActivities(
 
             if (input.Decision.Verdict == TriageVerdict.Approve)
             {
+                if (TriageRules.CarriesNeedsReviewLabel(pr.Labels))
+                {
+                    LogNotApplied(logger, input.Repo, input.PrNumber, TriageRules.BlockingLabel);
+                    return new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel);
+                }
+
                 await ApproveAsync(input, cancellationToken).ConfigureAwait(false);
             }
             else
