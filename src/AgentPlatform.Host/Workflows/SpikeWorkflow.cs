@@ -48,6 +48,18 @@ public partial class SpikeWorkflow
 
     private const int MaxInvalidSubmits = 2;
 
+    private static readonly ActivityOptions _loadPromptOptions = new()
+    {
+        StartToCloseTimeout = TimeSpan.FromSeconds(30),
+        ScheduleToCloseTimeout = TimeSpan.FromMinutes(5),
+        RetryPolicy = new RetryPolicy
+        {
+            InitialInterval = TimeSpan.FromSeconds(1),
+            BackoffCoefficient = 2,
+            MaximumInterval = TimeSpan.FromSeconds(30),
+        },
+    };
+
     private SubmitResultPayload? _result;
     private TriageResult? _triage;
     private bool _submitted;
@@ -206,7 +218,7 @@ public partial class SpikeWorkflow
 
         var body = await Workflow.ExecuteActivityAsync(
             (PromptActivities activities) => activities.LoadPromptAsync(input.PromptName),
-            RunRecorder.Options);
+            _loadPromptOptions);
         return (input.PromptName, body, repo);
     }
 

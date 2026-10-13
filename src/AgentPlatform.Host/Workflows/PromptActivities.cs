@@ -10,6 +10,8 @@ public sealed partial class PromptActivities(AgentPromptsOptions options, ILogge
     public const string LoadPromptName = "LoadPrompt";
     public const int MaxOverrideBytes = 64 * 1024;
 
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     [Activity(LoadPromptName)]
     public async Task<string> LoadPromptAsync(string name)
     {
@@ -25,18 +27,18 @@ public sealed partial class PromptActivities(AgentPromptsOptions options, ILogge
         }
 
         var path = Path.Combine(options.Directory, $"{name}.md");
-        if (!File.Exists(path))
+        var body = await ReadOverrideAsync(name, path).ConfigureAwait(false);
+        if (body is null)
         {
             LogMissingOverride(logger, name, path);
             return AgentPrompts.Load(name);
         }
 
-        var body = await ReadOverrideAsync(name, path).ConfigureAwait(false);
         LogOverride(logger, name, path);
         return body;
     }
 
-    private static async Task<string> ReadOverrideAsync(string name, string path)
+    private static async Task<string?> ReadOverrideAsync(string name, string path)
     {
         var buffer = new byte[MaxOverrideBytes + 1];
         int length;
@@ -44,6 +46,10 @@ public sealed partial class PromptActivities(AgentPromptsOptions options, ILogge
         {
             await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             length = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -55,7 +61,21 @@ public sealed partial class PromptActivities(AgentPromptsOptions options, ILogge
             throw new ApplicationFailureException($"The prompt override {path} for {name} is over {MaxOverrideBytes} bytes.", nonRetryable: true);
         }
 
-        var body = Encoding.UTF8.GetString(buffer, 0, length);
+        string body;
+        try
+        {
+            body = StrictUtf8.GetString(buffer, 0, length);
+        }
+        catch (DecoderFallbackException ex)
+        {
+            throw new ApplicationFailureException($"The prompt override {path} for {name} is not valid UTF-8.", ex, nonRetryable: true);
+        }
+
+        if (body.StartsWith('\uFEFF'))
+        {
+            body = body[1..];
+        }
+
         return string.IsNullOrWhiteSpace(body)
             ? throw new ApplicationFailureException($"The prompt override {path} for {name} is empty.", nonRetryable: true)
             : body;

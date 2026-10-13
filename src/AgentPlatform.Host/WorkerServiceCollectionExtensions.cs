@@ -64,7 +64,7 @@ public static class WorkerServiceCollectionExtensions
 
     private static void Validate(AgentPromptsOptions prompts)
     {
-        if (prompts.Directory is { Length: > 0 } directory && !Path.IsPathRooted(directory))
+        if (prompts.Directory is { Length: > 0 } directory && !Path.IsPathFullyQualified(directory))
         {
             throw new InvalidOperationException("AgentPrompts:Directory must be an absolute path.");
         }

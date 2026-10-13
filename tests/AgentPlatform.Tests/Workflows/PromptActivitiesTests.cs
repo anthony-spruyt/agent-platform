@@ -97,6 +97,54 @@ public sealed class PromptActivitiesTests : IDisposable
     }
 
     [Fact]
+    public async Task AMissingOverrideDirectory_FallsBackToTheEmbeddedPrompt()
+    {
+        var missing = Path.Combine(_directory, "gone");
+
+        var body = await Create(missing).LoadPromptAsync(Name);
+
+        Assert.Equal(AgentPrompts.Load(Name), body);
+    }
+
+    [Fact]
+    public async Task AnOverridePathThatIsADirectory_FailsWithoutFallingBack()
+    {
+        Directory.CreateDirectory(Path.Combine(_directory, $"{Name}.md"));
+
+        var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Create(_directory).LoadPromptAsync(Name));
+
+        Assert.True(failure.NonRetryable);
+    }
+
+    [Fact]
+    public async Task AnOverrideFileWithInvalidUtf8_FailsWithoutFallingBack()
+    {
+        File.WriteAllBytes(Path.Combine(_directory, $"{Name}.md"), [0x63, 0xFF, 0xFE, 0x64]);
+
+        var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Create(_directory).LoadPromptAsync(Name));
+
+        Assert.True(failure.NonRetryable);
+    }
+
+    [Fact]
+    public async Task ALeadingByteOrderMark_IsStripped()
+    {
+        File.WriteAllBytes(Path.Combine(_directory, $"{Name}.md"), [0xEF, 0xBB, 0xBF, .. "custom"u8]);
+
+        Assert.Equal("custom", await Create(_directory).LoadPromptAsync(Name));
+    }
+
+    [Fact]
+    public async Task AnOverrideFileOfOnlyAByteOrderMark_IsEmpty()
+    {
+        File.WriteAllBytes(Path.Combine(_directory, $"{Name}.md"), [0xEF, 0xBB, 0xBF]);
+
+        var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Create(_directory).LoadPromptAsync(Name));
+
+        Assert.True(failure.NonRetryable);
+    }
+
+    [Fact]
     [SupportedOSPlatform("linux")]
     public async Task AnUnreadableOverrideFile_FailsWithoutFallingBack()
     {

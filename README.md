@@ -71,7 +71,7 @@ an empty result), `UsageLimit`, `LimitExceeded` (Claude Code stopped at `--max-t
 
 ### Repository runs on the read tier
 
-A run with `repo`, `pullRequest` and `headSha` and a `promptName` runs a named prompt (embedded under `Prompts/`; `renovate-triage`) against one pull request.
+A run with `repo`, `pullRequest` and `headSha` and a `promptName` runs a named prompt (embedded under `Prompts/`, where `AgentPrompts:Directory` can override them; `renovate-triage`) against one pull request.
 
 - The `GitHub:ReadApp` App mints a read-only installation token for that one repository. The provider's `expires_at` caps the pod deadline: `min(configured, expires_at - now - token grace - scheduling grace)`.
 - The per-run Secret holds the MCP config, the prompt, the session token, the GitHub token and a git credential file. The pod gets the tokens only as environment variables (`AP_MCP_SESSION_KEY`, `AP_LITELLM_API_KEY`, `GH_TOKEN`) and reads the prompt from stdin; no token or prompt text appears in a command line.
