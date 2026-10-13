@@ -4,6 +4,7 @@ public sealed class AgentPodsOptions
 {
     public const string SectionName = "AgentPods";
 
+    // renovate: datasource=docker depName=ghcr.io/anthony-spruyt/claude-agent-read
     public const string DefaultImage =
         "ghcr.io/anthony-spruyt/claude-agent-read:1.1.0@sha256:18bcca88120c6f3861cca4bbb80ee74fe5a73d34cc0dbecf358ba15dc8c1f3f2";
 
