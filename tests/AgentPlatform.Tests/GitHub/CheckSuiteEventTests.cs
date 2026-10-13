@@ -8,7 +8,7 @@ namespace AgentPlatform.Tests.GitHub;
 public class CheckSuiteEventTests
 {
     private static IReadOnlyList<AgentPlatform.Host.Workflows.CheckSuiteCompletedSignal> Extract(string body, string delivery = "d-1") =>
-        CheckSuiteEvent.ToSignals(Encoding.UTF8.GetBytes(body), delivery);
+        CheckSuiteEvent.ToSignals(Encoding.UTF8.GetBytes(body), delivery, ownAppId: 3233443);
 
     [Fact]
     public void ACompletedRenovateSuiteWithAPullRequest_ProducesOneSignalWithEveryField()
@@ -170,5 +170,29 @@ public class CheckSuiteEventTests
     public void ABodyThatIsNotAnObject_Throws(string body)
     {
         Assert.ThrowsAny<JsonException>(() => Extract(body));
+    }
+
+    [Fact]
+    public void ASuiteFromOurOwnApp_IsDropped()
+    {
+        var body = GitHubPayloads.CheckSuite(appSlug: "skynet-rw", appId: 3233443);
+
+        Assert.Empty(CheckSuiteEvent.ToSignals(Encoding.UTF8.GetBytes(body), "d-1", ownAppId: 3233443));
+    }
+
+    [Fact]
+    public void ASuiteFromAnotherApp_IsForwarded()
+    {
+        var body = GitHubPayloads.CheckSuite(appSlug: "github-actions", appId: 15368);
+
+        Assert.Single(CheckSuiteEvent.ToSignals(Encoding.UTF8.GetBytes(body), "d-1", ownAppId: 3233443));
+    }
+
+    [Fact]
+    public void ASuiteWithoutAnAppId_IsForwarded()
+    {
+        var body = GitHubPayloads.CheckSuite(appSlug: null);
+
+        Assert.Single(CheckSuiteEvent.ToSignals(Encoding.UTF8.GetBytes(body), "d-1", ownAppId: 3233443));
     }
 }
