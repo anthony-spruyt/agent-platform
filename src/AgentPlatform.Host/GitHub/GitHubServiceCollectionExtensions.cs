@@ -20,6 +20,8 @@ public static class GitHubServiceCollectionExtensions
             throw new InvalidOperationException("GitHub:WebhookSecret is required.");
         }
 
+        GitHubAppOptions.RequireAppId(options.AppId);
+
         services.Configure<GitHubWebhookOptions>(section);
         services.AddSingleton<IRenovateTriageSignaler, TemporalRenovateTriageSignaler>();
         return services;
@@ -31,7 +33,9 @@ public static class GitHubServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         var section = configuration.GetSection(GitHubAppOptions.SectionName);
-        Validate(section.Get<GitHubAppOptions>() ?? new GitHubAppOptions());
+        var options = section.Get<GitHubAppOptions>() ?? new GitHubAppOptions();
+        GitHubAppOptions.RequireAppId(options.AppId);
+        Validate(options);
 
         services.Configure<GitHubAppOptions>(section);
         services.TryAddSingleton(TimeProvider.System);

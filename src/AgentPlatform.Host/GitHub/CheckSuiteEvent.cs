@@ -11,7 +11,7 @@ public sealed record CheckSuiteEvent(string? Action, CheckSuiteEvent.Suite? Chec
 
     public sealed record Suite(long Id, string? HeadBranch, string? HeadSha, string? Conclusion, AppInfo? App, IReadOnlyList<PullRequestInfo>? PullRequests);
 
-    public sealed record AppInfo(string? Slug);
+    public sealed record AppInfo(string? Slug, long? Id = null);
 
     public sealed record PullRequestInfo(int Number, HeadInfo? Head, BaseInfo? Base);
 
@@ -23,14 +23,14 @@ public sealed record CheckSuiteEvent(string? Action, CheckSuiteEvent.Suite? Chec
 
     public sealed record RepositoryInfo(long Id, string? FullName);
 
-    public static IReadOnlyList<CheckSuiteCompletedSignal> ToSignals(ReadOnlySpan<byte> body, string deliveryId)
+    public static IReadOnlyList<CheckSuiteCompletedSignal> ToSignals(ReadOnlySpan<byte> body, string deliveryId, long ownAppId)
     {
         ArgumentNullException.ThrowIfNull(deliveryId);
         var payload = JsonSerializer.Deserialize<CheckSuiteEvent>(body, GitHubJson.Options);
-        return payload?.ToSignals(deliveryId) ?? [];
+        return payload?.ToSignals(deliveryId, ownAppId) ?? [];
     }
 
-    private List<CheckSuiteCompletedSignal> ToSignals(string deliveryId)
+    private List<CheckSuiteCompletedSignal> ToSignals(string deliveryId, long ownAppId)
     {
         var signals = new List<CheckSuiteCompletedSignal>();
         if (Action != "completed"
@@ -38,7 +38,8 @@ public sealed record CheckSuiteEvent(string? Action, CheckSuiteEvent.Suite? Chec
             || Repository is not { Id: > 0, FullName: { } fullName } repository
             || !GitHubRepoName.TryParse(fullName, out _, out _)
             || !TriageRules.IsAllowedOwner(fullName)
-            || !IsRenovateUpdateBranch(suite.HeadBranch))
+            || !IsRenovateUpdateBranch(suite.HeadBranch)
+            || suite.App?.Id == ownAppId)
         {
             return signals;
         }

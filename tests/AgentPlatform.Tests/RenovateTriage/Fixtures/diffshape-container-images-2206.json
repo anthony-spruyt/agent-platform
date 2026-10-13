@@ -1,0 +1,27 @@
+{
+  "expectedFileCount": 3,
+  "head": "6c5427d8271e8445bb1b1739b6bc76ee9649d29b",
+  "files": [
+    {
+      "path": ".github/workflows/_build-image.yaml",
+      "status": "modified",
+      "patch": "@@ -68,7 +68,7 @@ jobs:\n           image: ${{ inputs.image }}\n \n       - name: Build image\n-        uses: anthony-spruyt/repo-operator/.github/actions/build-image@5cbe1a184d32fd631420e30e20b46a85b5aa244f # main\n+        uses: anthony-spruyt/repo-operator/.github/actions/build-image@7bf816527b748801f0ac22002211ecdd00c2f64c # main\n         with:\n           image: ${{ inputs.image }}\n           context: ${{ steps.prepare.outputs.context }}\n@@ -149,7 +149,7 @@ jobs:\n       - name: Build and push image\n         id: build\n         if: steps.verify.outputs.published != 'true'\n-        uses: anthony-spruyt/repo-operator/.github/actions/build-image@5cbe1a184d32fd631420e30e20b46a85b5aa244f # main\n+        uses: anthony-spruyt/repo-operator/.github/actions/build-image@7bf816527b748801f0ac22002211ecdd00c2f64c # main\n         with:\n           image: ${{ inputs.image }}\n           context: ${{ steps.prepare.outputs.context }}\n@@ -165,7 +165,7 @@ jobs:\n       # Must stay last: on failure the release stays a draft, so a published release always has an image.\n       - name: Publish release\n         if: steps.verify.outputs.published != 'true'\n-        uses: anthony-spruyt/repo-operator/.github/actions/publish-release@5cbe1a184d32fd631420e30e20b46a85b5aa244f # main\n+        uses: anthony-spruyt/repo-operator/.github/actions/publish-release@7bf816527b748801f0ac22002211ecdd00c2f64c # main\n         with:\n           tag: ${{ inputs.tag-name }}\n           image-ref: ${{ steps.build.outputs.image-ref }}"
+    },
+    {
+      "path": ".github/workflows/ci.yaml",
+      "status": "modified",
+      "patch": "@@ -33,7 +33,7 @@ jobs:\n       actions: read\n       contents: read\n       security-events: write\n-    uses: \"anthony-spruyt/repo-operator/.github/workflows/_lint.yaml@5cbe1a184d32fd631420e30e20b46a85b5aa244f\" # main\n+    uses: \"anthony-spruyt/repo-operator/.github/workflows/_lint.yaml@7bf816527b748801f0ac22002211ecdd00c2f64c\" # main\n \n   factory-tests:\n     name: MegaLinter Factory Tests\n@@ -191,4 +191,4 @@ jobs:\n     permissions:\n       actions: read\n       contents: read\n-    uses: \"anthony-spruyt/repo-operator/.github/workflows/_summary.yaml@5cbe1a184d32fd631420e30e20b46a85b5aa244f\" # main\n+    uses: \"anthony-spruyt/repo-operator/.github/workflows/_summary.yaml@7bf816527b748801f0ac22002211ecdd00c2f64c\" # main"
+    },
+    {
+      "path": ".github/workflows/container-retention.yaml",
+      "status": "modified",
+      "patch": "@@ -44,7 +44,7 @@ jobs:\n     needs: collect-packages\n     permissions:\n       packages: write\n-    uses: anthony-spruyt/repo-operator/.github/workflows/_container-retention.yaml@5cbe1a184d32fd631420e30e20b46a85b5aa244f # main\n+    uses: anthony-spruyt/repo-operator/.github/workflows/_container-retention.yaml@7bf816527b748801f0ac22002211ecdd00c2f64c # main\n     with:\n       packages: ${{ needs.collect-packages.outputs.list }}\n       dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "6c5427d8271e8445bb1b1739b6bc76ee9649d29b",
+      "message": "chore(deps): update anthony-spruyt/repo-operator digest to 7bf8165"
+    }
+  ]
+}

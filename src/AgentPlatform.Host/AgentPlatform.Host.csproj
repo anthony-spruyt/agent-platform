@@ -12,7 +12,11 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="RenovateTriage\JevQuestions.json" LogicalName="JevQuestions.json" />
+    <EmbeddedResource Include="RenovateTriage\JevCiQuestions.json" LogicalName="JevCiQuestions.json" />
     <EmbeddedResource Include="Prompts\*.md" LogicalName="Prompts/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentPlatform.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\AgentPlatform.ServiceDefaults\AgentPlatform.ServiceDefaults.csproj" />

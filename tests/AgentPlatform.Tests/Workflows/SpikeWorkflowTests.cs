@@ -2,12 +2,15 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Replay;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Temporalio.Activities;
 using Temporalio.Api.Enums.V1;
 using Temporalio.Client;
@@ -66,17 +69,20 @@ public class SpikeWorkflowTests
         Func<Task<T>> body,
         InMemoryRunData? data = null,
         object? runDataActivities = null,
-        object? promptActivities = null)
+        object? promptActivities = null,
+        FakeGitHubApi? github = null)
         where TPod : class
         where TCleanup : class
     {
         var recording = runDataActivities ?? (data ?? InMemoryRunData.Create()).Activities;
         var prompts = promptActivities ?? new PromptActivities(new AgentPromptsOptions(), NullLogger<PromptActivities>.Instance);
+        var context = new RenovateTriageCodeActivities(github ?? new FakeGitHubApi(), new FakeJev(), new FakeTextScanner(), Options.Create(new RenovateTriageOptions()));
         using var workflows = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<SpikeWorkflow>()
                 .AddAllActivities(cleanup)
+                .AddAllActivities(context)
                 .AddAllActivities(prompts.GetType(), prompts)
                 .AddAllActivities(recording.GetType(), recording));
         using var pods = new TemporalWorker(
@@ -767,6 +773,65 @@ public class SpikeWorkflowTests
         Assert.Contains(Sha, input.Prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("{{", input.Prompt, StringComparison.Ordinal);
         Assert.Equal(1, input.Attempt);
+    }
+
+    [Fact]
+    public async Task ATriageRun_ExposesTheTriageContextBuiltBeforeThePodStarts()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities();
+        var github = new FakeGitHubApi();
+
+        var context = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env, TriageInput());
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Triage("SAFE")));
+            await handle.GetResultAsync();
+            await HistoryStore.RecordAsync(handle, "spike-triage-context");
+            return await handle.QueryAsync(wf => wf.GetTriageContext());
+        }, github: github);
+
+        Assert.NotNull(context);
+        var all = string.Join('\n', context.Sections);
+        Assert.Contains("Repository: octo/widgets", all, StringComparison.Ordinal);
+        Assert.Contains("kind=\"pr-description\"", all, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATriageRunWhoseContextCannotBeBuilt_StillRunsThePod()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var activities = new ScriptedActivities();
+        var github = new FakeGitHubApi { Failure = new GitHubApiException("unprocessable", HttpStatusCode.UnprocessableEntity) };
+
+        var (result, context) = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env, TriageInput());
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Triage("SAFE")));
+            return (await handle.GetResultAsync(), await handle.QueryAsync(wf => wf.GetTriageContext()));
+        }, github: github);
+
+        Assert.Equal(SpikeStatus.Succeeded, result.Status);
+        Assert.Null(context);
+        Assert.Single(activities.Inputs);
+    }
+
+    [Fact]
+    public async Task ARunThatIsNotATriage_HasNoTriageContext()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var github = new FakeGitHubApi();
+
+        var context = await InWorkersAsync(env, new ScriptedActivities(), new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            await handle.GetResultAsync();
+            return await handle.QueryAsync(wf => wf.GetTriageContext());
+        }, github: github);
+
+        Assert.Null(context);
+        Assert.Empty(github.Calls);
     }
 
     private sealed class StubPrompts(Func<string, string> onLoad)

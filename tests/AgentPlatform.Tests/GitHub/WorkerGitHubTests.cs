@@ -81,6 +81,21 @@ public class WorkerGitHubTests
     }
 
     [Theory]
+    [InlineData("Iv1.abc123")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("12 3")]
+    public void ANonNumericAppId_FailsAtStartup(string appId)
+    {
+        var github = Valid();
+        github["AppId"] = appId;
+
+        var failure = Assert.Throws<InvalidOperationException>(() => Build(github));
+
+        Assert.Contains("GitHub:AppId", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("  ")]

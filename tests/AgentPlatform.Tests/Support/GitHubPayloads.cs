@@ -26,7 +26,8 @@ internal static class GitHubPayloads
         string? conclusion = "success",
         object[]? pullRequests = null,
         long suiteId = 99,
-        string repo = Repo) =>
+        string repo = Repo,
+        long? appId = null) =>
         JsonSerializer.Serialize(new
         {
             action,
@@ -36,7 +37,7 @@ internal static class GitHubPayloads
                 head_branch = branch,
                 head_sha = HeadSha,
                 conclusion,
-                app = appSlug is null ? null : new { slug = appSlug },
+                app = appSlug is null ? null : new { slug = appSlug, id = appId },
                 pull_requests = pullRequests ?? [PullRequest(7)],
             },
             repository = new { id = RepoId, full_name = repo },

@@ -1,0 +1,22 @@
+{
+  "expectedFileCount": 2,
+  "head": "10dd4b1a3d2fe0f9fc800bed185248efae1aa680",
+  "files": [
+    {
+      "path": "llm-guard/app/requirements.txt",
+      "status": "modified",
+      "patch": "@@ -2,5 +2,5 @@ fastapi==0.142.2\n uvicorn[standard]==0.54.0\n transformers==5.18.0\n tokenizers==0.23.3\n-pydantic==2.13.5\n+pydantic==2.14.1\n pyyaml==6.0.3"
+    },
+    {
+      "path": "llm-tool-guard/app/requirements.txt",
+      "status": "modified",
+      "patch": "@@ -2,6 +2,6 @@ fastapi==0.142.2\n uvicorn[standard]==0.54.0\n transformers==5.18.0\n tokenizers==0.23.3\n-pydantic==2.13.5\n+pydantic==2.14.1\n redis==8.1.0\n prometheus-client==0.26.0"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "10dd4b1a3d2fe0f9fc800bed185248efae1aa680",
+      "message": "chore(deps): update dependency pydantic to v2.14.1\n\n| datasource | package  | from   | to     |\n| ---------- | -------- | ------ | ------ |\n| pypi       | pydantic | 2.13.5 | 2.14.1 |"
+    }
+  ]
+}

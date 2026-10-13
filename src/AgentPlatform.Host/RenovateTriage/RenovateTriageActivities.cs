@@ -1,5 +1,6 @@
 using System.Net;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.PullRequests;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Temporalio.Activities;
@@ -72,6 +73,11 @@ public sealed partial class RenovateTriageActivities(
                 return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.NonRenovateCommitDecision(), Mode: mode);
             }
 
+            if (input.Step2 && !string.Equals(input.PrecheckedSha, sha, StringComparison.Ordinal))
+            {
+                return new AssessResult(AssessStatus.NeedsPrecheck, sha, Mode: mode);
+            }
+
             var checks = await github.ListCheckRunsAsync(input.Repo, sha, cancellationToken).ConfigureAwait(false);
             var suites = await github.ListCheckSuitesAsync(input.Repo, sha, cancellationToken).ConfigureAwait(false);
             var ci = TriageRules.AssessChecks(checks, suites);
@@ -83,7 +89,8 @@ public sealed partial class RenovateTriageActivities(
             if (ci == CiState.Failed)
             {
                 var failed = TriageRules.FailedChecks(checks);
-                return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.CiFailedDecision(input.Repo, sha, failed), Mode: mode);
+                var ciFailed = input.Step2 ? AssessStatus.CiFailed : AssessStatus.Decided;
+                return new AssessResult(ciFailed, sha, Decision: TriageRules.CiFailedDecision(input.Repo, sha, failed), Mode: mode);
             }
 
             return TriageRules.RiskyTerm(pr.HeadRef) is { } term
@@ -106,11 +113,12 @@ public sealed partial class RenovateTriageActivities(
             var files = await github.ListPullRequestFilesAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             var diff = PrDiff.Build(files, JevClient.MaxPrDiffBytes);
             var facts = BumpAnalyzer.Analyze(files);
+            var jevBody = JevBody(input, pr.Body);
 
             JevAnswers answers;
             try
             {
-                answers = await jev.AskAsync(pr.Body, diff, cancellationToken).ConfigureAwait(false);
+                answers = await jev.AskAsync(jevBody, diff, cancellationToken).ConfigureAwait(false);
             }
             catch (JevException ex) when (input.RetryJevErrors)
             {
@@ -186,7 +194,7 @@ public sealed partial class RenovateTriageActivities(
                 await FlagAsync(input, cancellationToken).ConfigureAwait(false);
             }
 
-            await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, cancellationToken).ConfigureAwait(false);
             return new ApplyResult(ApplyOutcome.Applied);
         });
 
@@ -276,6 +284,23 @@ public sealed partial class RenovateTriageActivities(
 
         return TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals, honourNeedsReviewLabel)
             ?? (TriageRules.IsSameRepo(repo, pr.HeadRepo, pr.BaseRepo) ? null : TriageRules.ForeignRepo);
+    }
+
+    private static string? JevBody(JudgeInput input, string? liveBody)
+    {
+        if (input.Body is null)
+        {
+            return liveBody;
+        }
+
+        var texts = new List<ScannedText> { input.Body };
+        texts.AddRange(input.Changelogs ?? []);
+        if (texts.Exists(t => !t.IsIntact))
+        {
+            throw new ArgumentException("A scanned text no longer matches the hash it was scanned under.");
+        }
+
+        return string.Join("\n\n---\n\n", texts.Select(t => t.Text));
     }
 
     private static void Validate(string repo, int prNumber)

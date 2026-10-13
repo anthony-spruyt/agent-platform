@@ -21,10 +21,12 @@ public static class AgentGatewayExtensions
         services.AddSingleton(new AgentSessionTokens(gateway.SessionTokenKey));
         services.AddTemporalClient(temporal.Address, temporal.Namespace);
         services.AddSingleton<IWorkflowResultSubmitter, TemporalWorkflowResultSubmitter>();
+        services.AddSingleton<ITriageContextSource, TemporalTriageContextSource>();
         services.AddHttpContextAccessor();
         services.AddMcpServer()
             .WithHttpTransport(options => options.Stateless = true)
-            .WithTools<SubmitResultTool>();
+            .WithTools<SubmitResultTool>()
+            .WithTools<GetTriageContextTool>();
 
         return services;
     }

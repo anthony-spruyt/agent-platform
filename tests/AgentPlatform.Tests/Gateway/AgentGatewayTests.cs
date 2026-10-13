@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Gateway;
+using AgentPlatform.Host.RenovateTriage;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -25,6 +26,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     private static readonly DateTimeOffset InAnHour = DateTimeOffset.UtcNow.AddHours(1);
 
     private readonly RecordingSubmitter _submitter = new();
+    private readonly FakeContextSource _context = new();
     private readonly WebApplicationFactory<Program> _factory;
 
     public AgentGatewayTests()
@@ -34,9 +36,11 @@ public sealed class AgentGatewayTests : IAsyncDisposable
             builder.UseSetting("AgentPlatform:Role", "Web");
             builder.UseSetting("AgentGateway:SessionTokenKey", Key);
             builder.UseSetting("GitHub:WebhookSecret", "webhook-secret-for-tests");
+            builder.UseSetting("GitHub:AppId", "12345");
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IWorkflowResultSubmitter>(_submitter);
+                services.AddSingleton<ITriageContextSource>(_context);
                 services.AddSingleton<IStartupFilter>(new LocalPortFilter(GatewayPort, WebhookPort));
             });
         });
@@ -73,6 +77,21 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
             Signals.Add((run, payload));
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeContextSource : ITriageContextSource
+    {
+        public TriageContext? Context { get; set; } = new(["facts and index", "first block", "second block"]);
+
+        public Exception? Failure { get; set; }
+
+        public List<AgentRunIdentity> Asked { get; } = [];
+
+        public Task<TriageContext?> GetAsync(AgentRunIdentity run, CancellationToken cancellationToken)
+        {
+            Asked.Add(run);
+            return Failure is null ? Task.FromResult(Context) : Task.FromException<TriageContext?>(Failure);
         }
     }
 
@@ -149,13 +168,85 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task ExposesExactlyTheSubmitResultTool()
+    public async Task ExposesExactlyTheRunTools()
     {
         await using var client = await ConnectAsync(ValidToken());
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
 
-        Assert.Equal("submit_result", Assert.Single(tools).Name);
+        Assert.Equal(["get_triage_context", "submit_result"], tools.Select(t => t.Name).Order(StringComparer.Ordinal));
+    }
+
+    private static string TextOf(ModelContextProtocol.Protocol.CallToolResult result) =>
+        Assert.IsType<ModelContextProtocol.Protocol.TextContentBlock>(Assert.Single(result.Content)).Text;
+
+    [Fact]
+    public async Task GetTriageContext_ReturnsTheFirstSectionByDefault()
+    {
+        await using var client = await ConnectAsync(ValidToken());
+
+        var result = await client.CallToolAsync("get_triage_context", new Dictionary<string, object?>(), cancellationToken: Ct);
+
+        Assert.NotEqual(true, result.IsError);
+        Assert.Equal("facts and index", TextOf(result));
+        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "spike", 1), Assert.Single(_context.Asked));
+    }
+
+    [Theory]
+    [InlineData(2, "first block")]
+    [InlineData(3, "second block")]
+    public async Task GetTriageContext_ReturnsTheNamedSection(int section, string expected)
+    {
+        await using var client = await ConnectAsync(ValidToken());
+
+        var result = await client.CallToolAsync("get_triage_context", new Dictionary<string, object?> { ["section"] = section }, cancellationToken: Ct);
+
+        Assert.Equal(expected, TextOf(result));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4)]
+    [InlineData(-1)]
+    public async Task GetTriageContext_RejectsASectionThatDoesNotExist(int section)
+    {
+        await using var client = await ConnectAsync(ValidToken());
+
+        var result = await client.CallToolAsync("get_triage_context", new Dictionary<string, object?> { ["section"] = section }, cancellationToken: Ct);
+
+        Assert.True(result.IsError);
+        Assert.Contains("1 and 3", TextOf(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetTriageContext_WhenTheRunHasNoContext_Fails()
+    {
+        _context.Context = null;
+        await using var client = await ConnectAsync(ValidToken());
+
+        var result = await client.CallToolAsync("get_triage_context", new Dictionary<string, object?>(), cancellationToken: Ct);
+
+        Assert.True(result.IsError);
+    }
+
+    [Fact]
+    public async Task GetTriageContext_WhenTheRunIsNoLongerActive_Fails()
+    {
+        _context.Failure = new RunNotActiveException("spike-1");
+        await using var client = await ConnectAsync(ValidToken());
+
+        var result = await client.CallToolAsync("get_triage_context", new Dictionary<string, object?>(), cancellationToken: Ct);
+
+        Assert.True(result.IsError);
+    }
+
+    [Fact]
+    public async Task GetTriageContext_WithoutAToken_IsRejected()
+    {
+        using var response = await PostRawAsync(null, """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_triage_context","arguments":{}}}""");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Empty(_context.Asked);
     }
 
     [Fact]

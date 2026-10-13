@@ -1,5 +1,6 @@
 using System.Net;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
@@ -464,6 +465,71 @@ public class RenovateTriageActivitiesTests
         }
     }
 
+    public class Step2AssessTests
+    {
+        private const string OtherSha = "fedcba9876543210fedcba9876543210fedcba98";
+
+        private static Task<AssessResult> AssessStep2(Rig rig, string? prechecked = null) =>
+            Run(() => rig.Activities.AssessAsync(new AssessInput(Repo, 7, Step2: true, PrecheckedSha: prechecked)));
+
+        [Fact]
+        public async Task ARenovatePrThatPassedTheCommitGate_NeedsThePrecheckBeforeTheChecksAreRead()
+        {
+            var rig = Create();
+
+            var result = await AssessStep2(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.NeedsPrecheck, Sha), result);
+            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("checks", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task OnceTheHeadIsPrechecked_TheRulesRunAsBefore()
+        {
+            var rig = Create();
+
+            Assert.Equal(new AssessResult(AssessStatus.NeedsJev, Sha), await AssessStep2(rig, Sha));
+        }
+
+        [Fact]
+        public async Task APrecheckOfAnOlderHead_DoesNotCount()
+        {
+            var rig = Create();
+
+            Assert.Equal(AssessStatus.NeedsPrecheck, (await AssessStep2(rig, OtherSha)).Status);
+        }
+
+        [Fact]
+        public async Task ACommitNotMadeByRenovate_IsDecidedBeforeThePrecheck()
+        {
+            var rig = Create();
+            rig.Github.Commits.Add(rig.Github.Commits[0] with { AuthorLogin = "alice", AuthorId = 5 });
+
+            Assert.Equal(AssessStatus.Decided, (await AssessStep2(rig)).Status);
+        }
+
+        [Fact]
+        public async Task ARedHead_IsHandedToTheCiRungWithTheCiFailedDecision()
+        {
+            var rig = Create();
+            var failed = new GitHubCheckRun(2, "test", "completed", "failure", "github-actions");
+            rig.Github.Checks.Add(failed);
+
+            var result = await AssessStep2(rig, Sha);
+
+            Assert.Equal(new AssessResult(AssessStatus.CiFailed, Sha, Decision: TriageRules.CiFailedDecision(Repo, Sha, [failed])), result);
+        }
+
+        [Fact]
+        public async Task APendingHead_StaysPending()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+
+            Assert.Equal(AssessStatus.Pending, (await AssessStep2(rig, Sha)).Status);
+        }
+    }
+
     public class LiveAssessTests
     {
         private static Rig Live() => Create(TriageMode.Live);
@@ -506,7 +572,7 @@ public class RenovateTriageActivitiesTests
         {
             var rig = Live();
             await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, Ct);
-            await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, Ct);
+            await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.NeedsReview, Ct);
 
             Assert.Equal(new AssessResult(AssessStatus.AlreadyJudged, Sha, Mode: TriageMode.Live), await Assess(rig));
         }
@@ -748,6 +814,53 @@ public class RenovateTriageActivitiesTests
 
     public class JudgeTests
     {
+        [Fact]
+        public async Task JevGetsExactlyTheScannedBody_EvenWhenThePrBodyChangedAfterTheScan()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: "edited after the scan");
+
+            await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create("what was scanned"))));
+
+            Assert.Equal(["what was scanned"], rig.Jev.Bodies);
+        }
+
+        [Fact]
+        public async Task ScannedChangelogSections_FollowTheBodyInWhatJevReads()
+        {
+            var rig = Create();
+
+            await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create("body"), Changelogs: [ScannedText.Create("- fixed one"), ScannedText.Create("- fixed two")])));
+
+            var read = Assert.Single(rig.Jev.Bodies)!;
+            Assert.StartsWith("body", read, StringComparison.Ordinal);
+            Assert.True(read.IndexOf("- fixed one", StringComparison.Ordinal) < read.IndexOf("- fixed two", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task ABodyThatNoLongerMatchesItsHash_IsRefusedWithoutAskingJev()
+        {
+            var rig = Create();
+            var tampered = new ScannedText(ScannedText.Create("what was scanned").Hash, "what was swapped in");
+
+            var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: tampered))));
+
+            Assert.True(failure.NonRetryable);
+            Assert.Empty(rig.Jev.Bodies);
+        }
+
+        [Fact]
+        public async Task AChangelogThatNoLongerMatchesItsHash_IsRefusedWithoutAskingJev()
+        {
+            var rig = Create();
+            var tampered = new ScannedText(ScannedText.Create("scanned").Hash, "swapped");
+
+            var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create("body"), Changelogs: [tampered]))));
+
+            Assert.True(failure.NonRetryable);
+            Assert.Empty(rig.Jev.Bodies);
+        }
+
         [Fact]
         public async Task JevIsAskedWithThePrBodyReadFromGitHub()
         {
@@ -1137,6 +1250,19 @@ public class RenovateTriageActivitiesTests
             Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel), result);
             Assert.Empty(rig.Github.Writes);
             Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task AFlagWrittenOverAnUnappliedApproval_LeavesThatApprovalUnapplied()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+
+            var result = await Apply(rig, _needsReview);
+
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+            Assert.Equal(TriageVerdict.Approve, (await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct))?.Verdict);
         }
 
         [Fact]
