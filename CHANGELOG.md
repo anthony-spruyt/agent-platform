@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.8.0...v1.9.0) (2026-10-13)
+
+
+### Features
+
+* **triage:** add the precheck, check run and code rungs to Renovate triage ([9ebd523](https://github.com/anthony-spruyt/agent-platform/commit/9ebd5231afceac3ee5503c884fcbffd3fed5bc21))
+
 ## [1.8.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.7.0...v1.8.0) (2026-10-13)
 
 
