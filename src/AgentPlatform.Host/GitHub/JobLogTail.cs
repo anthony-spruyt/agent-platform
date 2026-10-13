@@ -13,7 +13,7 @@ internal sealed class JobLogTail(int maxChars)
 
     private readonly StringBuilder _throughFailure = new();
     private readonly StringBuilder _afterFailure = new();
-    private int _lineStart;
+    private readonly StringBuilder _lineHead = new();
     private bool _failureSeen;
 
     public void Append(ReadOnlySpan<char> chunk)
@@ -23,11 +23,11 @@ internal sealed class JobLogTail(int maxChars)
             var newline = chunk.IndexOf('\n');
             if (newline < 0)
             {
-                _afterFailure.Append(chunk);
+                AppendToLine(chunk);
                 break;
             }
 
-            _afterFailure.Append(chunk[..(newline + 1)]);
+            AppendToLine(chunk[..(newline + 1)]);
             chunk = chunk[(newline + 1)..];
             EndLine();
         }
@@ -42,10 +42,19 @@ internal sealed class JobLogTail(int maxChars)
         return text.ToString(Math.Max(0, text.Length - maxChars), Math.Min(text.Length, maxChars));
     }
 
+    private void AppendToLine(ReadOnlySpan<char> text)
+    {
+        _afterFailure.Append(text);
+        var room = MarkerWindow - _lineHead.Length;
+        if (room > 0)
+        {
+            _lineHead.Append(text[..Math.Min(room, text.Length)]);
+        }
+    }
+
     private void EndLine()
     {
-        var length = Math.Min(_afterFailure.Length - _lineStart, MarkerWindow);
-        if (length > 0 && _afterFailure.ToString(_lineStart, length).Contains(FailureMarker, StringComparison.Ordinal))
+        if (_lineHead.Length > 0 && _lineHead.ToString().Contains(FailureMarker, StringComparison.Ordinal))
         {
             _failureSeen = true;
             _throughFailure.Append(_afterFailure);
@@ -53,21 +62,14 @@ internal sealed class JobLogTail(int maxChars)
             Trim(_throughFailure);
         }
 
-        _lineStart = _afterFailure.Length;
+        _lineHead.Clear();
     }
 
     private void Trim(StringBuilder text)
     {
-        if (text.Length <= 2 * maxChars)
+        if (text.Length > 2 * maxChars)
         {
-            return;
-        }
-
-        var drop = text.Length - maxChars;
-        text.Remove(0, drop);
-        if (ReferenceEquals(text, _afterFailure))
-        {
-            _lineStart = Math.Max(0, _lineStart - drop);
+            text.Remove(0, text.Length - maxChars);
         }
     }
 }

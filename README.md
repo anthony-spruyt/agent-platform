@@ -153,13 +153,13 @@ A run started after the `renovate-triage-step2-v1` patch also does the following
    An approve is prechecked again before `Apply` when its head was not prechecked, and that step is recorded as `apply-precheck`.
    When it fails, the flag is written but a stored approval for that head stays unapplied, and the `agent/needs-human-review` label then keeps `Assess` from approving it.
 2. `DetectMigration` reads the scanned body and the changed files; a hands-on migration (`RenovateTriage:Migration:*` globs) is needs review with reason `hands-on-migration`.
-3. When CI has failed, `ClassifyCi` sends the tails of the failing job logs (at most 30,000 characters each) to Jev as read from GitHub, not through the scanner. Jev's answer is one of three fixed values: `Flaky`, `Real` or `Unsure`.
+3. When CI has failed, `ClassifyCi` sends the tails of the failing job logs (at most 30,000 characters each; each tail ends at the log's last `##[error]` line, or is the plain tail when there is none) to Jev as read from GitHub, not through the scanner. Jev's answer is one of three fixed values: `Flaky`, `Real` or `Unsure`.
    A Jev error is `Unsure`, and the recorded reason is `jev_error`. In `Live` mode a `Flaky` answer reruns the failed jobs of each run once (`RerunFailedJobs`; a run on its second attempt is never rerun, and finding nothing failed counts as a rerun),
    then waits for the next check suite to complete and judges again. `Shadow` mode classifies but never reruns.
    Anything else is needs review with reason `ci-failed`. The CI wait itself is `CiWait`: the two hours start at the first pending pass and start over after a rerun, and the wait after a rerun uses the same two hours.
 4. When Jev finds no changelog, `FetchChangelog` fetches the release notes of each update in the body and scans each section. Jev is asked once more only when every section is `Clean`; if any section is held back, the pull request stays needs review with reason `no-changelog`.
 5. In `Live` mode only, once `Apply` has written a needs-review verdict for a reason the code cannot settle by itself (not `non-renovate-commit`, a precheck reason or `hands-on-migration`),
-   `BuildContext` builds the triage context for the Claude rung: typed facts (repository, pull request, head sha, reason, count of failing jobs, texts held back) plus the scanned pull request body, changelog sections and CI log tails,
+   `BuildContext` builds the triage context for the Claude rung: typed facts (repository, pull request, head sha, reason, count of failing jobs, texts held back) plus the scanned pull request body, changelog sections and CI log tails (each ending at the log's last `##[error]` line, or the plain tail when there is none),
    each in a block with a random per-context tag. A CI job is titled `CI job <n>` in the trusted index; its name sits inside the scanned block.
    The changelogs are fetched only when the body scan is clean.
    The workflow keeps it for the `get_triage_context` query, which both `RenovateTriageWorkflow` and `SpikeWorkflow` answer;

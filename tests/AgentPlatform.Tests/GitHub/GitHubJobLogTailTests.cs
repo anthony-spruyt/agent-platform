@@ -113,4 +113,36 @@ public class GitHubJobLogTailTests
 
         Assert.EndsWith("Z ##[error]split\n", tail, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task ALineLongerThanTheCapThatCrossesReads_StillCountsAsFailureWhenTheMarkerStartsIt()
+    {
+        var log = "start\n##[error]" + new string('x', 20000) + "\nPost job cleanup.\n" + Noise(300, "post");
+
+        Assert.Equal(new string('x', 99) + "\n", await TailAsync(log, 100));
+    }
+
+    [Fact]
+    public async Task ALineLongerThanTheCapThatCrossesReads_IsNotAFailureWhenTheMarkerIsDeepInside()
+    {
+        var log = "start\n" + new string('x', 8126) + "##[error]" + new string('x', 500) + "\nPost job cleanup.\n" + Noise(300, "post");
+
+        Assert.Equal(log[^100..], await TailAsync(log, 100));
+    }
+
+    [Fact]
+    public async Task CrlfLineEndings_StillFindTheFailureLine()
+    {
+        var log = "build\r\n##[error]boom\r\nPost job cleanup.\r\nCleaning up orphan processes\r\n";
+
+        Assert.Equal("build\r\n##[error]boom\r\n", await TailAsync(log, 4000));
+    }
+
+    [Fact]
+    public async Task AMarkerPastTheFirst64Characters_IsNotAFailureLine()
+    {
+        var log = "build\n" + new string('a', 64) + "##[error]not a marker\nPost job cleanup.\n";
+
+        Assert.Equal(log, await TailAsync(log, 4000));
+    }
 }

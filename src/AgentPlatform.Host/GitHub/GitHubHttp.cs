@@ -120,12 +120,12 @@ internal static class GitHubHttp
     private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxChars, bool keepTail, CancellationToken cancellationToken)
     {
         var head = new StringBuilder();
-        var tail = new JobLogTail(maxChars);
+        var tail = keepTail ? new JobLogTail(maxChars) : null;
         var buffer = new char[8192];
         int read;
         while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
         {
-            if (keepTail)
+            if (tail is not null)
             {
                 tail.Append(buffer.AsSpan(0, read));
                 continue;
@@ -138,6 +138,6 @@ internal static class GitHubHttp
             }
         }
 
-        return keepTail ? tail.Result() : head.ToString(0, Math.Min(head.Length, maxChars));
+        return tail is not null ? tail.Result() : head.ToString(0, Math.Min(head.Length, maxChars));
     }
 }
