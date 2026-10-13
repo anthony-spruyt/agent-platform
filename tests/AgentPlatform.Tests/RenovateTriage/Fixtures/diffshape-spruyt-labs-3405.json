@@ -1,0 +1,22 @@
+{
+  "expectedFileCount": 2,
+  "head": "c2b3944a6d23dd56657e75c40330bf069eb75488",
+  "files": [
+    {
+      "path": "cmd/shutdown-orchestrator/go.mod",
+      "status": "modified",
+      "patch": "@@ -71,7 +71,7 @@ require (\n \tgo.yaml.in/yaml/v2 v2.4.3 // indirect\n \tgo.yaml.in/yaml/v3 v3.0.5 // indirect\n \tgo.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect\n-\tgolang.org/x/crypto v0.55.0 // indirect\n+\tgolang.org/x/crypto v0.56.0 // indirect\n \tgolang.org/x/net v0.58.0 // indirect\n \tgolang.org/x/oauth2 v0.36.0 // indirect\n \tgolang.org/x/sys v0.47.0 // indirect"
+    },
+    {
+      "path": "cmd/shutdown-orchestrator/go.sum",
+      "status": "modified",
+      "patch": "@@ -301,6 +301,8 @@ golang.org/x/crypto v0.53.0 h1:QZ4Muo8THX6CizN2vPPd5fBGHyogrdK9fG4wLPFUsto=\n golang.org/x/crypto v0.53.0/go.mod h1:DNLU434OwVakk9PzuwV8w62mAJpRJL3vsgcfp4Qnsio=\n golang.org/x/crypto v0.55.0 h1:+KWHjbgOaAQ66dh/YlkZKHlz9ZUlq61AFirAR9ntP8M=\n golang.org/x/crypto v0.55.0/go.mod h1:uq0V9dE/fzQuJtbnL+2EhWOE63vo164FY8xqEnV9xis=\n+golang.org/x/crypto v0.56.0 h1:GUh5Ii4J5jtcseSMiRqr1jXCNHoxjeV9Fmekc2oLy6Y=\n+golang.org/x/crypto v0.56.0/go.mod h1:OMW5y6CY9l38uPLmxU6l6pwcXp1obtLo3e6gT7gQR2I=\n golang.org/x/exp v0.0.0-20250128182459-e0ece0dbea4c h1:KL/ZBHXgKGVmuZBZ01Lt57yE5ws8ZPSkkihmEyq7FXc=\n golang.org/x/exp v0.0.0-20250128182459-e0ece0dbea4c/go.mod h1:tujkw807nyEEAamNbDrEGzRav+ilXA7PCRAd6xsmwiU=\n golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4/go.mod h1:jJ57K6gSWd91VN4djpZkiMVwK6gcyfeH4XE8wZrZaV4="
+    }
+  ],
+  "commits": [
+    {
+      "sha": "c2b3944a6d23dd56657e75c40330bf069eb75488",
+      "message": "chore(deps): update module golang.org/x/crypto to v0.56.0 [security]\n\n| datasource | package             | from    | to      |\n| ---------- | ------------------- | ------- | ------- |\n| go         | golang.org/x/crypto | v0.55.0 | v0.56.0 |"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "5858ca3fc542397d5fbfdbe9473ece5352cd8567",
+  "files": [
+    {
+      "path": ".github/workflows/_build-image.yaml",
+      "status": "modified",
+      "patch": "@@ -55,7 +55,7 @@ jobs:\n         with:\n           persist-credentials: false\n       - name: \"Setup Node.js\"\n-        uses: \"actions/setup-node@820762786026740c76f36085b0efc47a31fe5020\" # v7\n+        uses: \"actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\" # v7\n         with:\n           node-version: \"24\"\n       - name: \"Install dependencies\""
+    }
+  ],
+  "commits": [
+    {
+      "sha": "5858ca3fc542397d5fbfdbe9473ece5352cd8567",
+      "message": "chore(deps): update actions/setup-node digest to 949feb2"
+    }
+  ]
+}

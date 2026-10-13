@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "fac58eabaf0c4efd473348efd0b6d464b8df966c",
+  "files": [
+    {
+      "path": ".github/workflows/ci.yaml",
+      "status": "modified",
+      "patch": "@@ -56,7 +56,7 @@ jobs:\n       - name: \"Setup Python\"\n         uses: \"actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97\" # v7.0.0\n         with:\n-          python-version: \"3.13\"\n+          python-version: \"3.14\"\n \n       # The platform comes from an unpinned git ref, so the month in the key forces a periodic fresh fetch\n       - name: \"Get cache month\""
+    }
+  ],
+  "commits": [
+    {
+      "sha": "fac58eabaf0c4efd473348efd0b6d464b8df966c",
+      "message": "chore(deps): update dependency python to 3.14\n\n| datasource      | package                 | from    | to     |\n| --------------- | ----------------------- | ------- | ------ |\n| github-releases | actions/python-versions | 3.13.16 | 3.14.7 |"
+    }
+  ]
+}

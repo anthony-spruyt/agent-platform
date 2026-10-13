@@ -1,0 +1,27 @@
+{
+  "expectedFileCount": 3,
+  "head": "efdf1922f72df08f81d56af9abde61bb48497948",
+  "files": [
+    {
+      "path": "llm-guard/app/requirements-cpu.txt",
+      "status": "modified",
+      "patch": "@@ -2,4 +2,4 @@\n # Do not switch to --extra-index-url: pip could resolve torch from PyPI\n # and pull the ~2.5GB nvidia-*/triton dependency set back in.\n --index-url https://download.pytorch.org/whl/cpu\n-torch==2.13.0\n+torch==2.14.1+cpu"
+    },
+    {
+      "path": "llm-guard/app/requirements-cuda.txt",
+      "status": "modified",
+      "patch": "@@ -2,4 +2,4 @@\n # from this index. cu130 matches what default PyPI resolves to, so this\n # reproduces the pre-split image exactly.\n --index-url https://download.pytorch.org/whl/cu130\n-torch==2.13.0\n+torch==2.14.1+cu130"
+    },
+    {
+      "path": "llm-tool-guard/app/requirements-cpu.txt",
+      "status": "modified",
+      "patch": "@@ -2,4 +2,4 @@\n # Do not switch to --extra-index-url: pip could resolve torch from PyPI\n # and pull the ~2.5GB nvidia-*/triton dependency set back in.\n --index-url https://download.pytorch.org/whl/cpu\n-torch==2.13.0\n+torch==2.14.1+cpu"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "efdf1922f72df08f81d56af9abde61bb48497948",
+      "message": "chore(deps): update torch (cpu + cuda)\n\n| datasource | package | from         | to           |\n| ---------- | ------- | ------------ | ------------ |\n| pypi       | torch   | 2.13.0+cpu   | 2.14.1+cpu   |\n| pypi       | torch   | 2.13.0+cu130 | 2.14.1+cu130 |"
+    }
+  ]
+}

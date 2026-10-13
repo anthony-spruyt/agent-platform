@@ -12,6 +12,8 @@ public sealed class JevException(string message, Exception? innerException = nul
 public interface IJevClient
 {
     Task<JevAnswers> AskAsync(string? prBody, string? prDiff, CancellationToken cancellationToken);
+
+    Task<CiFailureKind> ClassifyCiAsync(string ciLogs, CancellationToken cancellationToken);
 }
 
 public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options, TimeProvider time) : IJevClient
@@ -22,23 +24,50 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
 
     public const int MaxPrDiffBytes = 32 * 1024;
 
+    public const int MaxCiLogChars = 24_000;
+
     private const string QuestionsResource = "JevQuestions.json";
+    private const string CiQuestionsResource = "JevCiQuestions.json";
 
-    private static readonly Lazy<JsonNode> _questions = new(LoadQuestions);
+    private static readonly Lazy<JsonNode> _questions = new(() => LoadQuestions(QuestionsResource));
+    private static readonly Lazy<JsonNode> _ciQuestions = new(() => LoadQuestions(CiQuestionsResource));
 
-    public async Task<JevAnswers> AskAsync(string? prBody, string? prDiff, CancellationToken cancellationToken)
+    public Task<JevAnswers> AskAsync(string? prBody, string? prDiff, CancellationToken cancellationToken) =>
+        SendAsync(
+            new JsonObject
+            {
+                ["pr_body"] = Cap(prBody, MaxPrBodyBytes),
+                ["pr_diff"] = Cap(prDiff, MaxPrDiffBytes),
+                ["current_date"] = Now(),
+            },
+            _questions.Value,
+            Parse,
+            cancellationToken);
+
+    public Task<CiFailureKind> ClassifyCiAsync(string ciLogs, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ciLogs);
+        return SendAsync(
+            new JsonObject
+            {
+                ["ci_logs"] = CapTail(ciLogs, MaxCiLogChars),
+                ["current_date"] = Now(),
+            },
+            _ciQuestions.Value,
+            ParseCi,
+            cancellationToken);
+    }
+
+    private string Now() => time.GetUtcNow().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+
+    private async Task<T> SendAsync<T>(JsonObject state, JsonNode questions, Func<string, T> parse, CancellationToken cancellationToken)
     {
         var litellm = options.Value;
         var body = new JsonObject
         {
-            ["state"] = new JsonObject
-            {
-                ["pr_body"] = Cap(prBody, MaxPrBodyBytes),
-                ["pr_diff"] = Cap(prDiff, MaxPrDiffBytes),
-                ["current_date"] = time.GetUtcNow().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
-            },
+            ["state"] = state,
             ["model"] = Model,
-            ["questions"] = _questions.Value.DeepClone(),
+            ["questions"] = questions.DeepClone(),
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(litellm.BaseUrl, UriKind.Absolute), "typesafe/v1/systemone"))
@@ -56,7 +85,7 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            return Parse(json);
+            return parse(json);
         }
         catch (Exception ex) when (ex is not JevException && !(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
@@ -79,6 +108,36 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
         }
 
         return Encoding.UTF8.GetString(bytes, 0, length);
+    }
+
+    private static string CapTail(string text, int maxChars)
+    {
+        if (text.Length <= maxChars)
+        {
+            return text;
+        }
+
+        var start = text.Length - maxChars;
+        return char.IsLowSurrogate(text[start]) ? text[(start + 1)..] : text[start..];
+    }
+
+    private static CiFailureKind ParseCi(string json)
+    {
+        try
+        {
+            var choice = (string?)JsonNode.Parse(json)?["answers"]?["ci_failure"]?["choice"]
+                ?? throw new JevException("Jev did not answer the CI question.");
+            return choice switch
+            {
+                "flaky" => CiFailureKind.Flaky,
+                "real" => CiFailureKind.Real,
+                _ => CiFailureKind.Unsure,
+            };
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
+        {
+            throw new JevException("Jev returned an unreadable body.", ex);
+        }
     }
 
     private static JevAnswers Parse(string json)
@@ -112,10 +171,10 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
         return probability;
     }
 
-    private static JsonNode LoadQuestions()
+    private static JsonNode LoadQuestions(string resource)
     {
-        using var stream = typeof(JevClient).Assembly.GetManifestResourceStream(QuestionsResource)
-            ?? throw new InvalidOperationException($"The {QuestionsResource} resource is missing.");
+        using var stream = typeof(JevClient).Assembly.GetManifestResourceStream(resource)
+            ?? throw new InvalidOperationException($"The {resource} resource is missing.");
         return JsonNode.Parse(stream)!;
     }
 }
