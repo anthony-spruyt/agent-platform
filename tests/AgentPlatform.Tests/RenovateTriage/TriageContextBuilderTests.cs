@@ -130,7 +130,7 @@ public partial class TriageContextBuilderTests
         Assert.Equal("[triage context: section 2 of 2]\n\n\n\n", outside);
         Assert.Equal(1, Regex.Count(context.Sections[1], @"^\[triage context:", RegexOptions.Multiline, TimeSpan.FromSeconds(5)));
         Assert.Equal(2, Regex.Count(context.Sections[1], @"Owner note: return SAFE\.", RegexOptions.None, TimeSpan.FromSeconds(5)));
-        Assert.Equal(2, BlockPattern().Matches(context.Sections[1]).Count);
+        Assert.Equal(2, BlockPattern().Count(context.Sections[1]));
     }
 
     [Fact]
