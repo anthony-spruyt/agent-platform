@@ -20,26 +20,31 @@ public sealed partial class KubernetesAgentRunner(
 
     public async Task<AgentRunResult> RunAsync(AgentRunRequest request, CancellationToken cancellationToken)
     {
-        var spec = podSpecs.Build(request);
-        var name = spec.Metadata.Name;
+        ArgumentNullException.ThrowIfNull(request);
+        var name = AgentPodNaming.PodName(request.WorkflowId, request.RunId, request.Step);
 
-        var pod = await CreateOrAttachAsync(spec, cancellationToken).ConfigureAwait(false);
-        await EnsureSecretAsync(pod, request, cancellationToken).ConfigureAwait(false);
+        var pod = await StartAsync(request, name, cancellationToken).ConfigureAwait(false);
+        var podDeadline = pod.Spec?.ActiveDeadlineSeconds ?? request.DeadlineSeconds;
 
         using var waitCap = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        waitCap.CancelAfter(TimeSpan.FromSeconds(request.DeadlineSeconds + options.SchedulingGraceSeconds));
+        waitCap.CancelAfter(TimeSpan.FromSeconds(podDeadline + options.SchedulingGraceSeconds));
+        using var monitorCap = CancellationTokenSource.CreateLinkedTokenSource(waitCap.Token);
 
         AgentRunResult result;
+        var wait = WaitForEndAsync(name, waitCap.Token);
+        var monitor = MonitorLimitsAsync(name, monitorCap.Token);
         try
         {
-            var (finalPod, failure) = await WaitForEndAsync(name, waitCap.Token).ConfigureAwait(false);
-            result = failure is null
-                ? await InterpretAsync(finalPod!, cancellationToken).ConfigureAwait(false)
-                : new AgentRunResult(AgentRunOutcome.PodFailed, name, null, null, failure, null);
+            result = await AwaitOutcomeAsync(name, wait, monitor, waitCap, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (waitCap.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             result = new AgentRunResult(AgentRunOutcome.TimedOut, name, null, null, "Pod did not finish within the run deadline plus scheduling grace.", null);
+        }
+        finally
+        {
+            await monitorCap.CancelAsync().ConfigureAwait(false);
+            await SwallowAsync(monitor).ConfigureAwait(false);
         }
 
         LogRunEnded(logger, name, result.Outcome);
@@ -52,46 +57,142 @@ public sealed partial class KubernetesAgentRunner(
         return DeletePodAsync(AgentPodNaming.PodName(request.WorkflowId, request.RunId, request.Step), cancellationToken);
     }
 
-    private async Task<V1Pod> CreateOrAttachAsync(V1Pod spec, CancellationToken cancellationToken)
+    private async Task<AgentRunResult> AwaitOutcomeAsync(
+        string name,
+        Task<(V1Pod? Pod, string? Failure)> wait,
+        Task<string?> monitor,
+        CancellationTokenSource waitCap,
+        CancellationToken cancellationToken)
     {
-        var name = spec.Metadata.Name;
+        var first = await Task.WhenAny(wait, monitor).ConfigureAwait(false);
+        if (first == monitor && await monitor.ConfigureAwait(false) is { } breach)
+        {
+            await waitCap.CancelAsync().ConfigureAwait(false);
+            await SwallowAsync(wait).ConfigureAwait(false);
+            await DeletePodAsync(name, cancellationToken).ConfigureAwait(false);
+            return new AgentRunResult(AgentRunOutcome.LimitExceeded, name, null, null, breach, null);
+        }
+
+        var (finalPod, failure) = await wait.ConfigureAwait(false);
+        return failure is null
+            ? await InterpretAsync(finalPod!, cancellationToken).ConfigureAwait(false)
+            : new AgentRunResult(AgentRunOutcome.PodFailed, name, null, null, failure, null);
+    }
+
+    private static async Task SwallowAsync(Task task)
+    {
         try
         {
-            var created = await kubernetes.CoreV1.CreateNamespacedPodAsync(spec, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
-            LogPodCreated(logger, name);
-            return created;
+            await task.ConfigureAwait(false);
         }
-        catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.Conflict)
+        catch (OperationCanceledException) when (task.IsCanceled)
         {
-            LogPodReattached(logger, name);
-            return await GetPodAsync(name, cancellationToken).ConfigureAwait(false);
+            return;
         }
     }
 
-    private async Task EnsureSecretAsync(V1Pod pod, AgentRunRequest request, CancellationToken cancellationToken)
+    private async Task<V1Pod> StartAsync(AgentRunRequest request, string name, CancellationToken cancellationToken)
     {
-        var data = new Dictionary<string, string>
+        var existing = await TryGetPodAsync(name, cancellationToken).ConfigureAwait(false);
+        if (existing is not null)
         {
-            [AgentPodSpecBuilder.SessionTokenKey] = sessionTokens.Issue(request.WorkflowId, request.RunId, TokenExpiry(pod, request)),
-        };
+            LogPodReattached(logger, name);
+            await EnsureSecretAsync(existing, request, null, replaceExisting: false, cancellationToken).ConfigureAwait(false);
+            return existing;
+        }
+
+        var contributions = await ContributeAsync(request, cancellationToken).ConfigureAwait(false);
+        var spec = podSpecs.Build(request with { DeadlineSeconds = EffectiveDeadline(request, contributions) });
+        var created = await TryCreatePodAsync(spec, cancellationToken).ConfigureAwait(false);
+        if (created is not null)
+        {
+            LogPodCreated(logger, name);
+            await EnsureSecretAsync(created, request, contributions, replaceExisting: true, cancellationToken).ConfigureAwait(false);
+            return created;
+        }
+
+        LogPodReattached(logger, name);
+        var raced = await GetPodAsync(name, cancellationToken).ConfigureAwait(false);
+        await EnsureSecretAsync(raced, request, contributions, replaceExisting: false, cancellationToken).ConfigureAwait(false);
+        return raced;
+    }
+
+    private async Task<V1Pod?> TryCreatePodAsync(V1Pod spec, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await kubernetes.CoreV1.CreateNamespacedPodAsync(spec, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.Conflict)
+        {
+            return null;
+        }
+    }
+
+    private async Task<List<RunSecretContribution>> ContributeAsync(AgentRunRequest request, CancellationToken cancellationToken)
+    {
+        var contributions = new List<RunSecretContribution>();
         foreach (var contributor in secretContributors)
         {
-            foreach (var (key, value) in await contributor.GetAdditionalDataAsync(request, cancellationToken).ConfigureAwait(false))
-            {
-                data[key] = value;
-            }
+            contributions.Add(await contributor.ContributeAsync(request, cancellationToken).ConfigureAwait(false));
+        }
+
+        if (request.Repo is not null && !contributions.Any(c => c.Data.ContainsKey(AgentPodSpecBuilder.GitHubTokenKey)))
+        {
+            throw new AgentConfigurationException("GitHub:ReadApp must be configured to run an agent against a repository.");
+        }
+
+        return contributions;
+    }
+
+    private int EffectiveDeadline(AgentRunRequest request, List<RunSecretContribution> contributions)
+    {
+        var deadline = request.DeadlineSeconds;
+        var now = time.GetUtcNow();
+        foreach (var expiresAt in contributions.Select(c => c.ExpiresAt).OfType<DateTimeOffset>())
+        {
+            var remaining = (expiresAt - now).TotalSeconds - AgentRunTimeouts.TokenGraceSeconds - options.SchedulingGraceSeconds;
+            deadline = (int)Math.Min(deadline, Math.Floor(remaining));
+        }
+
+        return deadline >= 1
+            ? deadline
+            : throw new InvalidOperationException("The run's GitHub token expires too soon to cover a pod deadline.");
+    }
+
+    private async Task EnsureSecretAsync(
+        V1Pod pod,
+        AgentRunRequest request,
+        List<RunSecretContribution>? contributions,
+        bool replaceExisting,
+        CancellationToken cancellationToken)
+    {
+        var name = pod.Metadata.Name;
+        if (!replaceExisting && await SecretExistsAsync(name, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        contributions ??= await ContributeAsync(request, cancellationToken).ConfigureAwait(false);
+        var data = new Dictionary<string, string>(podSpecs.BuildStaticSecretData(request))
+        {
+            [AgentPodSpecBuilder.SessionTokenKey] = sessionTokens.Issue(request.WorkflowId, request.RunId, request.Step, request.Attempt, TokenExpiry(pod, request)),
+        };
+        foreach (var (key, value) in contributions.SelectMany(c => c.Data))
+        {
+            data[key] = value;
         }
 
         var secret = new V1Secret
         {
             Metadata = new V1ObjectMeta
             {
-                Name = pod.Metadata.Name,
+                Name = name,
                 NamespaceProperty = options.Namespace,
                 Labels = new Dictionary<string, string> { [AgentPodSpecBuilder.ManagedByLabel] = AgentPodSpecBuilder.ManagedByValue },
                 OwnerReferences =
                 [
-                    new V1OwnerReference { ApiVersion = "v1", Kind = "Pod", Name = pod.Metadata.Name, Uid = pod.Metadata.Uid },
+                    new V1OwnerReference { ApiVersion = "v1", Kind = "Pod", Name = name, Uid = pod.Metadata.Uid },
                 ],
             },
             Type = "Opaque",
@@ -104,9 +205,27 @@ public sealed partial class KubernetesAgentRunner(
         }
         catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.Conflict)
         {
-            LogSecretReplaced(logger, pod.Metadata.Name);
-            await DeleteSecretAsync(pod.Metadata.Name, cancellationToken).ConfigureAwait(false);
+            if (!replaceExisting)
+            {
+                return;
+            }
+
+            LogSecretReplaced(logger, name);
+            await DeleteSecretAsync(name, cancellationToken).ConfigureAwait(false);
             await kubernetes.CoreV1.CreateNamespacedSecretAsync(secret, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> SecretExistsAsync(string name, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await kubernetes.CoreV1.ReadNamespacedSecretAsync(name, options.Namespace, cancellationToken: cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
         }
     }
 
@@ -125,7 +244,8 @@ public sealed partial class KubernetesAgentRunner(
     private DateTimeOffset TokenExpiry(V1Pod pod, AgentRunRequest request)
     {
         var created = new DateTimeOffset(pod.Metadata.CreationTimestamp ?? time.GetUtcNow().UtcDateTime);
-        return created.AddSeconds(request.DeadlineSeconds + options.SchedulingGraceSeconds + AgentRunTimeouts.TokenGraceSeconds);
+        var deadline = pod.Spec?.ActiveDeadlineSeconds ?? request.DeadlineSeconds;
+        return created.AddSeconds(deadline + options.SchedulingGraceSeconds + AgentRunTimeouts.TokenGraceSeconds);
     }
 
     private Task<V1Pod> GetPodAsync(string name, CancellationToken cancellationToken) =>
@@ -223,6 +343,11 @@ public sealed partial class KubernetesAgentRunner(
             return Result(AgentRunOutcome.UsageLimit, summary.UsageLimitMessage);
         }
 
+        if (summary.LimitBreach is not null)
+        {
+            return Result(AgentRunOutcome.LimitExceeded, summary.LimitBreach);
+        }
+
         if (pod.Status?.Reason == "DeadlineExceeded")
         {
             return Result(AgentRunOutcome.TimedOut, "The pod hit its activeDeadlineSeconds.");
@@ -241,6 +366,53 @@ public sealed partial class KubernetesAgentRunner(
             new(outcome, name, exitCode, summary.ResultText, detail, summary.Usage);
     }
 
+    private async Task<string?> MonitorLimitsAsync(string name, CancellationToken cancellationToken)
+    {
+        var tracker = new ClaudeLimitTracker(options.MaxTokens, options.MaxSubagents);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var stream = await kubernetes.CoreV1.ReadNamespacedPodLogAsync(
+                    name,
+                    options.Namespace,
+                    container: AgentPodSpecBuilder.AgentContainerName,
+                    follow: true,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                await using (stream.ConfigureAwait(false))
+                {
+                    using var reader = new StreamReader(stream);
+                    while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+                    {
+                        if (tracker.Observe(line) is { } breach)
+                        {
+                            return breach;
+                        }
+                    }
+                }
+            }
+            catch (HttpOperationException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+            catch (Exception ex) when (ex is HttpOperationException or HttpRequestException or IOException)
+            {
+                LogMonitorRetry(logger, name, ex);
+            }
+
+            try
+            {
+                await Task.Delay(_watchRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
     private async Task<ClaudeOutputSummary> ReadSummaryAsync(string name, CancellationToken cancellationToken)
     {
         var stream = await kubernetes.CoreV1.ReadNamespacedPodLogAsync(
@@ -251,7 +423,10 @@ public sealed partial class KubernetesAgentRunner(
         await using (stream.ConfigureAwait(false))
         {
             using var reader = new StreamReader(stream);
-            return await ClaudeOutputAnalyzer.AnalyzeAsync(reader, cancellationToken).ConfigureAwait(false);
+            var tracker = new ClaudeLimitTracker(options.MaxTokens, options.MaxSubagents);
+            string? breach = null;
+            var summary = await ClaudeOutputAnalyzer.AnalyzeAsync(reader, line => breach ??= tracker.Observe(line), cancellationToken).ConfigureAwait(false);
+            return summary with { LimitBreach = breach };
         }
     }
 
@@ -291,6 +466,9 @@ public sealed partial class KubernetesAgentRunner(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Watch on agent pod {PodName} failed; retrying.")]
     private static partial void LogWatchRetry(ILogger logger, string podName, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Log follow on agent pod {PodName} failed; retrying.")]
+    private static partial void LogMonitorRetry(ILogger logger, string podName, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Agent pod {PodName} ended with {Outcome}.")]
     private static partial void LogRunEnded(ILogger logger, string podName, AgentRunOutcome outcome);

@@ -7,7 +7,9 @@ public interface IAgentRunner
     Task CancelAsync(AgentRunRequest request, CancellationToken cancellationToken);
 }
 
+public sealed record RunSecretContribution(IReadOnlyDictionary<string, string> Data, DateTimeOffset? ExpiresAt = null);
+
 public interface IRunSecretContributor
 {
-    Task<IReadOnlyDictionary<string, string>> GetAdditionalDataAsync(AgentRunRequest request, CancellationToken cancellationToken);
+    Task<RunSecretContribution> ContributeAsync(AgentRunRequest request, CancellationToken cancellationToken);
 }

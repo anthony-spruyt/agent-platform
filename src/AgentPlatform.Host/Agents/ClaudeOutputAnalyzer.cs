@@ -11,7 +11,8 @@ public sealed record ClaudeOutputSummary(
     long? OutputTokens,
     bool UsageLimitReached,
     string? UsageLimitMessage,
-    AgentRunUsage? Usage)
+    AgentRunUsage? Usage,
+    string? LimitBreach = null)
 {
     public bool IsTruncated =>
         !HasResultEvent
@@ -33,7 +34,10 @@ public static partial class ClaudeOutputAnalyzer
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex UsageLimitText();
 
-    public static async Task<ClaudeOutputSummary> AnalyzeAsync(TextReader reader, CancellationToken cancellationToken)
+    public static Task<ClaudeOutputSummary> AnalyzeAsync(TextReader reader, CancellationToken cancellationToken) =>
+        AnalyzeAsync(reader, null, cancellationToken);
+
+    public static async Task<ClaudeOutputSummary> AnalyzeAsync(TextReader reader, Action<string>? observe, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -42,6 +46,7 @@ public static partial class ClaudeOutputAnalyzer
 
         while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
+            observe?.Invoke(line);
             if (!TryParseEvent(line, out var document))
             {
                 continue;

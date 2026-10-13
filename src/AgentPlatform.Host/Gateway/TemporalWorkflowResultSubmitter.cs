@@ -1,5 +1,4 @@
 using AgentPlatform.Host.Agents;
-using AgentPlatform.Host.Workflows;
 using Temporalio.Client;
 using Temporalio.Exceptions;
 
@@ -16,17 +15,28 @@ public sealed class TemporalWorkflowResultSubmitter(ITemporalClient client) : IW
         try
         {
             await handle.ExecuteUpdateAsync(
-                SpikeWorkflow.SubmitResultUpdate,
+                AgentResultUpdates.SubmitResult,
                 [payload],
                 new WorkflowUpdateOptions { Rpc = new RpcOptions { CancellationToken = cancellationToken } }).ConfigureAwait(false);
         }
-        catch (WorkflowUpdateFailedException ex) when (ex.InnerException is ApplicationFailureException { ErrorType: SpikeWorkflow.ResultAlreadySubmittedErrorType })
+        catch (WorkflowUpdateFailedException ex) when (Map(ex, run) is not null)
         {
-            throw new ResultAlreadySubmittedException(run.WorkflowId);
+            throw Map(ex, run)!;
         }
         catch (RpcException ex) when (ex.Code is RpcException.StatusCode.NotFound or RpcException.StatusCode.FailedPrecondition)
         {
             throw new RunNotActiveException(run.WorkflowId);
         }
     }
+
+    private static Exception? Map(WorkflowUpdateFailedException ex, AgentRunIdentity run) =>
+        ex.InnerException is ApplicationFailureException failure
+            ? failure.ErrorType switch
+            {
+                AgentResultUpdates.ResultAlreadySubmittedErrorType => new ResultAlreadySubmittedException(run.WorkflowId),
+                AgentResultUpdates.InvalidResultErrorType => new InvalidResultException(failure.Message),
+                AgentResultUpdates.StaleRunErrorType => new RunNotActiveException(run.WorkflowId),
+                _ => null,
+            }
+            : null;
 }

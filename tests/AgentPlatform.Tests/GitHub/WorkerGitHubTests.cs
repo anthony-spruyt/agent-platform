@@ -1,4 +1,5 @@
 using AgentPlatform.Host;
+using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Support;
@@ -11,7 +12,7 @@ namespace AgentPlatform.Tests.GitHub;
 
 public class WorkerGitHubTests
 {
-    private static ServiceProvider Build(Dictionary<string, string?> github)
+    private static ServiceProvider Build(Dictionary<string, string?> github, Dictionary<string, string?>? readApp = null)
     {
         var settings = new Dictionary<string, string?>
         {
@@ -23,6 +24,11 @@ public class WorkerGitHubTests
         foreach (var (key, value) in github)
         {
             settings[$"GitHub:{key}"] = value;
+        }
+
+        foreach (var (key, value) in readApp ?? [])
+        {
+            settings[$"GitHub:ReadApp:{key}"] = value;
         }
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
@@ -93,5 +99,53 @@ public class WorkerGitHubTests
         github["PrivateKey"] = "not a pem";
 
         Assert.Throws<InvalidOperationException>(() => Build(github));
+    }
+
+    [Fact]
+    public void WithoutTheReadAppConfigured_NoReadTokenContributorIsRegistered()
+    {
+        using var provider = Build(Valid());
+
+        Assert.Empty(provider.GetServices<IRunSecretContributor>());
+    }
+
+    [Fact]
+    public void WithTheReadAppConfigured_TheWorkerMintsRepoReadTokensForRuns()
+    {
+        using var provider = Build(Valid(), Valid());
+
+        Assert.IsType<ReadAppSecretContributor>(Assert.Single(provider.GetServices<IRunSecretContributor>()));
+    }
+
+    [Theory]
+    [InlineData("AppId")]
+    [InlineData("PrivateKey")]
+    public void AHalfConfiguredReadApp_FailsAtStartup(string missing)
+    {
+        var readApp = Valid();
+        readApp[missing] = null;
+
+        Assert.Throws<InvalidOperationException>(() => Build(Valid(), readApp));
+    }
+
+    [Fact]
+    public void AReadAppPrivateKeyThatIsNotAPem_FailsAtStartup()
+    {
+        var readApp = Valid();
+        readApp["PrivateKey"] = "not a pem";
+
+        Assert.Throws<InvalidOperationException>(() => Build(Valid(), readApp));
+    }
+
+    [Fact]
+    public void WithTheReadAppConfigured_TheSharedGitHubClientStillSendsEachHeaderOnce()
+    {
+        using var provider = Build(Valid(), Valid());
+
+        using var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("github");
+
+        Assert.Equal(["2022-11-28"], client.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+        Assert.Single(client.DefaultRequestHeaders.Accept);
+        Assert.Single(client.DefaultRequestHeaders.UserAgent);
     }
 }

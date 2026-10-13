@@ -47,6 +47,14 @@ public sealed partial class FakeKubeApi : DelegatingHandler
 
     public int PodCreateAttempts { get; private set; }
 
+    public bool HasOperation(string operation)
+    {
+        lock (_gate)
+        {
+            return Operations.Contains(operation);
+        }
+    }
+
     public int PodsCreated { get; private set; }
 
     public Func<HttpRequestMessage, HttpResponseMessage?>? Interceptor { get; set; }
@@ -139,9 +147,9 @@ public sealed partial class FakeKubeApi : DelegatingHandler
             return await CreateSecretAsync(request, cancellationToken);
         }
 
-        if (SingleSecret().Match(path) is { Success: true } singleSecret && request.Method == HttpMethod.Delete)
+        if (SingleSecret().Match(path) is { Success: true } singleSecret)
         {
-            return DeleteSecret(singleSecret.Groups[2].Value);
+            return request.Method == HttpMethod.Delete ? DeleteSecret(singleSecret.Groups[2].Value) : GetSecret(singleSecret.Groups[2].Value);
         }
 
         return Json(HttpStatusCode.NotFound, Status(404, "NotFound", $"unhandled {request.Method} {path}"));
@@ -183,6 +191,17 @@ public sealed partial class FakeKubeApi : DelegatingHandler
 
             _secrets[secret.Metadata.Name] = secret;
             return Json(HttpStatusCode.Created, KubernetesJson.Serialize(secret));
+        }
+    }
+
+    private HttpResponseMessage GetSecret(string name)
+    {
+        lock (_gate)
+        {
+            Operations.Add($"GET secret {name}");
+            return _secrets.TryGetValue(name, out var secret)
+                ? Json(HttpStatusCode.OK, KubernetesJson.Serialize(secret))
+                : Json(HttpStatusCode.NotFound, Status(404, "NotFound", $"secrets \"{name}\" not found"));
         }
     }
 

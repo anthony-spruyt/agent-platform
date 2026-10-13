@@ -40,6 +40,7 @@ public static class WorkerServiceCollectionExtensions
 
         services.AddRunData(configuration);
         services.AddGitHubAppClient(configuration);
+        services.AddGitHubReadApp(configuration);
         services.AddRenovateTriage(configuration);
         services.AddSingleton(pods);
         services.AddSingleton(new AgentSessionTokens(gateway.SessionTokenKey));

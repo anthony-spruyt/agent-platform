@@ -21,11 +21,21 @@ public class KubernetesAgentRunnerTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private sealed class ExtraSecretData(IReadOnlyDictionary<string, string> data) : IRunSecretContributor
+    private sealed class ExtraSecretData(IReadOnlyDictionary<string, string> data, DateTimeOffset? expiresAt = null) : IRunSecretContributor
     {
-        public Task<IReadOnlyDictionary<string, string>> GetAdditionalDataAsync(AgentRunRequest request, CancellationToken cancellationToken) =>
-            Task.FromResult(data);
+        public int Calls { get; private set; }
+
+        public Task<RunSecretContribution> ContributeAsync(AgentRunRequest request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(new RunSecretContribution(data, expiresAt));
+        }
     }
+
+    private static readonly AgentRepoContext Repo = new("octo/widgets", 7, new string('a', 40));
+
+    private static ExtraSecretData ReadToken(DateTimeOffset? expiresAt = null) =>
+        new(new Dictionary<string, string> { [AgentPodSpecBuilder.GitHubTokenKey] = "ghs_read", [AgentPodSpecBuilder.GitCredentialKey] = "cred" }, expiresAt);
 
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider
     {
@@ -102,7 +112,7 @@ public class KubernetesAgentRunnerTests
         Assert.Equal("agent-platform-agents", secret.Metadata.NamespaceProperty);
         var token = secret.StringData["session-token"];
         Assert.True(new AgentSessionTokens(SessionKey).TryValidate(token, out var run));
-        Assert.Equal(new AgentRunIdentity("spike-1", "run-1"), run);
+        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "claude", 1), run);
     }
 
     [Fact]
@@ -143,22 +153,98 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
-    public async Task Run_ReplacesTheSecretWithOnlyCreateAndDelete()
+    public async Task Run_WhenThePodAlreadyExists_KeepsTheExistingSecretAndMintsNothing()
     {
         var api = ApiWith(Success);
-        var requests = new List<string>();
-        api.Interceptor = request =>
-        {
-            requests.Add($"{request.Method} {request.RequestUri!.AbsolutePath}");
-            return null;
-        };
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo };
 
-        await NewRunner(api).RunAsync(Request, Ct);
-        await NewRunner(api).RunAsync(Request, Ct);
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
+        var secret = api.Secrets[PodName];
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
 
-        Assert.DoesNotContain(requests, r => r.StartsWith("GET", StringComparison.Ordinal) && r.Contains("/secrets", StringComparison.Ordinal));
-        Assert.Contains($"DELETE secret {PodName}", api.Operations);
-        Assert.Single(api.Secrets);
+        Assert.Equal(1, contributor.Calls);
+        Assert.Same(secret, api.Secrets[PodName]);
+        Assert.DoesNotContain($"DELETE secret {PodName}", api.Operations);
+        Assert.Single(api.Operations, o => o.StartsWith("POST secret", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Run_ReattachAfterAWorkerDiedBeforeTheSecret_MintsOnceForTheMissingSecret()
+    {
+        var api = ApiWith(Success);
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo };
+        api.Seed(new AgentPodSpecBuilder(new AgentPodsOptions()).Build(request));
+
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
+
+        Assert.Equal(1, contributor.Calls);
+        Assert.Equal("ghs_read", api.Secrets[PodName].StringData[AgentPodSpecBuilder.GitHubTokenKey]);
+    }
+
+    [Fact]
+    public async Task Run_CapsThePodDeadlineSoThePodNeverOutlivesTheToken()
+    {
+        var api = ApiWith(Success);
+        var now = new DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
+        var contributor = ReadToken(now.AddMinutes(25));
+
+        await NewRunner(api, contributors: [contributor], time: new FixedTime(now)).RunAsync(Request with { Repo = Repo }, Ct);
+
+        var expected = (25 * 60) - AgentRunTimeouts.TokenGraceSeconds - AgentRunTimeouts.SchedulingGraceSeconds;
+        Assert.Equal(expected, api.Pods[PodName].Spec.ActiveDeadlineSeconds);
+    }
+
+    [Fact]
+    public async Task Run_KeepsTheConfiguredDeadlineWhenTheTokenOutlastsIt()
+    {
+        var api = ApiWith(Success);
+        var now = new DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
+        var contributor = ReadToken(now.AddHours(1));
+
+        await NewRunner(api, o => o.SchedulingGraceSeconds = 0, [contributor], new FixedTime(now)).RunAsync(Request with { Repo = Repo, DeadlineSeconds = 600 }, Ct);
+
+        Assert.Equal(600, api.Pods[PodName].Spec.ActiveDeadlineSeconds);
+    }
+
+    [Fact]
+    public async Task Run_WhenTheTokenExpiresBeforeAnyPodCouldRun_CreatesNothing()
+    {
+        var api = ApiWith(Success);
+        var now = new DateTimeOffset(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
+        var contributor = ReadToken(now.AddMinutes(5));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => NewRunner(api, contributors: [contributor], time: new FixedTime(now)).RunAsync(Request with { Repo = Repo }, Ct));
+
+        Assert.Empty(api.Pods);
+        Assert.Empty(api.Secrets);
+    }
+
+    [Fact]
+    public async Task Run_ForARepositoryWithoutAGitHubToken_FailsAsAConfigurationErrorBeforeCreatingAnything()
+    {
+        var api = ApiWith(Success);
+
+        await Assert.ThrowsAsync<AgentConfigurationException>(() => NewRunner(api).RunAsync(Request with { Repo = Repo }, Ct));
+
+        Assert.Empty(api.Operations);
+    }
+
+    [Fact]
+    public async Task Run_PutsTheMcpConfigPromptAndSessionNonceInTheSecretButNotInThePodArgs()
+    {
+        var api = ApiWith(Success);
+
+        await NewRunner(api).RunAsync(Request with { Step = "claude", Attempt = 2 }, Ct);
+
+        var data = api.Secrets[AgentPodNaming.PodName("spike-1", "run-1", "claude")].StringData;
+        Assert.Equal("Say hello", data[AgentPodSpecBuilder.PromptKey]);
+        Assert.Contains("${AP_MCP_SESSION_KEY}", data[AgentPodSpecBuilder.McpConfigKey], StringComparison.Ordinal);
+        Assert.True(new AgentSessionTokens(SessionKey).TryValidate(data[AgentPodSpecBuilder.SessionTokenKey], out var run));
+        Assert.Equal(2, run!.Attempt);
+        Assert.DoesNotContain(api.Pods[AgentPodNaming.PodName("spike-1", "run-1", "claude")].Spec.Containers[0].Args, a => a.Contains("Say hello", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -202,7 +288,7 @@ public class KubernetesAgentRunnerTests
         var second = await NewRunner(api).RunAsync(Request, Ct);
 
         Assert.Equal(AgentRunOutcome.Succeeded, second.Outcome);
-        Assert.Equal(2, api.PodCreateAttempts);
+        Assert.Equal(1, api.PodCreateAttempts);
         Assert.Equal(1, api.PodsCreated);
         Assert.Single(api.Pods);
         Assert.Single(api.Secrets);
@@ -282,12 +368,11 @@ public class KubernetesAgentRunnerTests
     public async Task Run_WhenTheClientTimesOutOnARead_IsRetryableNotTimedOut()
     {
         var api = ApiWith(Success);
-        var timedOut = false;
+        var reads = 0;
         api.Interceptor = request =>
         {
-            if (!timedOut && request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith($"/pods/{PodName}", StringComparison.Ordinal))
+            if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith($"/pods/{PodName}", StringComparison.Ordinal) && ++reads == 2)
             {
-                timedOut = true;
                 throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException());
             }
 
@@ -438,6 +523,43 @@ public class KubernetesAgentRunnerTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NewRunner(api).RunAsync(Request, cts.Token));
 
         Assert.Contains(PodName, api.Pods.Keys);
+    }
+
+    private static string HeavyUsage(int tokens) =>
+        """{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":""" + tokens.ToString(System.Globalization.CultureInfo.InvariantCulture) + ""","output_tokens":1}}}""";
+
+    [Fact]
+    public async Task Run_WhenStreamedUsageCrossesTheCeilingWhileThePodRuns_StopsThePodAndReportsLimitExceeded()
+    {
+        var api = ApiWith(Success);
+        api.SetBehavior(PodName, new PodBehavior { Logs = HeavyUsage(5000) });
+
+        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
+        Assert.Contains("Token ceiling", result.Detail, StringComparison.Ordinal);
+        Assert.Contains($"DELETE pod {PodName}", api.Operations);
+        Assert.DoesNotContain(PodName, api.Pods.Keys);
+    }
+
+    [Fact]
+    public async Task Run_WhenThePodEndedBeforeTheMonitorCaughtTheBreach_StillReportsLimitExceeded()
+    {
+        var api = ApiWith(HeavyUsage(5000) + "\n" + Success);
+
+        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.LimitExceeded, result.Outcome);
+    }
+
+    [Fact]
+    public async Task Run_WhenUsageStaysUnderTheCeiling_Succeeds()
+    {
+        var api = ApiWith(HeavyUsage(500) + "\n" + Success);
+
+        var result = await NewRunner(api, o => o.MaxTokens = 1000).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
     }
 
     [Fact]

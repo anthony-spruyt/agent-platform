@@ -25,6 +25,8 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `GitHub:WebhookSecret`                    | none, required                                                        | Web role. The secret that signs GitHub webhook deliveries                                                                                                   |
 | `GitHub:AppId`                            | none, required                                                        | Worker role. The id of the GitHub App                                                                                                                       |
 | `GitHub:PrivateKey`                       | none, required                                                        | Worker role. The App's RSA private key in PEM format; the Web role never reads it                                                                           |
+| `GitHub:ReadApp:AppId`                    | unset                                                                 | Worker role. The id of the read-only GitHub App that mints the one-repo token of a repository run. Set it together with `GitHub:ReadApp:PrivateKey`         |
+| `GitHub:ReadApp:PrivateKey`               | unset                                                                 | Worker role. The read App's RSA private key in PEM format; a repository run fails without it                                                                |
 | `AgentPods:MaxConcurrentActivities`       | `2`                                                                   | Worker role. The global cap on concurrent agent pods                                                                                                        |
 | `AgentPods:HeartbeatInterval`             | `00:00:15`                                                            | Worker role. Must be less than half of the 60 second heartbeat timeout of the `RunAgentPod` activity                                                        |
 | `AgentPods:Namespace`                     | `agent-platform-agents`                                               | Worker role                                                                                                                                                 |
@@ -34,6 +36,10 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `AgentPods:AgentGatewayUrl`               | `http://agent-platform-web.agent-platform.svc.cluster.local:8081/mcp` | Worker role. The MCP endpoint written into agent pods                                                                                                       |
 | `AgentPods:ServiceAccountName`            | `agent-runner`                                                        | Worker role                                                                                                                                                 |
 | `AgentPods:ClusterReadServiceAccountName` | unset                                                                 | Worker role. Required to run the `cluster-read` tier                                                                                                        |
+| `AgentPods:MaxTurns`                      | `40`                                                                  | Worker role. Passed to Claude Code as `--max-turns`                                                                                                         |
+| `AgentPods:MaxTokens`                     | `400000`                                                              | Worker role. Token ceiling of one run, counted from the streamed usage; a run over it is stopped and ends as `LimitExceeded`                                |
+| `AgentPods:MaxSubagents`                  | `3`                                                                   | Worker role. The most `Task`/`Agent` tool calls one run may make before it is stopped as `LimitExceeded`                                                    |
+| `AgentPods:UseMcpHeadersHelper`           | `false`                                                               | Worker role. Writes `headersHelper: /usr/local/bin/ap-mcp-headers` into the MCP config instead of `${VAR}` header references                                |
 | `LiteLlm:BaseUrl`                         | `http://litellm.litellm.svc.cluster.local:4000`                       | Worker role. Where the Jev (`/typesafe`) pass-through is called; an absolute http or https URL                                                              |
 | `LiteLlm:ApiKey`                          | none, required                                                        | Worker role. The LiteLLM key the Jev call authenticates with                                                                                                |
 | `RenovateTriage:Mode`                     | `Shadow`                                                              | Worker role. `Shadow` records verdicts and writes nothing to GitHub; `Live` also approves, labels and comments as the App. Anything else fails startup      |
@@ -54,14 +60,26 @@ In the cluster the run-data connection string uses `SSL Mode=VerifyFull` with `R
 3. The agent calls the `submit_result` tool of AgentGateway. The gateway checks the per-run session token and sends the result to the waiting workflow as a Temporal Update. The workflow accepts the first result and rejects any further one, so a repeated `submit_result` call gets an error.
 4. The workflow returns the submitted result with the run metadata (`Status`, `Result`, `Agent`, `Tier`, `WorkflowId`, `RunId`).
 
-Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod with `AlreadyExists` and re-attaches instead of creating a second one. On every attempt the runner replaces the per-run Secret (delete, then create) so the current pod owns it; the runner's Role needs only `create` and `delete` on Secrets. A pod that vanished while the activity waited is reported as
-`PodFailed` and is not recreated.
+Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod and re-attaches instead of creating a second one. A re-attach also reuses the pod's per-run Secret and mints no new GitHub token; the Secret is only recreated when it is missing. The runner's Role needs `create`, `get` and `delete` on Secrets. A pod that vanished while the activity waited is reported
+as `PodFailed` and is not recreated.
 
-Pod deletion has two owners. The activity deletes the pod only when the workflow cancels it. An attempt that ends any other way (heartbeat timeout, worker shutdown, a transient API failure) leaves the pod for the retry to re-attach to. The workflow's `DeleteAgentPod` removes the pod once the run ends or fails for good, with the pod's `activeDeadlineSeconds` and the cluster's pod cleanup as the
+Pod deletion has two owners. The activity deletes the pod when the workflow cancels it and when the run crosses the token or subagent limit. An attempt that ends any other way (heartbeat timeout, worker shutdown, a transient API failure) leaves the pod for the retry to re-attach to. The workflow's `DeleteAgentPod` removes the pod once the run ends or fails for good, with the pod's `activeDeadlineSeconds` and the cluster's pod cleanup as the
 final backstop.
 
 The activity timeout and the pod's `activeDeadlineSeconds` come from the same deadline (`AgentRunTimeouts`); the deadline is at most 3600 seconds. The session token of a run expires 60 seconds after the pod deadline plus the scheduling grace. The runner classifies each run from the pod's `stream-json` stdout: `Succeeded`, `Truncated` (no result event, a non-success subtype, zero output tokens or
-an empty result), `UsageLimit`, `PodFailed` or `TimedOut`. Any outcome other than `Succeeded` ends the workflow with status `AgentFailed`.
+an empty result), `UsageLimit`, `LimitExceeded`, `PodFailed` or `TimedOut`. Any outcome other than `Succeeded` ends the workflow with status `AgentFailed`.
+
+### Repository runs on the read tier
+
+A run with `repo`, `pullRequest` and `headSha` and a `promptName` runs a named prompt (embedded under `Prompts/`; `renovate-triage` today) against one pull request.
+
+- The `GitHub:ReadApp` App mints an installation token for that one repository with `contents`, `pull_requests`, `checks`, `statuses`, `issues` and `actions` read. The provider's `expires_at` caps the pod deadline: `min(configured, expires_at - now - token grace - scheduling grace)`.
+- The per-run Secret holds the MCP config, the prompt, the session token, the GitHub token and a git credential file. The pod gets the tokens only as environment variables (`AP_MCP_SESSION_KEY`, `AP_LITELLM_API_KEY`, `GH_TOKEN`) and reads the prompt from stdin; no token or prompt text appears in a command line.
+- The `git-clone` init container clones the default branch (depth 1) into `/workspace/repo` and fetches the pull request head by sha into `/workspace/pr`. It is the only container that mounts the git credential. The `plugins` init container runs `/usr/local/bin/claude-plugins-bootstrap /workspace/repo`, which installs the plugins into the shared `claude-home` volume.
+- The agent container runs in `/workspace/repo` with `--setting-sources user,project` and `--strict-mcp-config`, and mounts only the `mcp-config.json` key of the Secret. The MCP config references `${AP_MCP_SESSION_KEY}` and `${AP_LITELLM_API_KEY}`. Tool content is not exported to telemetry on the read tier.
+- The session token carries the step and attempt of the run. The workflow rejects a `submit_result` whose step or attempt is not the current one.
+- For `renovate-triage` the workflow validates the submitted result (verdict `SAFE`, `FIXABLE`, `BLOCKED` or `NEEDS_REVIEW`, the echoed `head_sha`, and field length caps). An invalid result comes back to the agent as a tool error, so it can resubmit.
+- The runner stops a run that crosses `AgentPods:MaxTokens` or `AgentPods:MaxSubagents`; Claude Code stops itself at `AgentPods:MaxTurns`.
 
 Start a run with the Temporal CLI in the admin-tools pod, which the frontend already accepts connections from:
 
@@ -72,6 +90,8 @@ kubectl -n temporal-system exec deploy/temporal-admintools -- temporal workflow 
   --workflow-id "spike-$(date +%s)" \
   --input '{"prompt":"Reply with a one line greeting, then call the submit_result tool.","tier":"read"}'
 ```
+
+A triage run adds `"promptName":"renovate-triage","repo":"<owner>/<name>","pullRequest":<n>,"headSha":"<40 hex>"` to the input and needs `GitHub:ReadApp`.
 
 `tier` is `read` or `cluster-read`; the `cluster-read` tier needs `AgentPods:ClusterReadServiceAccountName`. Read the outcome with `temporal workflow show --address temporal-frontend:7233 --workflow-id <id>` through the same pod, or in the Temporal UI.
 

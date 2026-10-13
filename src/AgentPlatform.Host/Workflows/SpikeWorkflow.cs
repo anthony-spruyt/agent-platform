@@ -10,7 +10,11 @@ namespace AgentPlatform.Host.Workflows;
 
 public sealed record SpikeInput(
     [property: JsonPropertyName("prompt")] string Prompt,
-    [property: JsonPropertyName("tier")] AgentTier Tier);
+    [property: JsonPropertyName("tier")] AgentTier Tier,
+    [property: JsonPropertyName("promptName")] string? PromptName = null,
+    [property: JsonPropertyName("repo")] string? Repo = null,
+    [property: JsonPropertyName("pullRequest")] int PullRequest = 0,
+    [property: JsonPropertyName("headSha")] string? HeadSha = null);
 
 [JsonConverter(typeof(JsonStringEnumConverter<SpikeStatus>))]
 public enum SpikeStatus
@@ -31,16 +35,18 @@ public sealed record SpikeResult(
 [Workflow]
 public partial class SpikeWorkflow
 {
-    public const string SubmitResultUpdate = "submit_result";
-    public const string ResultAlreadySubmittedErrorType = "ResultAlreadySubmitted";
+    public const string InvalidInputErrorType = "InvalidInput";
 
     public static readonly TimeSpan ResultTimeout = TimeSpan.FromMinutes(2);
 
     private const string AgentStep = "spike";
 
-    private SubmitResultPayload? _result;
+    private const int RunAttempt = 1;
 
-    [WorkflowUpdate(SubmitResultUpdate)]
+    private SubmitResultPayload? _result;
+    private string? _triageHeadSha;
+
+    [WorkflowUpdate(AgentResultUpdates.SubmitResult)]
     public Task SubmitResultAsync(SubmitResultPayload payload)
     {
         _result = payload;
@@ -50,12 +56,26 @@ public partial class SpikeWorkflow
     [WorkflowUpdateValidator(nameof(SubmitResultAsync))]
     public void ValidateSubmitResult(SubmitResultPayload payload)
     {
+        ArgumentNullException.ThrowIfNull(payload);
+        if (payload.Step != AgentStep || payload.Attempt != RunAttempt)
+        {
+            throw new ApplicationFailureException(
+                "The result does not belong to the current run step.",
+                errorType: AgentResultUpdates.StaleRunErrorType,
+                nonRetryable: true);
+        }
+
         if (_result is not null)
         {
             throw new ApplicationFailureException(
                 "A result was already submitted for this run.",
-                errorType: ResultAlreadySubmittedErrorType,
+                errorType: AgentResultUpdates.ResultAlreadySubmittedErrorType,
                 nonRetryable: true);
+        }
+
+        if (_triageHeadSha is not null && !TriageResult.TryParse(payload, _triageHeadSha, out _, out var error))
+        {
+            throw new ApplicationFailureException(error!, errorType: AgentResultUpdates.InvalidResultErrorType, nonRetryable: true);
         }
     }
 
@@ -64,17 +84,20 @@ public partial class SpikeWorkflow
     {
         var info = Workflow.Info;
         var started = Workflow.UtcNow;
+        var (promptName, template, repo) = ResolvePrompt(input);
+        var prompt = repo is null ? template : AgentPrompts.Render(template, repo);
+        _triageHeadSha = promptName == AgentPrompts.RenovateTriage ? repo?.HeadSha : null;
         var run = await RunRecorder.BeginAsync(new BeginRunInput(
             nameof(SpikeWorkflow),
             RunRecorder.ToJson(input),
             started,
-            PromptName: AgentStep,
-            PromptBody: input.Prompt));
+            PromptName: promptName,
+            PromptBody: template));
 
         try
         {
             var agentStarted = Workflow.UtcNow;
-            var agent = await RunAgentPodAsync(input);
+            var agent = await RunAgentPodAsync(input, prompt, repo);
             await DeletePodAsync();
 
             var status = SpikeStatus.AgentFailed;
@@ -129,13 +152,39 @@ public partial class SpikeWorkflow
         _ => JsonNamingPolicy.SnakeCaseLower.ConvertName(outcome.ToString()),
     };
 
-    private static async Task<AgentRunResult> RunAgentPodAsync(SpikeInput input)
+    private static (string PromptName, string Template, AgentRepoContext? Repo) ResolvePrompt(SpikeInput input)
+    {
+        var repo = input.Repo is null ? null : new AgentRepoContext(input.Repo, input.PullRequest, input.HeadSha ?? string.Empty);
+        if (input.PromptName is null)
+        {
+            return repo is null
+                ? (AgentStep, input.Prompt, null)
+                : throw InvalidInput("A repository run needs a promptName.");
+        }
+
+        if (!AgentPrompts.Exists(input.PromptName))
+        {
+            throw InvalidInput($"Unknown prompt {input.PromptName}.");
+        }
+
+        if (repo is null)
+        {
+            throw InvalidInput("A named prompt needs repo, pullRequest and headSha.");
+        }
+
+        return (input.PromptName, AgentPrompts.Load(input.PromptName), repo);
+    }
+
+    private static ApplicationFailureException InvalidInput(string message) =>
+        new(message, errorType: InvalidInputErrorType, nonRetryable: true);
+
+    private static async Task<AgentRunResult> RunAgentPodAsync(SpikeInput input, string prompt, AgentRepoContext? repo)
     {
         var deadline = AgentRunTimeouts.DefaultPodDeadlineSeconds;
         try
         {
             return await Workflow.ExecuteActivityAsync(
-                (AgentPodActivities activities) => activities.RunAgentPodAsync(new RunAgentPodInput(AgentStep, input.Prompt, input.Tier, deadline)),
+                (AgentPodActivities activities) => activities.RunAgentPodAsync(new RunAgentPodInput(AgentStep, prompt, input.Tier, deadline, RunAttempt, repo)),
                 new ActivityOptions
                 {
                     TaskQueue = TaskQueues.AgentPods,

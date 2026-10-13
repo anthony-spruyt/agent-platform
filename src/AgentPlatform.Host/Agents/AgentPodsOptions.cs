@@ -25,5 +25,13 @@ public sealed class AgentPodsOptions
 
     public string LiteLlmBaseUrl { get; set; } = "http://litellm.litellm.svc.cluster.local:4000";
 
+    public int MaxTurns { get; set; } = 40;
+
+    public long MaxTokens { get; set; } = 400_000;
+
+    public int MaxSubagents { get; set; } = 3;
+
+    public bool UseMcpHeadersHelper { get; set; }
+
     public string AgentGatewayUrl { get; set; } = "http://agent-platform-web.agent-platform.svc.cluster.local:8081/mcp";
 }

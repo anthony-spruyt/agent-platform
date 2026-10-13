@@ -90,7 +90,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
         return await McpClient.CreateAsync(transport, cancellationToken: Ct);
     }
 
-    private static string ValidToken() => Tokens.Issue("spike-1", "run-1", InAnHour);
+    private static string ValidToken() => Tokens.Issue("spike-1", "run-1", "spike", 1, InAnHour);
 
     private async Task<HttpResponseMessage> PostRawAsync(string? authorization, string body)
     {
@@ -128,7 +128,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
         Assert.NotEqual(true, result.IsError);
         var (run, payload) = Assert.Single(_submitter.Signals);
-        Assert.Equal(new AgentRunIdentity("spike-1", "run-1"), run);
+        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "spike", 1), run);
         Assert.Equal("success", payload.Status);
         Assert.Equal("Looks fine", payload.Summary);
         Assert.Equal("safe", payload.Data!.Value.GetProperty("verdict").GetString());
@@ -180,7 +180,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task TokenSignedWithAnotherKey_IsRejected()
     {
-        var foreign = new AgentSessionTokens("another-key-another-key-another-key").Issue("spike-1", "run-1", InAnHour);
+        var foreign = new AgentSessionTokens("another-key-another-key-another-key").Issue("spike-1", "run-1", "spike", 1, InAnHour);
 
         using var response = await PostRawAsync($"Bearer {foreign}", CallBody);
 
@@ -191,7 +191,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task ExpiredToken_IsRejected()
     {
-        var expired = Tokens.Issue("spike-1", "run-1", DateTimeOffset.UtcNow.AddMinutes(-1));
+        var expired = Tokens.Issue("spike-1", "run-1", "spike", 1, DateTimeOffset.UtcNow.AddMinutes(-1));
 
         using var response = await PostRawAsync($"Bearer {expired}", CallBody);
 
@@ -248,6 +248,37 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
         Assert.True(result.IsError);
         Assert.Contains("already", string.Concat(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(c => c.Text)), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WhenTheResultIsInvalid_TheAgentGetsTheReasonAsAToolErrorSoItCanResubmit()
+    {
+        _submitter.Failure = new InvalidResultException("data.verdict must be one of SAFE, FIXABLE.");
+        await using var client = await ConnectAsync(ValidToken());
+
+        var result = await client.CallToolAsync(
+            "submit_result",
+            new Dictionary<string, object?> { ["status"] = "success", ["summary"] = "done" },
+            cancellationToken: Ct);
+
+        Assert.True(result.IsError);
+        Assert.Contains("data.verdict", string.Concat(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(c => c.Text)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheStepAndAttemptNonceInTheTokenTravelWithTheSubmittedPayload()
+    {
+        await using var client = await ConnectAsync(Tokens.Issue("spike-1", "run-1", "triage", 3, InAnHour));
+
+        await client.CallToolAsync(
+            "submit_result",
+            new Dictionary<string, object?> { ["status"] = "success", ["summary"] = "done" },
+            cancellationToken: Ct);
+
+        var (run, payload) = Assert.Single(_submitter.Signals);
+        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "triage", 3), run);
+        Assert.Equal("triage", payload.Step);
+        Assert.Equal(3, payload.Attempt);
     }
 
     [Theory]
