@@ -1666,6 +1666,52 @@ public class RenovateTriageActivitiesTests
             await AssertHandedToTheOwnerAsync(rig, result, TriageRules.CiNotPassed, "CI had not passed");
         }
 
+        [Fact]
+        public async Task Safe_HandedToTheOwnerAndInterruptedAfterTheLabel_CompletesOnRetry()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            Labelled(rig, TriageRules.NeedsTriageLabel);
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
+            var failOnce = true;
+            rig.Github.OnCreateComment = () =>
+            {
+                if (failOnce)
+                {
+                    failOnce = false;
+                    throw new GitHubApiException("transient", HttpStatusCode.BadGateway);
+                }
+            };
+
+            await Assert.ThrowsAsync<GitHubApiException>(() => Apply(rig, _safe));
+            Assert.Contains(TriageRules.NeedsReviewLabel, rig.Github.PullRequest.Labels);
+            Assert.Empty(rig.Github.Comments);
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Equal(TriageVerdict.NeedsReview, result.Effective?.Verdict);
+            Assert.Equal(TriageRules.CiNotPassed, result.Effective?.Reason);
+            Assert.Equal(Sticky(result.Effective!.Comment!), Assert.Single(rig.Github.Comments).Body);
+            Assert.Equal([TriageRules.NeedsTriageLabel], rig.Github.RemovedLabels);
+            Assert.Empty(rig.Github.Approvals);
+            await AssertStoredAsync(rig, TriageVerdict.NeedsReview, TriageRules.CiNotPassed, result.Effective.Comment);
+        }
+
+        [Fact]
+        public async Task Safe_StillApprovingIsRefusedWhenThePrCarriesTheNeedsReviewLabel()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            Labelled(rig, TriageRules.NeedsReviewLabel);
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel), result);
+            Assert.Empty(rig.Github.Writes);
+            Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
         [Theory]
         [InlineData("pending")]
         [InlineData("failure")]

@@ -27,6 +27,8 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public Action? OnDismiss { get; set; }
 
+    public Action? OnCreateComment { get; set; }
+
     public List<string> Writes { get; } = [];
 
     public List<(string CommitId, string Body)> Approvals { get; } = [];
@@ -186,6 +188,7 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public Task<long> CreateIssueCommentAsync(string repo, int number, string body, CancellationToken cancellationToken)
     {
+        OnCreateComment?.Invoke();
         if (WriteFailure is not null)
         {
             return Task.FromException<long>(WriteFailure);

@@ -182,7 +182,7 @@ public sealed partial class RenovateTriageActivities(
 
             var gate = TriageRules.IsApproving(input.Decision.Verdict)
                 ? await GateApprovalAsync(input, pr, cancellationToken).ConfigureAwait(false)
-                : GateFlag(input, pr);
+                : GateFlag(input, pr, input.Decision);
             if (gate.Stop is { } stop)
             {
                 LogNotApplied(logger, input.Repo, input.PrNumber, stop.Reason);
@@ -208,23 +208,41 @@ public sealed partial class RenovateTriageActivities(
     private sealed record Gate(TriageDecision Decision, ApplyResult? Stop = null, bool CommentOnly = false);
 
     // A flag is not held to the approval gates, but the owner's own labels still stop it; the label it writes itself does not, so a retry completes.
-    private static Gate GateFlag(ApplyInput input, GitHubPullRequest pr)
+    private static Gate GateFlag(ApplyInput input, GitHubPullRequest pr, TriageDecision decision)
     {
-        var own = FlagLabel(input.Decision.Verdict);
+        var own = FlagLabel(decision.Verdict);
         var others = pr with { Labels = [.. pr.Labels.Where(l => !string.Equals(l, own, StringComparison.Ordinal))] };
         var skip = SkipReason(input.Repo, others, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
-        return skip is null ? new Gate(input.Decision) : new Gate(input.Decision, new ApplyResult(ApplyOutcome.Refused, skip));
+        return skip is null ? new Gate(decision) : new Gate(decision, new ApplyResult(ApplyOutcome.Refused, skip));
     }
 
     // An approving verdict is only acted on after the checks Assess ran are redone on fresh data at this head.
+    // The needs-review label is judged on the outcome: a hand-off writes it itself, so a retry must get past it.
     private async Task<Gate> GateApprovalAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
     {
-        var skip = SkipReason(input.Repo, pr, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
+        var skip = SkipReason(input.Repo, pr, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: false);
         if (skip is not null)
         {
             return new Gate(input.Decision, new ApplyResult(ApplyOutcome.Refused, skip));
         }
 
+        var gate = await DecideApprovalAsync(input, pr, cancellationToken).ConfigureAwait(false);
+        if (gate.Stop is not null)
+        {
+            return gate;
+        }
+
+        if (!TriageRules.IsApproving(gate.Decision.Verdict))
+        {
+            return GateFlag(input, pr, gate.Decision);
+        }
+
+        skip = SkipReason(input.Repo, pr, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
+        return skip is null ? gate : new Gate(gate.Decision, new ApplyResult(ApplyOutcome.Refused, skip));
+    }
+
+    private async Task<Gate> DecideApprovalAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
+    {
         var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
         if (!TriageRules.AreAllRenovateCommits(commits, pr.Commits))
         {
