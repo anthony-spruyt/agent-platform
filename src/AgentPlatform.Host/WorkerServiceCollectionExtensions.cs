@@ -64,6 +64,8 @@ public static class WorkerServiceCollectionExtensions
 
         services.TryAddSingleton<IExitCodeSetter, EnvironmentExitCodeSetter>();
         services.AddHostedService<TemporalWorkerFaultMonitor>();
+        services.AddSingleton<TriageGauges>();
+        services.AddHostedService<TriageGaugeRefresher>();
 
         return services;
     }
