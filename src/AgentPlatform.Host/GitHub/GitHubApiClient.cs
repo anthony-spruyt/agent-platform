@@ -41,6 +41,8 @@ public sealed record GitHubRelease(string TagName, string? Name, string? Body);
 
 public sealed record GitHubJob(long Id, long RunId, int RunAttempt, string Name, string? Conclusion);
 
+public sealed record GitHubCommitStatus(string Context, string State);
+
 public interface IGitHubApiClient
 {
     Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken);
@@ -84,6 +86,10 @@ public interface IGitHubApiClient
     Task<string?> GetJobLogTailAsync(string repo, long jobId, int maxChars, CancellationToken cancellationToken);
 
     Task RerunFailedJobsAsync(string repo, long runId, CancellationToken cancellationToken);
+
+    Task RemoveLabelAsync(string repo, int number, string label, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<GitHubCommitStatus>> ListCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken);
 }
 
 public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenProvider tokens, IOptions<GitHubAppOptions> appOptions) : IGitHubApiClient
@@ -103,6 +109,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private static readonly Dictionary<string, string> _contentsRead = new() { ["contents"] = "read" };
     private static readonly Dictionary<string, string> _actionsRead = new() { ["actions"] = "read" };
     private static readonly Dictionary<string, string> _actionsWrite = new() { ["actions"] = "write" };
+    private static readonly Dictionary<string, string> _statusesRead = new() { ["statuses"] = "read" };
 
     private sealed record PullRequestDto(
         int Number,
@@ -154,6 +161,10 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private sealed record ReleaseDto(string? TagName, string? Name, string? Body);
 
     private sealed record JobDto(long Id, long RunId, int RunAttempt, string? Name, string? Conclusion);
+
+    private sealed record CombinedStatusPage(List<StatusDto>? Statuses);
+
+    private sealed record StatusDto(string? Context, string? State);
 
     public async Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken)
     {
@@ -543,6 +554,39 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             GitHubHttp.Request(HttpMethod.Post, $"repos/{owner}/{name}/actions/runs/{runId}/rerun-failed-jobs", token),
             "failed jobs rerun",
             cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task RemoveLabelAsync(string repo, int number, string label, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+        ArgumentException.ThrowIfNullOrWhiteSpace(label);
+
+        var token = await tokens.GetTokenAsync(repo, _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
+        await GitHubHttp.SendIfPresentAsync(
+            http,
+            GitHubHttp.Request(HttpMethod.Delete, $"repos/{owner}/{name}/issues/{number}/labels/{Uri.EscapeDataString(label)}", token),
+            "label remove",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<GitHubCommitStatus>> ListCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        if (!IsSha(sha))
+        {
+            throw new ArgumentException("The commit must be given as a hexadecimal sha.", nameof(sha));
+        }
+
+        var statuses = await GetPagesAsync<CombinedStatusPage, StatusDto>(
+            repo,
+            $"repos/{owner}/{name}/commits/{sha}/status",
+            _statusesRead,
+            "commit statuses list",
+            page => page.Statuses,
+            cancellationToken).ConfigureAwait(false);
+
+        return [.. statuses.Select(s => new GitHubCommitStatus(s.Context ?? string.Empty, s.State ?? string.Empty))];
     }
 
     private static string PlainPath(string value, string paramName)

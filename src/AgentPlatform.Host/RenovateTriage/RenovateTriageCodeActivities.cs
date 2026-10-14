@@ -60,32 +60,7 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
                 return new PrecheckResult(true, PrecheckVerdict.Passed);
             }
 
-            var files = await github.ListPullRequestFilesAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            var reread = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            var shape = DiffShape.Classify(
-                [.. files.Select(f => new DiffFile(f.Filename, f.Status, f.Patch))],
-                pr.ChangedFiles,
-                pr.HeadSha,
-                [.. commits.Select(c => new DiffCommit(c.Sha, c.Message))],
-                reread.HeadSha);
-            if (shape.Failure == DiffShapeFailure.HeadMoved)
-            {
-                return new PrecheckResult(true, PrecheckVerdict.Passed);
-            }
-
-            if (!shape.Passed)
-            {
-                return new PrecheckResult(false, PrecheckVerdict.DiffNotVersionOnly, Detail: shape.Failure.ToString());
-            }
-
-            var scan = await scanner.ScanAsync(pr.Body ?? string.Empty, cancellationToken).ConfigureAwait(false);
-            return scan.Outcome switch
-            {
-                ScanOutcome.Clean => new PrecheckResult(false, PrecheckVerdict.Passed, scan.Text),
-                ScanOutcome.Flagged => new PrecheckResult(false, PrecheckVerdict.BodyFlagged),
-                _ => new PrecheckResult(false, PrecheckVerdict.BodyUnchecked),
-            };
+            return await TriagePrecheck.RunAsync(github, scanner, input.Repo, input.PrNumber, pr, cancellationToken).ConfigureAwait(false);
         });
 
     [Activity(BuildContextName)]

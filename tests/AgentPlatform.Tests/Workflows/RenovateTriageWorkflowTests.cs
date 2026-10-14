@@ -50,7 +50,7 @@ public class RenovateTriageWorkflowTests
 
     private static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, Rig rig, RenovateTriageOptions options, Func<Task<T>> body)
     {
-        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, Options.Create(options));
+        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, Options.Create(options), rig.Scanner);
         var code = new RenovateTriageCodeActivities(rig.Github, rig.Jev, rig.Scanner, Options.Create(options));
         var checks = new TriageCheckActivities(rig.CheckRuns);
         using var worker = new TemporalWorker(

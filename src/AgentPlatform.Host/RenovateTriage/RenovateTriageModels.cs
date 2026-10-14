@@ -73,7 +73,7 @@ public enum ApplyOutcome
     Refused,
 }
 
-public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null);
+public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null, TriageDecision? Effective = null);
 
 public sealed record RenovateTriageResult(RenovateTriageOutcome Outcome, string HeadSha, string? Reason, TriageVerdict? Verdict);
 

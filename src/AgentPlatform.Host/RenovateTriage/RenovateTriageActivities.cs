@@ -12,7 +12,8 @@ public sealed partial class RenovateTriageActivities(
     IGitHubApiClient github,
     IJevClient jev,
     TriageVerdictStore verdicts,
-    IOptions<RenovateTriageOptions> options)
+    IOptions<RenovateTriageOptions> options,
+    IUntrustedTextScanner scanner)
 {
     public const string AssessName = "RenovateTriageAssess";
     public const string JudgeName = "RenovateTriageJudge";
@@ -44,7 +45,7 @@ public sealed partial class RenovateTriageActivities(
                 ? await verdicts.FindUnappliedAsync(input.Repo, input.PrNumber, sha, cancellationToken).ConfigureAwait(false)
                 : null;
             var ignoreTriageSignals = shadow || unapplied is not null;
-            var honourNeedsReviewLabel = unapplied is { Verdict: TriageVerdict.Approve };
+            var honourNeedsReviewLabel = unapplied is not null && TriageRules.IsApproving(unapplied.Verdict);
             var skip = SkipReason(input.Repo, pr, shadow, ignoreTriageSignals, honourNeedsReviewLabel);
             if (skip is not null)
             {
@@ -179,44 +180,136 @@ public sealed partial class RenovateTriageActivities(
                 return new ApplyResult(ApplyOutcome.Aborted, HeadMoved);
             }
 
-            if (input.Decision.Verdict == TriageVerdict.Approve)
+            var gate = TriageRules.IsApproving(input.Decision.Verdict)
+                ? await GateApprovalAsync(input, pr, cancellationToken).ConfigureAwait(false)
+                : new Gate(input.Decision);
+            if (gate.Stop is { } stop)
             {
-                if (TriageRules.CarriesNeedsReviewLabel(pr.Labels))
-                {
-                    LogNotApplied(logger, input.Repo, input.PrNumber, TriageRules.BlockingLabel);
-                    return new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel);
-                }
-
-                await ApproveAsync(input, cancellationToken).ConfigureAwait(false);
+                LogNotApplied(logger, input.Repo, input.PrNumber, stop.Reason);
+                return stop;
             }
-            else
+
+            await WriteEffectAsync(input, gate, cancellationToken).ConfigureAwait(false);
+            if (pr.Labels.Contains(TriageRules.NeedsTriageLabel, StringComparer.Ordinal))
             {
-                await FlagAsync(input, cancellationToken).ConfigureAwait(false);
+                await github.RemoveLabelAsync(input.Repo, input.PrNumber, TriageRules.NeedsTriageLabel, cancellationToken).ConfigureAwait(false);
             }
 
             await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, cancellationToken).ConfigureAwait(false);
-            return new ApplyResult(ApplyOutcome.Applied);
+            return new ApplyResult(ApplyOutcome.Applied, Effective: gate.Decision == input.Decision ? null : gate.Decision);
         });
 
-    private async Task ApproveAsync(ApplyInput input, CancellationToken cancellationToken)
+    private sealed record Gate(TriageDecision Decision, ApplyResult? Stop = null, bool CommentOnly = false);
+
+    // An approving verdict is only acted on after the checks Assess ran are redone on fresh data at this head.
+    private async Task<Gate> GateApprovalAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
     {
-        var summary = input.Decision.Comment ?? "**Auto-approved:**";
+        var skip = SkipReason(input.Repo, pr, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
+        if (skip is not null)
+        {
+            return new Gate(input.Decision, new ApplyResult(ApplyOutcome.Refused, skip));
+        }
+
+        var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (!TriageRules.AreAllRenovateCommits(commits, pr.Commits))
+        {
+            return new Gate(TriageRules.NonRenovateCommitDecision());
+        }
+
+        var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (TriageRules.HasOwnerChangesRequested(reviews, options.Value.OwnerLogin))
+        {
+            return new Gate(TriageRules.OwnerChangesRequestedDecision());
+        }
+
+        var precheck = await TriagePrecheck.RunAsync(github, scanner, input.Repo, input.PrNumber, pr, cancellationToken).ConfigureAwait(false);
+        if (precheck.HeadMoved)
+        {
+            return new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, HeadMoved));
+        }
+
+        if (precheck.Verdict != PrecheckVerdict.Passed)
+        {
+            return new Gate(TriageRules.PrecheckDecision(precheck.Verdict));
+        }
+
+        return input.Decision.Verdict == TriageVerdict.Safe
+            ? await GateSafeAsync(input, pr, cancellationToken).ConfigureAwait(false)
+            : new Gate(input.Decision);
+    }
+
+    private async Task<Gate> GateSafeAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
+    {
+        var checks = await github.ListCheckRunsAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
+        var suites = await github.ListCheckSuitesAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
+        var ci = TriageRules.AssessChecks(checks, suites);
+        var statuses = ci == CiState.Passed
+            ? await github.ListCommitStatusesAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false)
+            : [];
+        var safe = TriageRules.AssessSafe(ci, statuses, pr.HeadRef);
+        return safe.Action switch
+        {
+            SafeAction.Fixable => new Gate(new TriageDecision(
+                TriageVerdict.Fixable,
+                TriageRules.CiFailed,
+                input.Decision.Comment is { } comment ? StickyComment.WithVerdict(comment, TriageVerdict.Fixable) : null)),
+            SafeAction.Owner => new Gate(TriageRules.SafeHandoffDecision(safe.FailedCheck!, input.HeadSha)),
+            SafeAction.CommentOnly => new Gate(input.Decision, CommentOnly: true),
+            _ => new Gate(input.Decision),
+        };
+    }
+
+    private async Task WriteEffectAsync(ApplyInput input, Gate gate, CancellationToken cancellationToken)
+    {
+        var decision = gate.Decision;
+        switch (decision.Verdict)
+        {
+            case TriageVerdict.Approve:
+            case TriageVerdict.Safe when !gate.CommentOnly:
+                await ApproveAsync(input, decision, cancellationToken).ConfigureAwait(false);
+                break;
+            case TriageVerdict.Safe:
+                await FlagAsync(input, decision, TriageRules.SafeLabel, cancellationToken).ConfigureAwait(false);
+                break;
+            case TriageVerdict.Fixable:
+                await FlagAsync(input, decision, TriageRules.FixableLabel, cancellationToken).ConfigureAwait(false);
+                break;
+            case TriageVerdict.Blocked:
+                await FlagAsync(input, decision, TriageRules.BlockedLabel, cancellationToken).ConfigureAwait(false);
+                break;
+            default:
+                await FlagAsync(input, decision, TriageRules.NeedsReviewLabel, cancellationToken).ConfigureAwait(false);
+                break;
+        }
+    }
+
+    private async Task ApproveAsync(ApplyInput input, TriageDecision decision, CancellationToken cancellationToken)
+    {
+        var safe = decision.Verdict == TriageVerdict.Safe;
+        var summary = safe ? TriageRules.SafeApprovalComment : decision.Comment ?? "**Auto-approved:**";
         var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
         if (!reviews.Any(r => IsBotApproval(r) && string.Equals(r.CommitId, input.HeadSha, StringComparison.Ordinal)))
         {
             await github.ApproveAsync(input.Repo, input.PrNumber, input.HeadSha, summary, cancellationToken).ConfigureAwait(false);
         }
 
-        await github.AddLabelsAsync(input.Repo, input.PrNumber, [TriageRules.AutoApprovedLabel], cancellationToken).ConfigureAwait(false);
+        await github.AddLabelsAsync(input.Repo, input.PrNumber, [safe ? TriageRules.SafeLabel : TriageRules.AutoApprovedLabel], cancellationToken).ConfigureAwait(false);
 
         var sticky = await FindStickyAsync(input, cancellationToken).ConfigureAwait(false);
-        if (sticky is not null)
+        if (safe)
         {
-            await UpsertStickyAsync(input, sticky, TriageRules.StickyApprovalText(input.HeadSha, input.Decision.Comment), cancellationToken).ConfigureAwait(false);
+            if (decision.Comment is { } comment)
+            {
+                await UpsertStickyAsync(input, sticky, comment, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else if (sticky is not null)
+        {
+            await UpsertStickyAsync(input, sticky, TriageRules.StickyApprovalText(input.HeadSha, decision.Comment), cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task FlagAsync(ApplyInput input, CancellationToken cancellationToken)
+    private async Task FlagAsync(ApplyInput input, TriageDecision decision, string label, CancellationToken cancellationToken)
     {
         var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
         foreach (var stale in reviews.Where(IsBotApproval))
@@ -224,9 +317,9 @@ public sealed partial class RenovateTriageActivities(
             await DismissAsync(input, stale, cancellationToken).ConfigureAwait(false);
         }
 
-        await github.AddLabelsAsync(input.Repo, input.PrNumber, [TriageRules.NeedsReviewLabel], cancellationToken).ConfigureAwait(false);
+        await github.AddLabelsAsync(input.Repo, input.PrNumber, [label], cancellationToken).ConfigureAwait(false);
 
-        if (input.Decision.Comment is { } comment)
+        if (decision.Comment is { } comment)
         {
             var sticky = await FindStickyAsync(input, cancellationToken).ConfigureAwait(false);
             await UpsertStickyAsync(input, sticky, comment, cancellationToken).ConfigureAwait(false);
@@ -266,7 +359,7 @@ public sealed partial class RenovateTriageActivities(
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Not applying the verdict for {Repo}#{Number}: {Reason}.")]
-    private static partial void LogNotApplied(ILogger logger, string repo, int number, string reason);
+    private static partial void LogNotApplied(ILogger logger, string repo, int number, string? reason);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub refused to dismiss review {ReviewId} on {Repo}#{Number}; carrying on.")]
     private static partial void LogDismissRefused(ILogger logger, long reviewId, string repo, int number);

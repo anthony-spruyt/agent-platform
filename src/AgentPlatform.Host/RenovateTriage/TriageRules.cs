@@ -44,6 +44,10 @@ public static partial class TriageRules
 
     public const string StickyMarker = "<!-- agent-platform:renovate-triage -->";
     public const string NeedsReviewLabel = "agent/needs-human-review";
+    public const string NeedsTriageLabel = "agent/needs-triage";
+    public const string SafeLabel = "agent/safe";
+    public const string FixableLabel = "agent/fixable";
+    public const string BlockedLabel = "blocked";
     public const string AutoApprovedLabel = "agent/auto-approved";
 
     public const string NotOpen = "not-open";
@@ -71,6 +75,9 @@ public static partial class TriageRules
     public const string PrecheckDiff = "precheck-diff";
     public const string PrecheckFlagged = "precheck-flagged";
     public const string PrecheckUnchecked = "precheck-unchecked";
+    public const string CiNotPassed = "ci-not-passed";
+    public const string StabilityDays = "renovate/stability-days";
+    public const string OwnerChangesRequested = "owner-changes-requested";
 
     public const string NonRenovateCommitComment = "**Needs review:** this PR has commits that Renovate didn't make.";
     public const string CiTimeoutComment = "**Needs review:** CI didn't finish within 2 hours.";
@@ -81,6 +88,8 @@ public static partial class TriageRules
     public const string PrecheckDiffComment = "**Needs review:** this PR changes more than version and digest updates.";
     public const string PrecheckFlaggedComment = "**Needs review:** some of this PR's content is held for a human look.";
     public const string PrecheckUncheckedComment = "**Needs review:** some of this PR's content could not be checked.";
+    public const string OwnerChangesRequestedComment = $"{NeedsReviewPrefix} the owner has requested changes on this PR.";
+    public const string SafeApprovalComment = "**Auto-approved:** the agent judged this PR safe.";
     public const string DigestApprovalComment = "**Auto-approved:** digest bump.";
     public const string AllowlistedApprovalComment = "**Auto-approved:** allowlisted.";
 
@@ -97,11 +106,11 @@ public static partial class TriageRules
 
     private static readonly string[] _trustedAssociations = ["OWNER", "MEMBER", "COLLABORATOR"];
 
-    private static readonly string[] _blockingLabels = [NeedsReviewLabel, "agent/revert", "blocked"];
+    private static readonly string[] _blockingLabels = [NeedsReviewLabel, NeedsTriageLabel, "agent/revert", BlockedLabel];
 
-    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason];
+    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason, CiNotPassed, StabilityDays, OwnerChangesRequested];
 
-    private static readonly string[] _livePathLabels = [NeedsReviewLabel, "agent/auto-approved"];
+    private static readonly string[] _livePathLabels = [NeedsReviewLabel, NeedsTriageLabel, AutoApprovedLabel];
 
     private static readonly string[] _ignoredCheckPrefixes = ["Mergify", "renovate/stability-days"];
 
@@ -121,7 +130,7 @@ public static partial class TriageRules
         "renovate/aikidosec-safe-chain",
     ];
 
-    public static string? SkipReason(long? authorId, IReadOnlyCollection<string> labels, bool ignoreTriageSignals = false, bool honourNeedsReviewLabel = false)
+    public static string? SkipReason(long? authorId, IReadOnlyCollection<string> labels, bool ignoreTriageSignals = false, bool honourNeedsReviewLabel = false, bool hasPendingRow = false)
     {
         ArgumentNullException.ThrowIfNull(labels);
         if (authorId != RenovateUserId)
@@ -129,13 +138,53 @@ public static partial class TriageRules
             return NotRenovate;
         }
 
-        return labels.Any(l => IsBlockingLabel(l, ignoreTriageSignals, honourNeedsReviewLabel)) ? BlockingLabel : null;
+        return labels.Any(l => IsBlockingLabel(l, ignoreTriageSignals, honourNeedsReviewLabel, hasPendingRow)) ? BlockingLabel : null;
     }
 
-    public static bool CarriesNeedsReviewLabel(IReadOnlyCollection<string> labels)
+    public static bool IsBlocking(string label, bool hasPendingRow)
     {
-        ArgumentNullException.ThrowIfNull(labels);
-        return labels.Contains(NeedsReviewLabel, StringComparer.Ordinal);
+        ArgumentNullException.ThrowIfNull(label);
+        return _blockingLabels.Contains(label, StringComparer.Ordinal)
+            && !(hasPendingRow && string.Equals(label, NeedsTriageLabel, StringComparison.Ordinal));
+    }
+
+    public static bool IsApproving(TriageVerdict verdict) => verdict is TriageVerdict.Approve or TriageVerdict.Safe;
+
+    public static bool HasOwnerChangesRequested(IReadOnlyList<GitHubReview> reviews, string? ownerLogin)
+    {
+        ArgumentNullException.ThrowIfNull(reviews);
+        if (string.IsNullOrEmpty(ownerLogin))
+        {
+            return false;
+        }
+
+        var latest = reviews.LastOrDefault(r =>
+            string.Equals(r.AuthorLogin, ownerLogin, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(r.State, "COMMENTED", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(r.State, "PENDING", StringComparison.OrdinalIgnoreCase));
+        return latest is not null && string.Equals(latest.State, "CHANGES_REQUESTED", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static SafeAssessment AssessSafe(CiState ci, IReadOnlyList<GitHubCommitStatus> statuses, string branch)
+    {
+        ArgumentNullException.ThrowIfNull(statuses);
+        ArgumentNullException.ThrowIfNull(branch);
+        if (ci == CiState.Failed)
+        {
+            return new SafeAssessment(SafeAction.Fixable, CiFailed);
+        }
+
+        if (ci == CiState.Pending)
+        {
+            return new SafeAssessment(SafeAction.Owner, CiNotPassed);
+        }
+
+        if (statuses.Any(s => string.Equals(s.Context, StabilityDays, StringComparison.Ordinal) && !string.Equals(s.State, "success", StringComparison.Ordinal)))
+        {
+            return new SafeAssessment(SafeAction.Owner, StabilityDays);
+        }
+
+        return new SafeAssessment(IsRiskyBranch(branch) ? SafeAction.CommentOnly : SafeAction.Approve);
     }
 
     public static bool IsNotOpen(string state, bool merged, bool shadow)
@@ -285,6 +334,18 @@ public static partial class TriageRules
         return decision.Verdict == TriageVerdict.NeedsReview && !_neverClimb.Contains(decision.Reason, StringComparer.Ordinal);
     }
 
+    public static TriageDecision OwnerChangesRequestedDecision() => new(TriageVerdict.NeedsReview, OwnerChangesRequested, OwnerChangesRequestedComment);
+
+    public static TriageDecision SafeHandoffDecision(string failedCheck, string headSha)
+    {
+        ArgumentNullException.ThrowIfNull(failedCheck);
+        ArgumentNullException.ThrowIfNull(headSha);
+        var cause = failedCheck == StabilityDays
+            ? $"the `{StabilityDays}` check was not successful on `{ShortSha(headSha)}`"
+            : $"CI had not passed on `{ShortSha(headSha)}`";
+        return new TriageDecision(TriageVerdict.NeedsReview, failedCheck, $"{NeedsReviewPrefix} the agent judged this PR safe, but {cause}.");
+    }
+
     public static TriageDecision CiTimeoutDecision() => new(TriageVerdict.NeedsReview, CiTimeout, CiTimeoutComment);
 
     public static TriageDecision HighRiskDecision(string term)
@@ -365,8 +426,8 @@ public static partial class TriageRules
         && string.Equals(commit.CommitterEmail, GitHubCommitterEmail, StringComparison.Ordinal)
         && commit.Verified;
 
-    private static bool IsBlockingLabel(string label, bool ignoreTriageSignals, bool honourNeedsReviewLabel) =>
-        _blockingLabels.Contains(label, StringComparer.Ordinal)
+    private static bool IsBlockingLabel(string label, bool ignoreTriageSignals, bool honourNeedsReviewLabel, bool hasPendingRow) =>
+        IsBlocking(label, hasPendingRow)
         && !(ignoreTriageSignals && _livePathLabels.Contains(label, StringComparer.Ordinal) && !(honourNeedsReviewLabel && label == NeedsReviewLabel));
 
     private static bool IsTriageBot(GitHubReview review) => string.Equals(review.AuthorLogin, TriageBotLogin, StringComparison.Ordinal);

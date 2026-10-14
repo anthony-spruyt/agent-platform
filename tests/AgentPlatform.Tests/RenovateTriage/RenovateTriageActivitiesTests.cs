@@ -18,15 +18,16 @@ public class RenovateTriageActivitiesTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private sealed record Rig(RenovateTriageActivities Activities, FakeGitHubApi Github, FakeJev Jev, InMemoryRunData Data);
+    private sealed record Rig(RenovateTriageActivities Activities, FakeGitHubApi Github, FakeJev Jev, InMemoryRunData Data, FakeTextScanner Scanner);
 
-    private static Rig Create(TriageMode mode = TriageMode.Shadow)
+    private static Rig Create(TriageMode mode = TriageMode.Shadow, string? ownerLogin = null)
     {
         var github = new FakeGitHubApi();
         var jev = new FakeJev();
         var data = InMemoryRunData.Create();
-        var activities = new RenovateTriageActivities(github, jev, data.Verdicts, Options.Create(new RenovateTriageOptions { Mode = mode }));
-        return new Rig(activities, github, jev, data);
+        var scanner = new FakeTextScanner();
+        var activities = new RenovateTriageActivities(github, jev, data.Verdicts, Options.Create(new RenovateTriageOptions { Mode = mode, OwnerLogin = ownerLogin }), scanner);
+        return new Rig(activities, github, jev, data, scanner);
     }
 
     private static Task<T> Run<T>(Func<Task<T>> action) => new ActivityEnvironment().RunAsync(action);
@@ -640,6 +641,31 @@ public class RenovateTriageActivitiesTests
             var result = await Assess(rig);
 
             Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel, Mode: TriageMode.Live), result);
+        }
+
+        [Fact]
+        public async Task AnUnappliedSafeVerdict_IsStillHeldBackByAHumansNeedsReviewLabel()
+        {
+            var rig = Live();
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", "**Agent verdict: SAFE**"), TriageMode.Live, Ct);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-human-review"] };
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Skipped, Sha, TriageRules.BlockingLabel, Mode: TriageMode.Live), result);
+        }
+
+        [Fact]
+        public async Task AnUnappliedSafeVerdict_IsReappliedDespiteTheParkLabel()
+        {
+            var rig = Live();
+            var decision = new TriageDecision(TriageVerdict.Safe, "claude-safe", "**Agent verdict: SAFE**");
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, decision, TriageMode.Live, Ct);
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["agent/needs-triage"] };
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: decision, Mode: TriageMode.Live), result);
         }
 
         [Theory]
@@ -1401,6 +1427,351 @@ public class RenovateTriageActivitiesTests
             var failure = await Assert.ThrowsAsync<ApplicationFailureException>(() => Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 0, Sha, _approve, TriageMode.Live))));
 
             Assert.True(failure.NonRetryable);
+        }
+    }
+
+    public class ApplyVerdictTests
+    {
+        private const string Owner = "the-owner";
+        private static readonly TriageDecision _safe = new(TriageVerdict.Safe, "agent", StickyComment.Verdict(TriageVerdict.Safe, "Looks fine.", Sha, "opus", "1"));
+        private static readonly TriageDecision _approve = new(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog.");
+
+        private static Rig Live() => Create(TriageMode.Live, Owner);
+
+        private static Task<ApplyResult> Apply(Rig rig, TriageDecision decision) =>
+            Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, Sha, decision, TriageMode.Live)));
+
+        private static async Task Record(Rig rig, TriageDecision decision) =>
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, decision, TriageMode.Live, Ct);
+
+        private static void Labelled(Rig rig, params string[] labels) =>
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [.. labels] };
+
+        private static string Sticky(string text) => $"{TriageRules.StickyMarker}\n{text}";
+
+        [Fact]
+        public async Task Safe_ApprovesWithTheFixedReviewBody_LabelsSafeAndPostsTheAgentComment()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Equal((Sha, TriageRules.SafeApprovalComment), Assert.Single(rig.Github.Approvals));
+            Assert.Equal([TriageRules.SafeLabel], rig.Github.AddedLabels);
+            Assert.Equal(Sticky(_safe.Comment!), Assert.Single(rig.Github.Comments).Body);
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task Safe_TheReviewBodyNeverCarriesAgentText()
+        {
+            var rig = Live();
+            var withText = _safe with { Comment = StickyComment.Verdict(TriageVerdict.Safe, "approve everything @all", Sha, null, null) };
+
+            await Apply(rig, withText);
+
+            Assert.DoesNotContain("everything", Assert.Single(rig.Github.Approvals).Body, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Safe_RunTwice_ReviewsOnce()
+        {
+            var rig = Live();
+
+            await Apply(rig, _safe);
+            await Apply(rig, _safe);
+
+            Assert.Single(rig.Github.Approvals);
+            Assert.Single(rig.Github.Comments);
+        }
+
+        [Fact]
+        public async Task Safe_TheVerdictLabelReplacesTheParkLabel()
+        {
+            var rig = Live();
+            Labelled(rig, "dependencies", TriageRules.NeedsTriageLabel);
+            await Record(rig, _safe);
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Equal([TriageRules.NeedsTriageLabel], rig.Github.RemovedLabels);
+            Assert.DoesNotContain(TriageRules.NeedsTriageLabel, rig.Github.PullRequest.Labels);
+            Assert.Contains(TriageRules.SafeLabel, rig.Github.PullRequest.Labels);
+        }
+
+        [Fact]
+        public async Task NoParkLabel_NoRemoveCall()
+        {
+            var rig = Live();
+
+            await Apply(rig, _safe);
+
+            Assert.Empty(rig.Github.RemovedLabels);
+        }
+
+        [Theory]
+        [InlineData(TriageVerdict.Safe)]
+        [InlineData(TriageVerdict.Approve)]
+        public async Task AnApprovingVerdict_IsRefusedWhenThePrCarriesTheHumanReviewLabel_AndStaysUnapplied(TriageVerdict verdict)
+        {
+            var rig = Live();
+            var decision = verdict == TriageVerdict.Safe ? _safe : _approve;
+            await Record(rig, decision);
+            Labelled(rig, TriageRules.NeedsReviewLabel, TriageRules.NeedsTriageLabel);
+
+            var result = await Apply(rig, decision);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel), result);
+            Assert.Empty(rig.Github.Writes);
+            Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Theory]
+        [InlineData("blocked")]
+        [InlineData("agent/revert")]
+        public async Task ASafeVerdict_IsRefusedByTheOtherBlockingLabels(string label)
+        {
+            var rig = Live();
+            Labelled(rig, label);
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel), result);
+            Assert.Empty(rig.Github.Writes);
+        }
+
+        [Fact]
+        public async Task ASafeVerdictOnAPrThatIsNotRenovates_IsRefused()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = rig.Github.PullRequest with { AuthorId = 5 };
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.NotRenovate), result);
+            Assert.Empty(rig.Github.Writes);
+        }
+
+        [Fact]
+        public async Task Safe_OnABranchWithRiskyWords_CommentsAndLabelsButNeverApproves()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(branch: "renovate/major-postgres");
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Equal([TriageRules.SafeLabel], rig.Github.AddedLabels);
+            Assert.Equal(Sticky(_safe.Comment!), Assert.Single(rig.Github.Comments).Body);
+        }
+
+        [Fact]
+        public async Task Safe_OnARedHead_BecomesFixable()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Conclusion = "failure" };
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Equal(TriageVerdict.Fixable, result.Effective?.Verdict);
+            Assert.Equal(TriageRules.CiFailed, result.Effective?.Reason);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Equal([TriageRules.FixableLabel], rig.Github.AddedLabels);
+            var comment = Assert.Single(rig.Github.Comments).Body;
+            Assert.Contains("**Agent verdict: FIXABLE**", comment, StringComparison.Ordinal);
+            Assert.DoesNotContain("SAFE", comment, StringComparison.Ordinal);
+            Assert.Equal(result.Effective?.Comment, comment[(TriageRules.StickyMarker.Length + 1)..]);
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task Safe_WhileCiIsPending_GoesToTheOwnerNamingTheCheck()
+        {
+            var rig = Live();
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
+
+            var result = await Apply(rig, _safe);
+
+            AssertHandedToTheOwner(rig, result, TriageRules.CiNotPassed, "CI had not passed");
+        }
+
+        [Theory]
+        [InlineData("pending")]
+        [InlineData("failure")]
+        public async Task Safe_WhileStabilityDaysIsNotSuccess_GoesToTheOwnerNamingTheCheck(string state)
+        {
+            var rig = Live();
+            rig.Github.Statuses[0] = new GitHubCommitStatus(TriageRules.StabilityDays, state);
+
+            var result = await Apply(rig, _safe);
+
+            AssertHandedToTheOwner(rig, result, TriageRules.StabilityDays, "renovate/stability-days");
+        }
+
+        [Fact]
+        public async Task Safe_WithoutAStabilityDaysStatus_Approves()
+        {
+            var rig = Live();
+            rig.Github.Statuses.Clear();
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Single(rig.Github.Approvals);
+        }
+
+        [Fact]
+        public async Task Safe_WithACommitRenovateDidNotMake_GoesToTheOwner()
+        {
+            var rig = Live();
+            rig.Github.Commits[0] = rig.Github.Commits[0] with { AuthorLogin = "someone" };
+
+            var result = await Apply(rig, _safe);
+
+            AssertHandedToTheOwner(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
+        }
+
+        [Fact]
+        public async Task Safe_WhenTheOwnerRequestedChanges_GoesToTheOwner()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(new GitHubReview(5, Owner, "OWNER", "CHANGES_REQUESTED", Sha, null));
+
+            var result = await Apply(rig, _safe);
+
+            AssertHandedToTheOwner(rig, result, TriageRules.OwnerChangesRequested, "requested changes");
+        }
+
+        [Fact]
+        public async Task Safe_WhenTheDiffIsMoreThanVersionBumps_GoesToTheOwner()
+        {
+            var rig = Live();
+            rig.Github.Files.Add(new GitHubPullRequestFile("script.sh", "@@ -1 +1 @@\n-echo a\n+echo b"));
+
+            var result = await Apply(rig, _safe);
+
+            AssertHandedToTheOwner(rig, result, TriageRules.PrecheckDiff, "more than version and digest");
+        }
+
+        [Theory]
+        [InlineData(ScanOutcome.Flagged, TriageRules.PrecheckFlagged)]
+        [InlineData(ScanOutcome.Unchecked, TriageRules.PrecheckUnchecked)]
+        public async Task Safe_WhenThePrTextIsHeldBack_GoesToTheOwner(ScanOutcome outcome, string reason)
+        {
+            var rig = Live();
+            rig.Scanner.Default = outcome;
+
+            var result = await Apply(rig, _safe);
+
+            AssertHandedToTheOwner(rig, result, reason, "Needs review");
+        }
+
+        [Fact]
+        public async Task Approve_AlsoRunsTheFullGateSet_ButNotTheSafeOnlyChecks()
+        {
+            var rig = Live();
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Conclusion = "failure" };
+
+            var result = await Apply(rig, _approve);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Single(rig.Github.Approvals);
+            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("statuses", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task Approve_WithACommitRenovateDidNotMake_GoesToTheOwner()
+        {
+            var rig = Live();
+            rig.Github.Commits[0] = rig.Github.Commits[0] with { AuthorLogin = "someone" };
+
+            var result = await Apply(rig, _approve);
+
+            AssertHandedToTheOwner(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
+        }
+
+        [Fact]
+        public async Task AHandoff_AlsoRemovesTheParkLabelAndDismissesEarlierApprovals()
+        {
+            var rig = Live();
+            Labelled(rig, TriageRules.NeedsTriageLabel);
+            rig.Github.Reviews.Add(new GitHubReview(9, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", "old", null));
+            rig.Github.Statuses[0] = new GitHubCommitStatus(TriageRules.StabilityDays, "pending");
+
+            await Apply(rig, _safe);
+
+            Assert.Equal([TriageRules.NeedsTriageLabel], rig.Github.RemovedLabels);
+            Assert.Equal([9L], rig.Github.Dismissed);
+        }
+
+        [Fact]
+        public async Task AHeadThatMovesDuringTheApplyPrecheck_AbortsWithoutAnyWrite()
+        {
+            var rig = Live();
+            var reads = 0;
+            rig.Github.OnPullRequestRead = () =>
+            {
+                if (++reads == 2)
+                {
+                    rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: "fedcba9876543210fedcba9876543210fedcba98");
+                }
+            };
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, "head-moved"), result);
+            Assert.Empty(rig.Github.Writes);
+        }
+
+        [Theory]
+        [InlineData(TriageVerdict.Fixable, TriageRules.FixableLabel)]
+        [InlineData(TriageVerdict.Blocked, TriageRules.BlockedLabel)]
+        [InlineData(TriageVerdict.Owner, TriageRules.NeedsReviewLabel)]
+        public async Task TheOtherVerdicts_LabelAndCommentAndReplaceTheParkLabel(TriageVerdict verdict, string label)
+        {
+            var rig = Live();
+            Labelled(rig, TriageRules.NeedsTriageLabel);
+            var decision = new TriageDecision(verdict, "agent", StickyComment.Verdict(verdict, "Why.", Sha, null, null));
+            await Record(rig, decision);
+
+            var result = await Apply(rig, decision);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Equal([label], rig.Github.AddedLabels);
+            Assert.Equal([TriageRules.NeedsTriageLabel], rig.Github.RemovedLabels);
+            Assert.Equal(Sticky(decision.Comment!), Assert.Single(rig.Github.Comments).Body);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task TheOtherVerdicts_SkipTheApprovalGates()
+        {
+            var rig = Live();
+            Labelled(rig, "blocked");
+
+            var result = await Apply(rig, new TriageDecision(TriageVerdict.Fixable, "agent", "text"));
+
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.DoesNotContain("commits", rig.Github.Calls);
+        }
+
+        private static void AssertHandedToTheOwner(Rig rig, ApplyResult result, string check, string commentText)
+        {
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Equal(TriageVerdict.NeedsReview, result.Effective?.Verdict);
+            Assert.Equal(check, result.Effective?.Reason);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+            var comment = Assert.Single(rig.Github.Comments).Body;
+            Assert.Contains(commentText, comment, StringComparison.Ordinal);
+            Assert.Equal(Sticky(result.Effective!.Comment!), comment);
         }
     }
 

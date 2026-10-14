@@ -78,15 +78,6 @@ public class TriageRulesTests
         }
 
         [Theory]
-        [InlineData("agent/needs-human-review", true)]
-        [InlineData("agent/auto-approved", false)]
-        [InlineData("blocked", false)]
-        public void CarriesNeedsReviewLabel_MatchesTheNeedsReviewLabelOnly(string label, bool expected)
-        {
-            Assert.Equal(expected, TriageRules.CarriesNeedsReviewLabel(["dep/minor", label]));
-        }
-
-        [Theory]
         [InlineData("agent/revert")]
         [InlineData("blocked")]
         public void InShadowMode_OtherBlockingLabels_StillSkip(string label)
@@ -108,7 +99,65 @@ public class TriageRulesTests
         {
             Assert.Null(TriageRules.SkipReason(29139614, ["agent/needs-review"], ignoreTriageSignals: false));
             Assert.Null(TriageRules.SkipReason(29139614, ["agent/needs-review"], ignoreTriageSignals: true, honourNeedsReviewLabel: true));
-            Assert.False(TriageRules.CarriesNeedsReviewLabel(["agent/needs-review"]));
+        }
+
+        [Fact]
+        public void TheNeedsTriageLabel_IsTheQueuedName()
+        {
+            Assert.Equal("agent/needs-triage", TriageRules.NeedsTriageLabel);
+        }
+
+        [Theory]
+        [InlineData("agent/needs-triage", false, true)]
+        [InlineData("agent/needs-triage", true, false)]
+        [InlineData("agent/needs-human-review", false, true)]
+        [InlineData("agent/needs-human-review", true, true)]
+        [InlineData("agent/revert", true, true)]
+        [InlineData("blocked", true, true)]
+        [InlineData("agent/safe", false, false)]
+        [InlineData("agent/fixable", true, false)]
+        [InlineData("agent/auto-approved", false, false)]
+        public void IsBlocking_LetsAPendingRowOverrideOnlyTheNeedsTriageLabel(string label, bool hasPendingRow, bool expected)
+        {
+            Assert.Equal(expected, TriageRules.IsBlocking(label, hasPendingRow));
+        }
+
+        [Fact]
+        public void TheNeedsTriageLabel_BlocksWithoutAPendingRow_SoAHandAddedLabelNeverStartsARun()
+        {
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-triage"]));
+        }
+
+        [Fact]
+        public void TheNeedsTriageLabel_DoesNotBlockWhileAPendingRowExists()
+        {
+            Assert.Null(TriageRules.SkipReason(29139614, ["agent/needs-triage"], hasPendingRow: true));
+        }
+
+        [Fact]
+        public void APendingRow_NeverIgnoresTheNeedsReviewLabelOrTheOwnersLabels()
+        {
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-human-review"], hasPendingRow: true));
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-triage", "blocked"], hasPendingRow: true));
+            Assert.Equal(TriageRules.BlockingLabel, TriageRules.SkipReason(29139614, ["agent/needs-triage", "agent/revert"], hasPendingRow: true));
+        }
+
+        [Fact]
+        public void InShadowMode_TheNeedsTriageLabelIsIgnored()
+        {
+            Assert.Null(TriageRules.SkipReason(29139614, ["agent/needs-triage"], ignoreTriageSignals: true));
+        }
+
+        [Theory]
+        [InlineData(TriageVerdict.Approve, true)]
+        [InlineData(TriageVerdict.Safe, true)]
+        [InlineData(TriageVerdict.NeedsReview, false)]
+        [InlineData(TriageVerdict.Fixable, false)]
+        [InlineData(TriageVerdict.Blocked, false)]
+        [InlineData(TriageVerdict.Owner, false)]
+        public void OnlyApprovingVerdictsAreRefusedByTheNeedsReviewLabel(TriageVerdict verdict, bool expected)
+        {
+            Assert.Equal(expected, TriageRules.IsApproving(verdict));
         }
 
         [Fact]
@@ -949,6 +998,144 @@ public class TriageRulesTests
         public void AnApproval_DoesNotClimb()
         {
             Assert.False(TriageRules.Climbs(new TriageDecision(TriageVerdict.Approve, TriageRules.Allowlisted, "c")));
+        }
+    }
+
+    public class SafeChecks
+    {
+        private static readonly GitHubCommitStatus[] _stabilityOk = [new("renovate/stability-days", "success")];
+
+        [Fact]
+        public void APassedHeadWithAnOldEnoughRelease_ApprovesOnAnOrdinaryBranch()
+        {
+            Assert.Equal(new SafeAssessment(SafeAction.Approve), TriageRules.AssessSafe(CiState.Passed, _stabilityOk, "renovate/czkawka"));
+        }
+
+        [Fact]
+        public void ARedHead_IsFixable_NotSafe()
+        {
+            Assert.Equal(new SafeAssessment(SafeAction.Fixable, TriageRules.CiFailed), TriageRules.AssessSafe(CiState.Failed, _stabilityOk, "renovate/czkawka"));
+        }
+
+        [Fact]
+        public void APendingHead_NeverGetsSafe_AndGoesToTheOwnerNamingTheCheck()
+        {
+            Assert.Equal(new SafeAssessment(SafeAction.Owner, TriageRules.CiNotPassed), TriageRules.AssessSafe(CiState.Pending, _stabilityOk, "renovate/czkawka"));
+        }
+
+        [Theory]
+        [InlineData("pending")]
+        [InlineData("failure")]
+        [InlineData("error")]
+        public void AStabilityDaysStatusThatIsNotSuccess_GoesToTheOwnerNamingTheCheck(string state)
+        {
+            var result = TriageRules.AssessSafe(CiState.Passed, [new("renovate/stability-days", state)], "renovate/czkawka");
+
+            Assert.Equal(new SafeAssessment(SafeAction.Owner, TriageRules.StabilityDays), result);
+        }
+
+        [Fact]
+        public void NoStabilityDaysStatus_IsFine()
+        {
+            Assert.Equal(SafeAction.Approve, TriageRules.AssessSafe(CiState.Passed, [new("Terraform Cloud/x", "pending")], "renovate/czkawka").Action);
+        }
+
+        [Fact]
+        public void OtherStatusesNamedLikeItDoNotCount()
+        {
+            Assert.Equal(SafeAction.Approve, TriageRules.AssessSafe(CiState.Passed, [new("renovate/stability-days-other", "pending")], "renovate/czkawka").Action);
+        }
+
+        [Fact]
+        public void AHighRiskBranch_IsCommentOnly()
+        {
+            Assert.Equal(new SafeAssessment(SafeAction.CommentOnly), TriageRules.AssessSafe(CiState.Passed, _stabilityOk, "renovate/cilium-1.x"));
+        }
+
+        [Fact]
+        public void ARedHighRiskBranch_IsStillFixable()
+        {
+            Assert.Equal(SafeAction.Fixable, TriageRules.AssessSafe(CiState.Failed, _stabilityOk, "renovate/cilium-1.x").Action);
+        }
+
+        [Fact]
+        public void AFailedCheckOnAHighRiskBranch_GoesToTheOwner()
+        {
+            Assert.Equal(SafeAction.Owner, TriageRules.AssessSafe(CiState.Passed, [new("renovate/stability-days", "pending")], "renovate/cilium-1.x").Action);
+        }
+
+        [Theory]
+        [InlineData(TriageRules.CiNotPassed, "CI had not passed")]
+        [InlineData(TriageRules.StabilityDays, "`renovate/stability-days`")]
+        public void TheHandoffDecision_NamesTheFailedCheck(string check, string text)
+        {
+            var decision = TriageRules.SafeHandoffDecision(check, Head);
+
+            Assert.Equal(TriageVerdict.NeedsReview, decision.Verdict);
+            Assert.Equal(check, decision.Reason);
+            Assert.Contains(text, decision.Comment, StringComparison.Ordinal);
+            Assert.Contains(TriageRules.ShortSha(Head), decision.Comment, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void TheHandoffDecision_NeverClimbs()
+        {
+            Assert.False(TriageRules.Climbs(TriageRules.SafeHandoffDecision(TriageRules.CiNotPassed, Head)));
+            Assert.False(TriageRules.Climbs(TriageRules.OwnerChangesRequestedDecision()));
+        }
+    }
+
+    public class OwnerReview
+    {
+        [Fact]
+        public void TheOwnersLatestReviewRequestingChanges_Counts()
+        {
+            Assert.True(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED")], "owner"));
+        }
+
+        [Fact]
+        public void LoginsAreComparedIgnoringCase()
+        {
+            Assert.True(TriageRules.HasOwnerChangesRequested([Review("Owner", "CHANGES_REQUESTED")], "owner"));
+        }
+
+        [Fact]
+        public void AnotherReviewersRequest_DoesNotCount()
+        {
+            Assert.False(TriageRules.HasOwnerChangesRequested([Review("someone", "CHANGES_REQUESTED")], "owner"));
+        }
+
+        [Fact]
+        public void AnAppsRequest_DoesNotCountEvenWithTheOwnersName()
+        {
+            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner[bot]", "CHANGES_REQUESTED")], "owner"));
+        }
+
+        [Fact]
+        public void ALaterApprovalOrDismissal_ClearsIt()
+        {
+            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED"), Review("owner", "APPROVED")], "owner"));
+            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED"), Review("owner", "DISMISSED")], "owner"));
+        }
+
+        [Fact]
+        public void ALaterComment_DoesNotClearIt()
+        {
+            Assert.True(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED"), Review("owner", "COMMENTED")], "owner"));
+        }
+
+        [Fact]
+        public void ARequestOnAnOlderCommit_StillCounts()
+        {
+            Assert.True(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED", commit: "a".PadRight(40, 'a'))], "owner"));
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void WithoutAnOwnerLogin_NothingCounts(string? login)
+        {
+            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED")], login));
         }
     }
 }
