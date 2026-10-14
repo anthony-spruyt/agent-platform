@@ -30,6 +30,7 @@ public static class WorkerServiceCollectionExtensions
             .AddHostedTemporalWorker(temporal.Address, temporal.Namespace, TaskQueues.AgentPlatform)
             .AddWorkflow<PingWorkflow>()
             .AddWorkflow<RenovateTriageWorkflow>()
+            .AddWorkflow<RenovateTriageSweeperWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<PromptActivities>()
             .AddSingletonActivities<RunDataActivities>()
@@ -38,6 +39,7 @@ public static class WorkerServiceCollectionExtensions
             .AddScopedActivities<RenovateTriageCodeActivities>()
             .AddScopedActivities<ClaudeRungActivities>()
             .AddScopedActivities<TriageCheckActivities>()
+            .AddScopedActivities<SweeperActivities>()
             .AddScopedActivities<AgentPodActivities>();
 
         services
@@ -65,6 +67,10 @@ public static class WorkerServiceCollectionExtensions
         services.AddHostedService<TemporalWorkerFaultMonitor>();
         services.AddSingleton<TriageGauges>();
         services.AddHostedService<TriageGaugeRefresher>();
+        services.AddTemporalClient(temporal.Address, temporal.Namespace);
+        services.TryAddSingleton<IRenovateTriageSignaler, TemporalRenovateTriageSignaler>();
+        services.TryAddSingleton<ITriageWorkflowProbe, TemporalTriageWorkflowProbe>();
+        services.AddHostedService<SweeperScheduleService>();
 
         return services;
     }

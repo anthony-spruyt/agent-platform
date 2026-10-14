@@ -25,6 +25,7 @@ public static class RenovateTriageServiceCollectionExtensions
         services.AddSingleton<TriageVerdictStore>();
         services.AddSingleton<TriagePendingStore>();
         services.AddSingleton<ClaudeBudgetStore>();
+        services.AddSingleton<SweeperStore>();
         return services;
     }
 
@@ -34,6 +35,11 @@ public static class RenovateTriageServiceCollectionExtensions
         if (caps.MaxPerHour < 1 || caps.MaxPerDay < 1 || caps.MaxPerPrPerDay < 1)
         {
             throw new InvalidOperationException("RenovateTriage:Claude:MaxPerHour, MaxPerDay and MaxPerPrPerDay must each be at least 1.");
+        }
+
+        if (triage.Sweeper.Interval < SweeperOptions.MinInterval)
+        {
+            throw new InvalidOperationException("RenovateTriage:Sweeper:Interval must be at least one minute.");
         }
     }
 

@@ -134,6 +134,43 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         return effective.Single();
     }
 
+    // Plain reads, no reservation: the re-driven workflow still reserves for itself, so this only stops the sweeper from waking runs that would park again.
+    public async Task<IReadOnlyList<RedriveCandidate>> PickRedrivesAsync(IReadOnlyList<RedriveCandidate> candidates, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var now = time.GetUtcNow();
+        var cooldowns = await db.ClaudeCooldowns.AsNoTracking().Where(c => c.Until > now).Select(c => c.Scope).ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (cooldowns.Contains(ClaudeCooldown.Global, StringComparer.Ordinal))
+        {
+            return [];
+        }
+
+        var caps = options.Value.Claude;
+        var counted = await CountedRunsAsync(db, now, cancellationToken).ConfigureAwait(false);
+        var slots = Math.Min(caps.MaxPerHour - counted.Count(r => r.At > now - _hour), caps.MaxPerDay - counted.Count);
+        var picked = new List<RedriveCandidate>();
+        foreach (var candidate in candidates)
+        {
+            if (picked.Count >= slots)
+            {
+                break;
+            }
+
+            if (cooldowns.Contains(candidate.Repo, StringComparer.Ordinal)
+                || counted.Count(r => r.Repo == candidate.Repo && r.PrNumber == candidate.PrNumber) >= caps.MaxPerPrPerDay
+                || await BreakerOpenAsync(db, candidate.Repo, now, cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            picked.Add(candidate);
+        }
+
+        return picked;
+    }
+
     public async Task<int> CountActiveCooldownsAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -228,15 +265,7 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
     private async Task<ClaudeReservation?> CapBlockAsync(RunDataDbContext db, ReserveClaudeRunInput input, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var caps = options.Value.Claude;
-        var dayStart = now - _day;
-        var leaseStart = now - OpenReservationLease;
-        var counted = await db.ClaudeRuns
-            .AsNoTracking()
-            .Where(r => (r.PodCreatedAt != null && r.PodCreatedAt > dayStart)
-                || (r.PodCreatedAt == null && r.FinishedAt == null && r.ReservedAt > leaseStart))
-            .Select(r => new CountedRun(r.Repo, r.PrNumber, r.PodCreatedAt ?? r.ReservedAt, r.PodCreatedAt == null))
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
+        var counted = await CountedRunsAsync(db, now, cancellationToken).ConfigureAwait(false);
 
         ClaudeReservation? latest = null;
         foreach (var (cause, until) in new[]
@@ -253,6 +282,18 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         }
 
         return latest;
+    }
+
+    private static Task<List<CountedRun>> CountedRunsAsync(RunDataDbContext db, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var dayStart = now - _day;
+        var leaseStart = now - OpenReservationLease;
+        return db.ClaudeRuns
+            .AsNoTracking()
+            .Where(r => (r.PodCreatedAt != null && r.PodCreatedAt > dayStart)
+                || (r.PodCreatedAt == null && r.FinishedAt == null && r.ReservedAt > leaseStart))
+            .Select(r => new CountedRun(r.Repo, r.PrNumber, r.PodCreatedAt ?? r.ReservedAt, r.PodCreatedAt == null))
+            .ToListAsync(cancellationToken);
     }
 
     // A usage limit is global, not the repo's fault: the global cooldown covers it, so it neither opens nor closes the repo breaker.

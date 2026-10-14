@@ -11,6 +11,8 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public List<GitHubReview> Reviews { get; } = [];
 
+    public Dictionary<int, GitHubReview[]> ReviewsByNumber { get; } = [];
+
     public List<GitHubCheckRun> Checks { get; } = [new(1, "build", "completed", "success", "github-actions")];
 
     public List<GitHubCheckSuite> Suites { get; } = [new(1, "completed", "success", "github-actions", 1)];
@@ -59,8 +61,10 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     {
         Calls.Add("pr");
         OnPullRequestRead?.Invoke();
-        return Result(PullRequest);
+        return Result(PullRequestsByNumber.GetValueOrDefault(number, PullRequest));
     }
+
+    public Dictionary<int, GitHubPullRequest> PullRequestsByNumber { get; } = [];
 
     public async Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
     {
@@ -94,7 +98,7 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     public Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)
     {
         Calls.Add("reviews");
-        return Result<IReadOnlyList<GitHubReview>>([.. Reviews]);
+        return Result<IReadOnlyList<GitHubReview>>(ReviewsByNumber.TryGetValue(number, out var own) ? [.. own] : [.. Reviews]);
     }
 
     public Task<IReadOnlyList<string>> ListLabelsAsync(string repo, int number, CancellationToken cancellationToken)
@@ -300,6 +304,22 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         Writes.Add($"rerun:{runId}");
         Reruns.Add(runId);
         return Task.CompletedTask;
+    }
+
+    public List<GitHubListedPullRequest> OpenPullRequests { get; } = [];
+
+    public List<GitHubIssueEvent> IssueEvents { get; } = [];
+
+    public Task<IReadOnlyList<GitHubListedPullRequest>> ListOpenPullRequestsAsync(string repo, DateTimeOffset updatedSince, CancellationToken cancellationToken)
+    {
+        Calls.Add($"open-prs:{repo}");
+        return Result<IReadOnlyList<GitHubListedPullRequest>>([.. OpenPullRequests]);
+    }
+
+    public Task<IReadOnlyList<GitHubIssueEvent>> ListIssueEventsAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        Calls.Add("issue-events");
+        return Result<IReadOnlyList<GitHubIssueEvent>>([.. IssueEvents]);
     }
 
     private Task<T> Result<T>(T value) => Failure is null ? Task.FromResult(value) : Task.FromException<T>(Failure);

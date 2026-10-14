@@ -21,12 +21,12 @@ public class TriageGaugesTests
         var factory = new FlakyFactory(data.Factory);
         var pending = new TriagePendingStore(factory, TimeProvider.System);
         var budget = new ClaudeBudgetStore(factory, Options.Create(new RenovateTriageOptions()), TimeProvider.System);
-        return (new TriageGauges(pending, budget), data, factory);
+        return (new TriageGauges(pending, budget, new SweeperStore(factory, TimeProvider.System)), data, factory);
     }
 
-    private static Dictionary<string, int> Read(TriageGauges gauges)
+    private static Dictionary<string, double> Read(TriageGauges gauges)
     {
-        var values = new Dictionary<string, int>();
+        var values = new Dictionary<string, double>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -36,6 +36,7 @@ public class TriageGaugesTests
             }
         };
         listener.SetMeasurementEventCallback<int>((instrument, value, _, _) => values[instrument.Name] = value);
+        listener.SetMeasurementEventCallback<double>((instrument, value, _, _) => values[instrument.Name] = value);
         listener.Start();
         listener.RecordObservableInstruments();
         return values;
@@ -74,6 +75,20 @@ public class TriageGaugesTests
 
         Assert.Equal(0, values["triage_pending_total"]);
         Assert.Equal(0, values["claude_cooldown_active"]);
+        Assert.Equal(0, values["sweeper_last_success_timestamp"]);
+    }
+
+    [Fact]
+    public async Task TheLastSuccessGauge_ReportsTheSweeperSuccessAsUnixSeconds_AfterARefresh()
+    {
+        var (gauges, data, _) = Create();
+        using var _ = gauges;
+        var success = new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
+        await new SweeperStore(data.Factory, new FixedTime(success)).SaveSuccessAsync(Ct);
+
+        await gauges.RefreshAsync(Ct);
+
+        Assert.Equal(success.ToUnixTimeSeconds(), Read(gauges)["sweeper_last_success_timestamp"]);
     }
 
     [Fact]
@@ -101,6 +116,11 @@ public class TriageGaugesTests
             Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for the gauge.");
             await Task.Delay(20, Ct);
         }
+    }
+
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class FlakyFactory(IDbContextFactory<RunDataDbContext> inner) : IDbContextFactory<RunDataDbContext>

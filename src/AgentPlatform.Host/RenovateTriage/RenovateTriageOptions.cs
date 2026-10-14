@@ -9,6 +9,15 @@ public sealed class RenovateTriageOptions
     public MigrationOptions? Migration { get; set; }
 
     public ClaudeBudgetOptions Claude { get; set; } = new();
+
+    public SweeperOptions Sweeper { get; set; } = new();
+}
+
+public sealed class SweeperOptions
+{
+    public static readonly TimeSpan MinInterval = TimeSpan.FromMinutes(1);
+
+    public TimeSpan Interval { get; set; } = TimeSpan.FromMinutes(30);
 }
 
 public sealed class ClaudeBudgetOptions

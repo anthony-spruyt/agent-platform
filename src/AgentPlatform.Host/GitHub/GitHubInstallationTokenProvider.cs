@@ -19,7 +19,12 @@ public interface IGitHubTokenMinter
     Task<InstallationToken> MintTokenAsync(string repo, IReadOnlyDictionary<string, string> permissions, CancellationToken cancellationToken);
 }
 
-public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenProvider, IGitHubTokenMinter, IDisposable
+public interface IGitHubAppJwtSource
+{
+    string CreateJwt();
+}
+
+public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenProvider, IGitHubTokenMinter, IGitHubAppJwtSource, IDisposable
 {
     private static readonly TimeSpan _refreshMargin = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan _jwtBackdate = TimeSpan.FromSeconds(60);
@@ -135,7 +140,7 @@ public sealed class GitHubInstallationTokenProvider : IGitHubInstallationTokenPr
         return new InstallationToken(token.Token, expiresAt);
     }
 
-    private string CreateJwt()
+    public string CreateJwt()
     {
         var now = _time.GetUtcNow();
         var header = Base64Url.EncodeToString("""{"alg":"RS256","typ":"JWT"}"""u8);

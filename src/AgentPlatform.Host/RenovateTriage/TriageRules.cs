@@ -48,6 +48,7 @@ public static partial class TriageRules
     public const string SafeLabel = "agent/safe";
     public const string FixableLabel = "agent/fixable";
     public const string BlockedLabel = "blocked";
+    public const string RevertLabel = "agent/revert";
     public const string AutoApprovedLabel = "agent/auto-approved";
 
     public const string NotOpen = "not-open";
@@ -105,7 +106,7 @@ public static partial class TriageRules
 
     private static readonly string[] _trustedAssociations = ["OWNER", "MEMBER", "COLLABORATOR"];
 
-    private static readonly string[] _blockingLabels = [NeedsReviewLabel, NeedsTriageLabel, "agent/revert", BlockedLabel];
+    private static readonly string[] _blockingLabels = [NeedsReviewLabel, NeedsTriageLabel, RevertLabel, BlockedLabel];
 
     private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason, CiNotPassed, StabilityDays];
 
