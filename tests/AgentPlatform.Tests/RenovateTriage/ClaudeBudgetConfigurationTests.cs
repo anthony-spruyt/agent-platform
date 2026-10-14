@@ -45,19 +45,18 @@ public class ClaudeBudgetConfigurationTests
     }
 
     [Fact]
-    public void TheCapsAndTheOwnerLogin_BindFromConfiguration()
+    public void TheCaps_BindFromConfiguration()
     {
         using var provider = Build(new()
         {
             ["RenovateTriage:Claude:MaxPerHour"] = "3",
             ["RenovateTriage:Claude:MaxPerDay"] = "12",
             ["RenovateTriage:Claude:MaxPerPrPerDay"] = "4",
-            ["RenovateTriage:OwnerLogin"] = "anthony-spruyt",
         });
 
         var options = provider.GetRequiredService<IOptions<RenovateTriageOptions>>().Value;
 
-        Assert.Equal((3, 12, 4, "anthony-spruyt"), (options.Claude.MaxPerHour, options.Claude.MaxPerDay, options.Claude.MaxPerPrPerDay, options.OwnerLogin));
+        Assert.Equal((3, 12, 4), (options.Claude.MaxPerHour, options.Claude.MaxPerDay, options.Claude.MaxPerPrPerDay));
     }
 
     [Theory]
@@ -67,31 +66,6 @@ public class ClaudeBudgetConfigurationTests
     public void ACapBelowOne_FailsAtStartup(string cap, string value)
     {
         Assert.Throws<InvalidOperationException>(() => Build(new() { [$"RenovateTriage:Claude:{cap}"] = value }));
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("  ")]
-    [InlineData("-owner")]
-    [InlineData("owner-")]
-    [InlineData("two words")]
-    [InlineData("owner/repo")]
-    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
-    public void AMissingOrMalformedOwnerLogin_FailsAtStartup(string? login)
-    {
-        Assert.Throws<InvalidOperationException>(() => Build(new() { ["RenovateTriage:OwnerLogin"] = login }));
-    }
-
-    [Theory]
-    [InlineData("a")]
-    [InlineData("anthony-spruyt")]
-    [InlineData("A1-b2")]
-    public void AGitHubLogin_IsAccepted(string login)
-    {
-        using var provider = Build(new() { ["RenovateTriage:OwnerLogin"] = login });
-
-        Assert.Equal(login, provider.GetRequiredService<IOptions<RenovateTriageOptions>>().Value.OwnerLogin);
     }
 
     [Fact]
@@ -158,6 +132,8 @@ public class ClaudeBudgetConfigurationTests
     [InlineData(ClaudeRunOutcome.NoResult, true)]
     [InlineData(ClaudeRunOutcome.InvalidResult, true)]
     [InlineData(ClaudeRunOutcome.LimitStop, true)]
+    [InlineData(ClaudeRunOutcome.UsageLimit, true)]
+    [InlineData(ClaudeRunOutcome.NotStarted, false)]
     public void OnlyTheListedOutcomesAreFailures(ClaudeRunOutcome outcome, bool failure) =>
         Assert.Equal(failure, outcome.IsFailure());
 
@@ -170,5 +146,15 @@ public class ClaudeBudgetConfigurationTests
 
         Assert.Contains("\"Park\"", json, StringComparison.Ordinal);
         Assert.Equal(reservation, System.Text.Json.JsonSerializer.Deserialize<ClaudeReservation>(json));
+    }
+
+    [Fact]
+    public void TheEnumsOnTemporalPayloads_SerializeAsNames()
+    {
+        var finish = System.Text.Json.JsonSerializer.Serialize(new FinishClaudeRunInput(Guid.NewGuid(), ClaudeRunOutcome.UsageLimit));
+        var pending = System.Text.Json.JsonSerializer.Serialize(new TriagePending { Repo = "a/b", HeadSha = Sha, Reason = "r", Status = TriagePendingStatus.Redriven });
+
+        Assert.Contains("\"UsageLimit\"", finish, StringComparison.Ordinal);
+        Assert.Contains("\"Redriven\"", pending, StringComparison.Ordinal);
     }
 }

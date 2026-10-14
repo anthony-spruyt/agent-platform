@@ -5,7 +5,6 @@ namespace AgentPlatform.Host.RenovateTriage;
 
 public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> factory, TimeProvider time)
 {
-    // A head move carries the row to the new head and resets its attempts; the same head keeps its status and attempts.
     public async Task<TriagePending> UpsertAsync(string repo, int prNumber, string headSha, string reason, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repo);

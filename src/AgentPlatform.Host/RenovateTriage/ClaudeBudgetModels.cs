@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
+[JsonConverter(typeof(JsonStringEnumConverter<ClaudeRunOutcome>))]
 public enum ClaudeRunOutcome
 {
     Succeeded,
@@ -12,12 +13,14 @@ public enum ClaudeRunOutcome
     InvalidResult,
     LimitStop,
     Cancelled,
+    UsageLimit,
+    NotStarted,
 }
 
 public static class ClaudeRunOutcomes
 {
-    // A cancelled run (head moved) says nothing about the repo or the head, so it feeds neither the breaker nor the attempts.
-    public static bool IsFailure(this ClaudeRunOutcome outcome) => outcome is not (ClaudeRunOutcome.Succeeded or ClaudeRunOutcome.Cancelled);
+    // Cancelled (head moved) and NotStarted (no pod) say nothing about the head; UsageLimit counts as a try.
+    public static bool IsFailure(this ClaudeRunOutcome outcome) => outcome is not (ClaudeRunOutcome.Succeeded or ClaudeRunOutcome.Cancelled or ClaudeRunOutcome.NotStarted);
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ClaudeReservationKind>))]

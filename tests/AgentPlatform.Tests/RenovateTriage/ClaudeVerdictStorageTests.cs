@@ -25,7 +25,7 @@ public class ClaudeVerdictStorageTests
     {
         var data = InMemoryRunData.Create();
 
-        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, Ct, LadderRung.Claude);
+        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, LadderRung.Claude, Ct);
 
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         var row = await db.TriageVerdicts.SingleAsync(Ct);
@@ -48,9 +48,9 @@ public class ClaudeVerdictStorageTests
     public async Task MarkApplied_StoresWhatApplyDid()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, Ct, LadderRung.Claude);
+        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, LadderRung.Claude, Ct);
 
-        await data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.Safe, Ct, VerdictAction.Approve);
+        await data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.Safe, VerdictAction.Approve, Ct);
 
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         var row = await db.TriageVerdicts.SingleAsync(Ct);
@@ -62,9 +62,9 @@ public class ClaudeVerdictStorageTests
     public async Task ExactlyOneClaudeVerdictIsKeptPerHead()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Fixable, "claude-fixable", "fix it"), TriageMode.Live, Ct, LadderRung.Claude);
+        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Fixable, "claude-fixable", "fix it"), TriageMode.Live, LadderRung.Claude, Ct);
 
-        var second = await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, Ct, LadderRung.Claude);
+        var second = await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, LadderRung.Claude, Ct);
 
         Assert.False(second);
         await using var db = await data.Factory.CreateDbContextAsync(Ct);

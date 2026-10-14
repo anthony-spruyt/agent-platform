@@ -32,7 +32,10 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
     }
 
     // Only the row of the verdict that was written counts: a flag written over an unapplied approval leaves that approval unapplied.
-    public async Task MarkAppliedAsync(string repo, int prNumber, string headSha, TriageVerdict verdict, CancellationToken cancellationToken, VerdictAction? action = null)
+    public Task MarkAppliedAsync(string repo, int prNumber, string headSha, TriageVerdict verdict, CancellationToken cancellationToken) =>
+        MarkAppliedAsync(repo, prNumber, headSha, verdict, null, cancellationToken);
+
+    public async Task MarkAppliedAsync(string repo, int prNumber, string headSha, TriageVerdict verdict, VerdictAction? action, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.TriageVerdicts
@@ -49,7 +52,10 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
     }
 
     // The first verdict for a commit stands; a concurrent writer can win the unique key, so retry once on a fresh context.
-    public async Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, CancellationToken cancellationToken, LadderRung? rung = null)
+    public Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, CancellationToken cancellationToken) =>
+        RecordAsync(repo, prNumber, headSha, decision, mode, null, cancellationToken);
+
+    public async Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, LadderRung? rung, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repo);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(prNumber);

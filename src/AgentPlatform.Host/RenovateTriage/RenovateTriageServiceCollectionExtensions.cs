@@ -1,9 +1,8 @@
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public static partial class RenovateTriageServiceCollectionExtensions
+public static class RenovateTriageServiceCollectionExtensions
 {
     private static readonly TimeSpan _jevTimeout = TimeSpan.FromSeconds(60);
 
@@ -36,11 +35,6 @@ public static partial class RenovateTriageServiceCollectionExtensions
         {
             throw new InvalidOperationException("RenovateTriage:Claude:MaxPerHour, MaxPerDay and MaxPerPrPerDay must each be at least 1.");
         }
-
-        if (triage.OwnerLogin is not { } login || !GitHubLogin().IsMatch(login))
-        {
-            throw new InvalidOperationException("RenovateTriage:OwnerLogin must be a GitHub login.");
-        }
     }
 
     private static void Validate(LiteLlmOptions litellm)
@@ -55,7 +49,4 @@ public static partial class RenovateTriageServiceCollectionExtensions
             throw new InvalidOperationException("LiteLlm:ApiKey is required.");
         }
     }
-
-    [GeneratedRegex("^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex GitHubLogin();
 }

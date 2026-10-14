@@ -66,7 +66,7 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         }
     }
 
-    // The first outcome stands. A failure counts against the head's attempts only while the pending row is still on that head.
+    // The first outcome stands. Any outcome but NotStarted counts the run from its reservation if MarkPodCreated never ran. A failure counts against the head's attempts only while the pending row is still on that head.
     public async Task FinishAsync(FinishClaudeRunInput input, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -76,11 +76,13 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         var now = time.GetUtcNow();
         var model = input.Model;
         var outcome = (ClaudeRunOutcome?)input.Outcome;
+        var podWasCreated = input.Outcome != ClaudeRunOutcome.NotStarted;
         var updated = await db.ClaudeRuns
             .Where(r => r.Id == input.RunId && r.FinishedAt == null)
             .ExecuteUpdateAsync(
                 s => s
                     .SetProperty(r => r.FinishedAt, now)
+                    .SetProperty(r => r.PodCreatedAt, r => podWasCreated ? r.PodCreatedAt ?? r.ReservedAt : r.PodCreatedAt)
                     .SetProperty(r => r.Outcome, outcome)
                     .SetProperty(r => r.Model, r => model ?? r.Model)
                     .SetProperty(r => r.InputTokens, input.InputTokens)
@@ -116,14 +118,19 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Scope);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Cause);
 
-        try
-        {
-            await WriteCooldownAsync(input, cancellationToken).ConfigureAwait(false);
-        }
-        catch (DbUpdateException)
-        {
-            await WriteCooldownAsync(input, cancellationToken).ConfigureAwait(false);
-        }
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var now = time.GetUtcNow();
+        var until = input.ResetsAt is { } resetsAt ? Clamp(resetsAt.ToUniversalTime(), now + _minCooldown, now + _day) : now + _hour;
+        var scope = input.Scope;
+        var cause = input.Cause;
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO claude_cooldowns (scope, until, cause) VALUES ({scope}, {until}, {cause})
+            ON CONFLICT (scope) DO UPDATE SET
+                cause = CASE WHEN EXCLUDED.until > claude_cooldowns.until THEN EXCLUDED.cause ELSE claude_cooldowns.cause END,
+                until = GREATEST(claude_cooldowns.until, EXCLUDED.until)
+            """,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<int> CountActiveCooldownsAsync(CancellationToken cancellationToken)
@@ -148,11 +155,13 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
 
     private static DateTimeOffset Clamp(DateTimeOffset value, DateTimeOffset min, DateTimeOffset max) => value < min ? min : value > max ? max : value;
 
-    private static DateTimeOffset? FreeAt(IEnumerable<DateTimeOffset> times, int cap, TimeSpan window)
+    private static DateTimeOffset? FreeAt(IEnumerable<CountedRun> runs, int cap, TimeSpan window)
     {
-        var ordered = times.Order().ToList();
-        return ordered.Count >= cap ? ordered[ordered.Count - cap] + window : null;
+        var leavesAt = runs.Select(r => r.At + (r.Open ? Min(window, OpenReservationLease) : window)).Order().ToList();
+        return leavesAt.Count >= cap ? leavesAt[leavesAt.Count - cap] : null;
     }
+
+    private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
 
     private async Task<ClaudeReservation> TryReserveAsync(string workflowId, ReserveClaudeRunInput input, CancellationToken cancellationToken)
     {
@@ -224,16 +233,16 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             .AsNoTracking()
             .Where(r => (r.PodCreatedAt != null && r.PodCreatedAt > dayStart)
                 || (r.PodCreatedAt == null && r.FinishedAt == null && r.ReservedAt > leaseStart))
-            .Select(r => new { r.Repo, r.PrNumber, At = r.PodCreatedAt ?? r.ReservedAt })
+            .Select(r => new CountedRun(r.Repo, r.PrNumber, r.PodCreatedAt ?? r.ReservedAt, r.PodCreatedAt == null))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
         ClaudeReservation? latest = null;
         foreach (var (cause, until) in new[]
         {
-            (ClaudeBudgetCauses.HourlyCap, FreeAt(counted.Where(r => r.At > now - _hour).Select(r => r.At), caps.MaxPerHour, _hour)),
-            (ClaudeBudgetCauses.DailyCap, FreeAt(counted.Select(r => r.At), caps.MaxPerDay, _day)),
-            (ClaudeBudgetCauses.PrDailyCap, FreeAt(counted.Where(r => r.Repo == input.Repo && r.PrNumber == input.PrNumber).Select(r => r.At), caps.MaxPerPrPerDay, _day)),
+            (ClaudeBudgetCauses.HourlyCap, FreeAt(counted.Where(r => r.At > now - _hour), caps.MaxPerHour, _hour)),
+            (ClaudeBudgetCauses.DailyCap, FreeAt(counted, caps.MaxPerDay, _day)),
+            (ClaudeBudgetCauses.PrDailyCap, FreeAt(counted.Where(r => r.Repo == input.Repo && r.PrNumber == input.PrNumber), caps.MaxPerPrPerDay, _day)),
         })
         {
             if (until is { } freeAt && (latest is null || freeAt > latest.Until))
@@ -245,11 +254,12 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         return latest;
     }
 
+    // A usage limit is global, not the repo's fault: the global cooldown covers it, so it neither opens nor closes the repo breaker.
     private static async Task<bool> BreakerOpenAsync(RunDataDbContext db, string repo, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var recent = await db.ClaudeRuns
             .AsNoTracking()
-            .Where(r => r.Repo == repo && r.Outcome != null && r.Outcome != ClaudeRunOutcome.Cancelled)
+            .Where(r => r.Repo == repo && r.Outcome != null && r.Outcome != ClaudeRunOutcome.Cancelled && r.Outcome != ClaudeRunOutcome.UsageLimit && r.Outcome != ClaudeRunOutcome.NotStarted)
             .OrderByDescending(r => r.FinishedAt)
             .Take(BreakerThreshold)
             .Select(r => new { r.Outcome, r.FinishedAt })
@@ -260,22 +270,5 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             && recent[0].FinishedAt + _breakerOpenFor > now;
     }
 
-    private async Task WriteCooldownAsync(SetClaudeCooldownInput input, CancellationToken cancellationToken)
-    {
-        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var now = time.GetUtcNow();
-        var until = input.ResetsAt is { } resetsAt ? Clamp(resetsAt.ToUniversalTime(), now + _minCooldown, now + _day) : now + _hour;
-        var row = await db.ClaudeCooldowns.SingleOrDefaultAsync(c => c.Scope == input.Scope, cancellationToken).ConfigureAwait(false);
-        if (row is null)
-        {
-            db.ClaudeCooldowns.Add(new ClaudeCooldown { Scope = input.Scope, Until = until, Cause = input.Cause });
-        }
-        else if (until > row.Until)
-        {
-            row.Until = until;
-            row.Cause = input.Cause;
-        }
-
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-    }
+    private sealed record CountedRun(string Repo, int PrNumber, DateTimeOffset At, bool Open);
 }

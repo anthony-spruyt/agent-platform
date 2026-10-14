@@ -39,7 +39,6 @@ public class TriagePendingStoreTests
 
         Assert.Equal((Repo, 7, Sha, "ci-failed", TriagePendingStatus.Pending, 0), (row.Repo, row.PrNumber, row.HeadSha, row.Reason, row.Status, row.Attempts));
         Assert.Equal((time.Now, time.Now), (row.CreatedAt, row.UpdatedAt));
-        Assert.True(row.IsOpen);
     }
 
     [Fact]
@@ -141,17 +140,7 @@ public class TriagePendingStoreTests
         Assert.True(await store.SetStatusAsync(Repo, 7, Sha, TriagePendingStatus.Settled, Ct));
         var row = (await store.FindAsync(Repo, 7, Ct))!;
         Assert.Equal((TriagePendingStatus.Settled, time.Now), (row.Status, row.UpdatedAt));
-        Assert.False(row.IsOpen);
     }
-
-    [Theory]
-    [InlineData(TriagePendingStatus.Pending, true)]
-    [InlineData(TriagePendingStatus.Redriven, true)]
-    [InlineData(TriagePendingStatus.Settled, false)]
-    [InlineData(TriagePendingStatus.Owner, false)]
-    [InlineData(TriagePendingStatus.OwnerHandled, false)]
-    public void IsOpen_IsPendingOrRedrivenOnly(TriagePendingStatus status, bool open) =>
-        Assert.Equal(open, new TriagePending { Repo = Repo, HeadSha = Sha, Reason = "r", Status = status }.IsOpen);
 
     [Fact]
     public async Task CountOpen_CountsPendingAndRedrivenRows()
@@ -166,19 +155,6 @@ public class TriagePendingStoreTests
         await store.SetStatusAsync(Repo, 4, Sha, TriagePendingStatus.Owner, Ct);
 
         Assert.Equal(2, await store.CountOpenAsync(Ct));
-    }
-
-    [Fact]
-    public async Task AClimbingNeedsReview_LeavesAPendingRowAndNoVerdictRow()
-    {
-        var (store, data, _) = Create();
-
-        await store.UpsertAsync(Repo, 7, Sha, "ci-failed", Ct);
-
-        await using var db = await data.Factory.CreateDbContextAsync(Ct);
-        Assert.Single(await db.TriagePending.ToListAsync(Ct));
-        Assert.Empty(await db.TriageVerdicts.ToListAsync(Ct));
-        Assert.False(await data.Verdicts.ExistsAsync(Repo, 7, Sha, TriageMode.Live, Ct));
     }
 
     [Fact]

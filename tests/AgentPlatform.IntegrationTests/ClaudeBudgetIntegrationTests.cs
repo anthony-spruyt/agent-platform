@@ -160,6 +160,7 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
     [InlineData(ClaudeRunOutcome.PodFailed)]
     [InlineData(ClaudeRunOutcome.LimitStop)]
     [InlineData(ClaudeRunOutcome.Cancelled)]
+    [InlineData(ClaudeRunOutcome.UsageLimit)]
     public async Task EveryRunThatCreatedAPodCounts_WhateverTheOutcome(ClaudeRunOutcome outcome)
     {
         using var _ = Scope(out var ct);
@@ -177,9 +178,50 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
         using var _ = Scope(out var ct);
         var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 1, MaxPerDay = 8, MaxPerPrPerDay = 2 });
         var first = await h.ReserveAsync(1, ct: ct);
-        await h.Budget.FinishAsync(new FinishClaudeRunInput(first.RunId!.Value, ClaudeRunOutcome.PodFailed), ct);
+        await h.Budget.FinishAsync(new FinishClaudeRunInput(first.RunId!.Value, ClaudeRunOutcome.NotStarted), ct);
 
         Assert.Equal(ClaudeReservationKind.Reserved, (await h.ReserveAsync(2, ct: ct)).Kind);
+    }
+
+    [Theory]
+    [InlineData(ClaudeRunOutcome.Cancelled)]
+    [InlineData(ClaudeRunOutcome.PodFailed)]
+    [InlineData(ClaudeRunOutcome.UsageLimit)]
+    public async Task AFinishedRunWithoutMarkPodCreated_CountsFromItsReservation(ClaudeRunOutcome outcome)
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 1, MaxPerDay = 8, MaxPerPrPerDay = 2 });
+        var first = await h.ReserveAsync(1, ct: ct);
+        h.Time.Now += TimeSpan.FromMinutes(5);
+        await h.Budget.FinishAsync(new FinishClaudeRunInput(first.RunId!.Value, outcome), ct);
+
+        Assert.Equal(Start, (await h.RunRowAsync(first.RunId.Value, ct)).PodCreatedAt);
+        Assert.Equal(ClaudeReservation.Park(ClaudeBudgetCauses.HourlyCap, Start.AddHours(1)), await h.ReserveAsync(2, ct: ct));
+    }
+
+    [Fact]
+    public async Task AFinishedRunKeepsThePodCreatedTimeItAlreadyHas()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct);
+        var reservation = await h.ReserveAsync(1, ct: ct);
+        h.Time.Now += TimeSpan.FromMinutes(3);
+        await h.Budget.MarkPodCreatedAsync(reservation.RunId!.Value, ct);
+        h.Time.Now += TimeSpan.FromMinutes(3);
+
+        await h.Budget.FinishAsync(new FinishClaudeRunInput(reservation.RunId.Value, ClaudeRunOutcome.Succeeded), ct);
+
+        Assert.Equal(Start.AddMinutes(3), (await h.RunRowAsync(reservation.RunId.Value, ct)).PodCreatedAt);
+    }
+
+    [Fact]
+    public async Task AnOpenReservationThatFillsTheDailyCap_ParksOnlyUntilItsLeaseEnds()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 8, MaxPerDay = 1, MaxPerPrPerDay = 2 });
+        await h.ReserveAsync(1, ct: ct);
+
+        Assert.Equal(ClaudeReservation.Park(ClaudeBudgetCauses.DailyCap, Start + ClaudeBudgetStore.OpenReservationLease), await h.ReserveAsync(2, ct: ct));
     }
 
     [Fact]
@@ -283,6 +325,58 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
     }
 
     [Fact]
+    public async Task AUsageLimitRun_NeitherOpensNorClosesTheBreaker()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 20, MaxPerDay = 20, MaxPerPrPerDay = 20 });
+        for (var pr = 1; pr <= 4; pr++)
+        {
+            await h.RunAsync(pr, ClaudeRunOutcome.UsageLimit, ct: ct);
+            h.Time.Now += TimeSpan.FromMinutes(1);
+        }
+
+        Assert.Equal(ClaudeReservationKind.Reserved, (await h.ReserveAsync(5, ct: ct)).Kind);
+
+        await h.RunAsync(5, ClaudeRunOutcome.PodFailed, ct: ct);
+        h.Time.Now += TimeSpan.FromMinutes(1);
+        await h.RunAsync(6, ClaudeRunOutcome.UsageLimit, ct: ct);
+        h.Time.Now += TimeSpan.FromMinutes(1);
+        await h.RunAsync(7, ClaudeRunOutcome.PodFailed, ct: ct);
+        h.Time.Now += TimeSpan.FromMinutes(1);
+        await h.RunAsync(8, ClaudeRunOutcome.PodFailed, ct: ct);
+
+        Assert.Equal(ClaudeReservation.Owner(ClaudeBudgetCauses.BreakerOpen), await h.ReserveAsync(9, ct: ct));
+    }
+
+    [Fact]
+    public async Task AUsageLimitRun_CountsAsAFailedAttempt()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 20, MaxPerDay = 20, MaxPerPrPerDay = 20 });
+        await h.RunAsync(7, ClaudeRunOutcome.UsageLimit, ct: ct);
+        Assert.Equal(2, (await h.ReserveAsync(7, ct: ct)).Attempt);
+        await h.RunAsync(7, ClaudeRunOutcome.UsageLimit, ct: ct);
+
+        Assert.Equal(ClaudeReservation.Owner(ClaudeBudgetCauses.AttemptsExhausted), await h.ReserveAsync(7, ct: ct));
+    }
+
+    [Fact]
+    public async Task ARunThatNeverStarted_IsNotAFailedAttemptOrABreakerFailure()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 20, MaxPerDay = 20, MaxPerPrPerDay = 20 });
+        for (var i = 0; i < 4; i++)
+        {
+            await h.Pending.UpsertAsync(Repo, 7, Sha, "ci-failed", ct);
+            var reservation = await h.ReserveAsync(7, ct: ct);
+            Assert.Equal(1, reservation.Attempt);
+            await h.Budget.FinishAsync(new FinishClaudeRunInput(reservation.RunId!.Value, ClaudeRunOutcome.NotStarted), ct);
+        }
+
+        Assert.Equal(1, (await h.ReserveAsync(7, ct: ct)).Attempt);
+    }
+
+    [Fact]
     public async Task TwoFailedAttemptsOnAHead_SendTheHeadToTheOwner()
     {
         using var _ = Scope(out var ct);
@@ -357,6 +451,19 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
 
         await using var db = await h.Factory.CreateDbContextAsync(ct);
         Assert.Equal(Start.AddHours(5), (await db.ClaudeCooldowns.SingleAsync(ct)).Until);
+    }
+
+    [Fact]
+    public async Task ConcurrentSetCooldowns_KeepTheLatestEnd()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct);
+
+        await Task.WhenAll(Enumerable.Range(1, 12).Select(i =>
+            h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, Start.AddHours(i), ClaudeBudgetCauses.UsageLimit), ct)));
+
+        await using var db = await h.Factory.CreateDbContextAsync(ct);
+        Assert.Equal(Start.AddHours(12), (await db.ClaudeCooldowns.SingleAsync(ct)).Until);
     }
 
     [Fact]
@@ -461,9 +568,9 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
         var h = await StartAsync(ct);
         var verdicts = new TriageVerdictStore(h.Factory);
 
-        Assert.True(await verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, ct, LadderRung.Claude));
-        Assert.False(await verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Fixable, "claude-fixable", null), TriageMode.Live, ct, LadderRung.Claude));
-        await verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.Safe, ct, VerdictAction.Approve);
+        Assert.True(await verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "claude-safe", null), TriageMode.Live, LadderRung.Claude, ct));
+        Assert.False(await verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Fixable, "claude-fixable", null), TriageMode.Live, LadderRung.Claude, ct));
+        await verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.Safe, VerdictAction.Approve, ct);
 
         await using var db = await h.Factory.CreateDbContextAsync(ct);
         var row = await db.TriageVerdicts.SingleAsync(ct);

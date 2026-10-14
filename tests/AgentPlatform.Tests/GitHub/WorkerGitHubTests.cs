@@ -20,7 +20,6 @@ public class WorkerGitHubTests
             ["ConnectionStrings:rundata"] = "Host=localhost;Database=agent_platform",
             ["LiteLlm:BaseUrl"] = "http://litellm.example:4000",
             ["LiteLlm:ApiKey"] = "test-key",
-            ["RenovateTriage:OwnerLogin"] = "test-owner",
         };
         foreach (var (key, value) in github)
         {

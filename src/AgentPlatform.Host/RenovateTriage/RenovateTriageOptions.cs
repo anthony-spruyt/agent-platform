@@ -9,8 +9,6 @@ public sealed class RenovateTriageOptions
     public MigrationOptions? Migration { get; set; }
 
     public ClaudeBudgetOptions Claude { get; set; } = new();
-
-    public string? OwnerLogin { get; set; }
 }
 
 public sealed class ClaudeBudgetOptions

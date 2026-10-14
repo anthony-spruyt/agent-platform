@@ -1,5 +1,8 @@
+using System.Text.Json.Serialization;
+
 namespace AgentPlatform.Host.RenovateTriage;
 
+[JsonConverter(typeof(JsonStringEnumConverter<TriagePendingStatus>))]
 public enum TriagePendingStatus
 {
     Pending,
@@ -28,6 +31,4 @@ public sealed class TriagePending
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }
-
-    public bool IsOpen => Status is TriagePendingStatus.Pending or TriagePendingStatus.Redriven;
 }
