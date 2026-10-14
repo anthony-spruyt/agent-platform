@@ -94,6 +94,7 @@ public static partial class TriageRules
     private const int MaxListedFailedChecks = 10;
 
     private const string NeedsReviewPrefix = "**Needs review:**";
+    private const string FixablePrefix = "**Fixable:**";
     private const string AutoApprovedPrefix = "**Auto-approved:**";
 
     private const string RenovateLogin = "renovate[bot]";
@@ -301,6 +302,12 @@ public static partial class TriageRules
         }
 
         return new TriageDecision(TriageVerdict.NeedsReview, CiFailed, comment.ToString());
+    }
+
+    public static TriageDecision SafeOnRedHeadDecision(string repo, string headSha, IReadOnlyList<GitHubCheckRun> failed)
+    {
+        var ci = CiFailedDecision(repo, headSha, failed);
+        return ci with { Verdict = TriageVerdict.Fixable, Comment = $"{FixablePrefix}{ci.Comment![NeedsReviewPrefix.Length..]}" };
     }
 
     public static TriageDecision PrecheckDecision(PrecheckVerdict verdict) => verdict switch

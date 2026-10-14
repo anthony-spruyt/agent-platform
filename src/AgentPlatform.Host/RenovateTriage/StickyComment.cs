@@ -44,16 +44,6 @@ public static partial class StickyComment
         return body.ToString();
     }
 
-    public static string WithVerdict(string body, TriageVerdict verdict)
-    {
-        ArgumentNullException.ThrowIfNull(body);
-        var end = body.IndexOf('\n', StringComparison.Ordinal);
-        var header = end < 0 ? body : body[..end];
-        return header.StartsWith(HeaderPrefix, StringComparison.Ordinal) && header.EndsWith("**", StringComparison.Ordinal)
-            ? $"{HeaderPrefix}{Label(verdict)}**{body[header.Length..]}"
-            : body;
-    }
-
     public static string Queued(string reason)
     {
         ArgumentNullException.ThrowIfNull(reason);
@@ -89,6 +79,7 @@ public static partial class StickyComment
     {
         var inert = ActiveText().Replace(text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n'), m => m.Value + ZeroWidthSpace);
         return inert
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
             .Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal)
             .Replace(">", "&gt;", StringComparison.Ordinal)

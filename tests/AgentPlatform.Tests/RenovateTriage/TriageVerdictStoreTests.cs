@@ -190,6 +190,43 @@ public class TriageVerdictStoreTests
     }
 
     [Fact]
+    public async Task MarkAppliedAs_StoresTheEffectiveVerdictReasonAndCommentOnTheRowOfTheOriginalVerdict()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Safe, "agent", "agent text"), TriageMode.Live, Ct);
+        var effective = NeedsReview();
+
+        await data.Verdicts.MarkAppliedAsAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Safe, effective, Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageVerdict.NeedsReview, row.Verdict);
+        Assert.Equal([TriageRules.CiFailed], JsonSerializer.Deserialize<string[]>(row.Reasons)!);
+        Assert.Equal(effective.Comment, row.Comment);
+        Assert.NotNull(row.AppliedAt);
+        Assert.True(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
+    }
+
+    [Fact]
+    public async Task MarkAppliedAs_LeavesARowOfAnotherVerdictAndAnAppliedRowAlone()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), TriageMode.Live, Ct);
+
+        await data.Verdicts.MarkAppliedAsAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Safe, NeedsReview(), Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageVerdict.Approve, row.Verdict);
+        Assert.Null(row.AppliedAt);
+
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Approve, Ct);
+        await data.Verdicts.MarkAppliedAsAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Approve, NeedsReview(), Ct);
+        await using var after = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(TriageVerdict.Approve, (await after.TriageVerdicts.SingleAsync(Ct)).Verdict);
+    }
+
+    [Fact]
     public async Task Record_RetriesOnceWhenTheWriteFailsTransiently()
     {
         var data = InMemoryRunData.Create();

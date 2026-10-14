@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
@@ -1583,9 +1584,73 @@ public class RenovateTriageActivitiesTests
             Assert.Empty(rig.Github.Approvals);
             Assert.Equal([TriageRules.FixableLabel], rig.Github.AddedLabels);
             var comment = Assert.Single(rig.Github.Comments).Body;
-            Assert.Contains("**Agent verdict: FIXABLE**", comment, StringComparison.Ordinal);
+            Assert.Equal(Sticky(result.Effective!.Comment!), comment);
             Assert.DoesNotContain("SAFE", comment, StringComparison.Ordinal);
-            Assert.Equal(result.Effective?.Comment, comment[(TriageRules.StickyMarker.Length + 1)..]);
+            Assert.DoesNotContain("Looks fine", comment, StringComparison.Ordinal);
+            Assert.Contains(rig.Github.Checks[0].Name, comment, StringComparison.Ordinal);
+            Assert.Contains($"/runs/{rig.Github.Checks[0].Id}", comment, StringComparison.Ordinal);
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+            await AssertStoredAsync(rig, TriageVerdict.Fixable, TriageRules.CiFailed, result.Effective.Comment);
+        }
+
+        [Fact]
+        public async Task Safe_OnARedHead_PostsTheFailedChecksEvenWithoutAnAgentComment()
+        {
+            var rig = Live();
+            var noComment = _safe with { Comment = null };
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Conclusion = "failure" };
+
+            var result = await Apply(rig, noComment);
+
+            Assert.Equal(TriageVerdict.Fixable, result.Effective?.Verdict);
+            Assert.Contains(rig.Github.Checks[0].Name, Assert.Single(rig.Github.Comments).Body, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Safe_Applied_StoresSafeOnTheRow()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+
+            await Apply(rig, _safe);
+
+            await AssertStoredAsync(rig, TriageVerdict.Safe, "agent", _safe.Comment);
+        }
+
+        [Theory]
+        [InlineData(TriageVerdict.Fixable, "blocked")]
+        [InlineData(TriageVerdict.Fixable, TriageRules.NeedsReviewLabel)]
+        [InlineData(TriageVerdict.Blocked, TriageRules.NeedsReviewLabel)]
+        [InlineData(TriageVerdict.Blocked, "agent/revert")]
+        [InlineData(TriageVerdict.Owner, "blocked")]
+        [InlineData(TriageVerdict.Owner, "agent/revert")]
+        public async Task AFlaggingVerdict_IsRefusedWhenTheOwnerLabelledThePrMidRun_AndStaysUnapplied(TriageVerdict verdict, string label)
+        {
+            var rig = Live();
+            var decision = new TriageDecision(verdict, "agent", StickyComment.Verdict(verdict, "Why.", Sha, null, null));
+            await Record(rig, decision);
+            Labelled(rig, label, TriageRules.NeedsTriageLabel);
+
+            var result = await Apply(rig, decision);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel), result);
+            Assert.Empty(rig.Github.Writes);
+            Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Theory]
+        [InlineData(TriageVerdict.Blocked, TriageRules.BlockedLabel)]
+        [InlineData(TriageVerdict.Owner, TriageRules.NeedsReviewLabel)]
+        public async Task AFlaggingVerdict_IsNotRefusedByItsOwnLabel_SoARetryAfterAPartialApplyCompletes(TriageVerdict verdict, string ownLabel)
+        {
+            var rig = Live();
+            var decision = new TriageDecision(verdict, "agent", StickyComment.Verdict(verdict, "Why.", Sha, null, null));
+            await Record(rig, decision);
+            Labelled(rig, ownLabel);
+
+            var result = await Apply(rig, decision);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
             Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
         }
 
@@ -1593,11 +1658,12 @@ public class RenovateTriageActivitiesTests
         public async Task Safe_WhileCiIsPending_GoesToTheOwnerNamingTheCheck()
         {
             var rig = Live();
+            await Record(rig, _safe);
             rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
 
             var result = await Apply(rig, _safe);
 
-            AssertHandedToTheOwner(rig, result, TriageRules.CiNotPassed, "CI had not passed");
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.CiNotPassed, "CI had not passed");
         }
 
         [Theory]
@@ -1606,11 +1672,12 @@ public class RenovateTriageActivitiesTests
         public async Task Safe_WhileStabilityDaysIsNotSuccess_GoesToTheOwnerNamingTheCheck(string state)
         {
             var rig = Live();
+            await Record(rig, _safe);
             rig.Github.Statuses[0] = new GitHubCommitStatus(TriageRules.StabilityDays, state);
 
             var result = await Apply(rig, _safe);
 
-            AssertHandedToTheOwner(rig, result, TriageRules.StabilityDays, "renovate/stability-days");
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.StabilityDays, "renovate/stability-days");
         }
 
         [Fact]
@@ -1629,22 +1696,24 @@ public class RenovateTriageActivitiesTests
         public async Task Safe_WithACommitRenovateDidNotMake_GoesToTheOwner()
         {
             var rig = Live();
+            await Record(rig, _safe);
             rig.Github.Commits[0] = rig.Github.Commits[0] with { AuthorLogin = "someone" };
 
             var result = await Apply(rig, _safe);
 
-            AssertHandedToTheOwner(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
         }
 
         [Fact]
         public async Task Safe_WhenTheDiffIsMoreThanVersionBumps_GoesToTheOwner()
         {
             var rig = Live();
+            await Record(rig, _safe);
             rig.Github.Files.Add(new GitHubPullRequestFile("script.sh", "@@ -1 +1 @@\n-echo a\n+echo b"));
 
             var result = await Apply(rig, _safe);
 
-            AssertHandedToTheOwner(rig, result, TriageRules.PrecheckDiff, "more than version and digest");
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.PrecheckDiff, "more than version and digest");
         }
 
         [Theory]
@@ -1653,11 +1722,12 @@ public class RenovateTriageActivitiesTests
         public async Task Safe_WhenThePrTextIsHeldBack_GoesToTheOwner(ScanOutcome outcome, string reason)
         {
             var rig = Live();
+            await Record(rig, _safe);
             rig.Scanner.Default = outcome;
 
             var result = await Apply(rig, _safe);
 
-            AssertHandedToTheOwner(rig, result, reason, "Needs review");
+            await AssertHandedToTheOwnerAsync(rig, result, reason, "Needs review");
         }
 
         [Fact]
@@ -1677,11 +1747,12 @@ public class RenovateTriageActivitiesTests
         public async Task Approve_WithACommitRenovateDidNotMake_GoesToTheOwner()
         {
             var rig = Live();
+            await Record(rig, _approve);
             rig.Github.Commits[0] = rig.Github.Commits[0] with { AuthorLogin = "someone" };
 
             var result = await Apply(rig, _approve);
 
-            AssertHandedToTheOwner(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
         }
 
         [Fact]
@@ -1742,7 +1813,6 @@ public class RenovateTriageActivitiesTests
         public async Task TheOtherVerdicts_SkipTheApprovalGates()
         {
             var rig = Live();
-            Labelled(rig, "blocked");
 
             var result = await Apply(rig, new TriageDecision(TriageVerdict.Fixable, "agent", "text"));
 
@@ -1750,7 +1820,7 @@ public class RenovateTriageActivitiesTests
             Assert.DoesNotContain("commits", rig.Github.Calls);
         }
 
-        private static void AssertHandedToTheOwner(Rig rig, ApplyResult result, string check, string commentText)
+        private static async Task AssertHandedToTheOwnerAsync(Rig rig, ApplyResult result, string check, string commentText)
         {
             Assert.Equal(ApplyOutcome.Applied, result.Outcome);
             Assert.Equal(TriageVerdict.NeedsReview, result.Effective?.Verdict);
@@ -1760,6 +1830,17 @@ public class RenovateTriageActivitiesTests
             var comment = Assert.Single(rig.Github.Comments).Body;
             Assert.Contains(commentText, comment, StringComparison.Ordinal);
             Assert.Equal(Sticky(result.Effective!.Comment!), comment);
+            await AssertStoredAsync(rig, TriageVerdict.NeedsReview, check, result.Effective.Comment);
+        }
+
+        private static async Task AssertStoredAsync(Rig rig, TriageVerdict verdict, string reason, string? comment)
+        {
+            await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+            var row = await db.TriageVerdicts.SingleAsync(Ct);
+            Assert.Equal(verdict, row.Verdict);
+            Assert.Equal([reason], JsonSerializer.Deserialize<string[]>(row.Reasons)!);
+            Assert.Equal(comment, row.Comment);
+            Assert.NotNull(row.AppliedAt);
         }
     }
 

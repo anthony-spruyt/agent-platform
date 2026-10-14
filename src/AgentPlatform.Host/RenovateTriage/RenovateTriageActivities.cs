@@ -182,7 +182,7 @@ public sealed partial class RenovateTriageActivities(
 
             var gate = TriageRules.IsApproving(input.Decision.Verdict)
                 ? await GateApprovalAsync(input, pr, cancellationToken).ConfigureAwait(false)
-                : new Gate(input.Decision);
+                : GateFlag(input, pr);
             if (gate.Stop is { } stop)
             {
                 LogNotApplied(logger, input.Repo, input.PrNumber, stop.Reason);
@@ -195,11 +195,26 @@ public sealed partial class RenovateTriageActivities(
                 await github.RemoveLabelAsync(input.Repo, input.PrNumber, TriageRules.NeedsTriageLabel, cancellationToken).ConfigureAwait(false);
             }
 
-            await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, cancellationToken).ConfigureAwait(false);
-            return new ApplyResult(ApplyOutcome.Applied, Effective: gate.Decision == input.Decision ? null : gate.Decision);
+            if (gate.Decision == input.Decision)
+            {
+                await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, cancellationToken).ConfigureAwait(false);
+                return new ApplyResult(ApplyOutcome.Applied);
+            }
+
+            await verdicts.MarkAppliedAsAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, gate.Decision, cancellationToken).ConfigureAwait(false);
+            return new ApplyResult(ApplyOutcome.Applied, Effective: gate.Decision);
         });
 
     private sealed record Gate(TriageDecision Decision, ApplyResult? Stop = null, bool CommentOnly = false);
+
+    // A flag is not held to the approval gates, but the owner's own labels still stop it; the label it writes itself does not, so a retry completes.
+    private static Gate GateFlag(ApplyInput input, GitHubPullRequest pr)
+    {
+        var own = FlagLabel(input.Decision.Verdict);
+        var others = pr with { Labels = [.. pr.Labels.Where(l => !string.Equals(l, own, StringComparison.Ordinal))] };
+        var skip = SkipReason(input.Repo, others, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
+        return skip is null ? new Gate(input.Decision) : new Gate(input.Decision, new ApplyResult(ApplyOutcome.Refused, skip));
+    }
 
     // An approving verdict is only acted on after the checks Assess ran are redone on fresh data at this head.
     private async Task<Gate> GateApprovalAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
@@ -243,10 +258,7 @@ public sealed partial class RenovateTriageActivities(
         var safe = TriageRules.AssessSafe(ci, statuses, pr.HeadRef);
         return safe.Action switch
         {
-            SafeAction.Fixable => new Gate(new TriageDecision(
-                TriageVerdict.Fixable,
-                TriageRules.CiFailed,
-                input.Decision.Comment is { } comment ? StickyComment.WithVerdict(comment, TriageVerdict.Fixable) : null)),
+            SafeAction.Fixable => new Gate(TriageRules.SafeOnRedHeadDecision(input.Repo, input.HeadSha, TriageRules.FailedChecks(checks))),
             SafeAction.Owner => new Gate(TriageRules.SafeHandoffDecision(safe.FailedCheck!, input.HeadSha)),
             SafeAction.CommentOnly => new Gate(input.Decision, CommentOnly: true),
             _ => new Gate(input.Decision),
@@ -265,17 +277,18 @@ public sealed partial class RenovateTriageActivities(
             case TriageVerdict.Safe:
                 await FlagAsync(input, decision, TriageRules.SafeLabel, cancellationToken).ConfigureAwait(false);
                 break;
-            case TriageVerdict.Fixable:
-                await FlagAsync(input, decision, TriageRules.FixableLabel, cancellationToken).ConfigureAwait(false);
-                break;
-            case TriageVerdict.Blocked:
-                await FlagAsync(input, decision, TriageRules.BlockedLabel, cancellationToken).ConfigureAwait(false);
-                break;
             default:
-                await FlagAsync(input, decision, TriageRules.NeedsReviewLabel, cancellationToken).ConfigureAwait(false);
+                await FlagAsync(input, decision, FlagLabel(decision.Verdict), cancellationToken).ConfigureAwait(false);
                 break;
         }
     }
+
+    private static string FlagLabel(TriageVerdict verdict) => verdict switch
+    {
+        TriageVerdict.Fixable => TriageRules.FixableLabel,
+        TriageVerdict.Blocked => TriageRules.BlockedLabel,
+        _ => TriageRules.NeedsReviewLabel,
+    };
 
     private async Task ApproveAsync(ApplyInput input, TriageDecision decision, CancellationToken cancellationToken)
     {

@@ -101,12 +101,6 @@ public class TriageRulesTests
             Assert.Null(TriageRules.SkipReason(29139614, ["agent/needs-review"], ignoreTriageSignals: true, honourNeedsReviewLabel: true));
         }
 
-        [Fact]
-        public void TheNeedsTriageLabel_IsTheQueuedName()
-        {
-            Assert.Equal("agent/needs-triage", TriageRules.NeedsTriageLabel);
-        }
-
         [Theory]
         [InlineData("agent/needs-triage", false, true)]
         [InlineData("agent/needs-triage", true, false)]

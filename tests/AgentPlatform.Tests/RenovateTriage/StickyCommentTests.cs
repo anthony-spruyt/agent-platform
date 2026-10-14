@@ -113,6 +113,41 @@ public class StickyCommentTests
         Assert.DoesNotContain(']', unescaped);
     }
 
+    [Theory]
+    [InlineData("\\[b\\](//evil.example/b)")]
+    [InlineData("\\\\[b](//evil.example/b)")]
+    [InlineData("[b](//evil.example/b)")]
+    public void ABackslash_CannotNeutraliseTheBracketEscapes(string text)
+    {
+        var quoted = QuotedPart(Body(text));
+
+        Assert.Empty(UnescapedBrackets(quoted));
+    }
+
+    [Fact]
+    public void Backslashes_AreEscapedFirst()
+    {
+        Assert.Contains("a\\\\b", QuotedPart(Body("a\\b")), StringComparison.Ordinal);
+    }
+
+    private static List<char> UnescapedBrackets(string markdown)
+    {
+        var found = new List<char>();
+        for (var i = 0; i < markdown.Length; i++)
+        {
+            if (markdown[i] == '\\')
+            {
+                i++;
+            }
+            else if (markdown[i] is '[' or ']')
+            {
+                found.Add(markdown[i]);
+            }
+        }
+
+        return found;
+    }
+
     [Fact]
     public void LongText_IsCappedWithANote()
     {
@@ -171,22 +206,5 @@ public class StickyCommentTests
 
         Assert.Single(body.Split('\n'), l => l.StartsWith("head ", StringComparison.Ordinal));
         Assert.DoesNotContain('\n', StickyComment.Queued("a\nb"));
-    }
-
-    [Fact]
-    public void TheHeaderSwap_ChangesOnlyTheFirstLine()
-    {
-        var body = Body("Looks fine.\n**Agent verdict: SAFE**");
-
-        var swapped = StickyComment.WithVerdict(body, TriageVerdict.Fixable);
-
-        Assert.StartsWith("**Agent verdict: FIXABLE**\n", swapped, StringComparison.Ordinal);
-        Assert.Equal(body["**Agent verdict: SAFE**".Length..], swapped["**Agent verdict: FIXABLE**".Length..]);
-    }
-
-    [Fact]
-    public void TheHeaderSwap_LeavesATextThatIsNotAVerdictCommentAlone()
-    {
-        Assert.Equal("**Needs review:** x", StickyComment.WithVerdict("**Needs review:** x", TriageVerdict.Fixable));
     }
 }

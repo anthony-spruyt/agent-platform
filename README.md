@@ -122,9 +122,12 @@ A check suite from any app except this one (`GitHub:AppId`) is forwarded, so the
 Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`, ID `renovate-triage/{owner}/{repo}/{pr}`, task queue `agent-platform`, signal `CheckSuiteCompleted` with the repository, pull request number, head sha, check suite id, app slug, conclusion and `X-GitHub-Delivery` id.
 `RenovateTriageWorkflow` receives these signals; see Renovate triage below.
 
-The Worker role talks to GitHub through `IGitHubApiClient`. Reads: pull request, all check runs and suites of a sha, commits, files, reviews, labels, issue comments, releases and file contents of a changelog source repository, and job logs, all paged where listed.
-Writes: an approving review pinned to a commit, dismissing a review, adding labels, creating or editing an issue comment (the `Live` triage path), creating or updating check runs, and rerunning failed jobs. Each call mints an installation token for one repository
-with only the permission that call needs (`pull_requests: read` or `write`, `checks: read` or `write`, `contents: read` for changelogs and release notes of a source repository, or `actions: read` or `write` to read workflow runs and rerun failed jobs), authenticated by a short-lived App JWT signed with `GitHub:PrivateKey`.
+The Worker role talks to GitHub through `IGitHubApiClient`. Reads: pull request, all check runs and suites of a sha, the combined commit status of a sha (the `Live` triage path, for the `renovate/stability-days` status), commits, files, reviews, labels, issue comments, releases and file contents of a changelog source repository, and job logs, all paged where listed.
+Writes: an approving review pinned to a commit, dismissing a review, adding and removing labels, creating or editing an issue comment (the `Live` triage path), creating or updating check runs, and rerunning failed jobs. Each call mints an installation token for one repository
+with only the permission that call needs (`pull_requests: read` or `write`, `checks: read` or `write`, `statuses: read` for the commit status, `contents: read` for changelogs and release notes of a source repository, or `actions: read` or `write` to read workflow runs and rerun failed jobs), authenticated by a short-lived App JWT signed with `GitHub:PrivateKey`.
+The App installation must therefore grant the repository permission Commit statuses: Read-only, besides Pull requests, Checks, Contents and Actions.
+GitHub's REST reference lists both commit-status reads (`List commit statuses for a reference` and `Get the combined status for a specific reference`) under that permission for installation tokens, and does not exempt public repositories from it for a token scoped this way, so grant it on every repository the App covers.
+Removing a label uses the same Pull requests write permission as adding one.
 The installation is looked up per repository, and a token is reused until five minutes before it expires.
 
 `GitHub:AppId` is required and numeric on both roles. The check-run list leaves out the App's own check runs whose `external_id` starts with `renovate-triage/`, the check-suite list leaves out the App's own suites, and the webhook drops its own check suites, so the App's triage runs and suites never count as CI.
@@ -189,7 +192,8 @@ Each `Assess` pass returns the mode it ran in, and the workflow passes that mode
 In order; the first that applies decides:
 
 1. The repository is not owned by `anthony-spruyt`, the pull request is not open, or its head or base is in another repository: skipped. In `Shadow` mode a merged pull request is not skipped (Mergify may merge it before CI is complete); one closed without merging still is.
-2. The author is not Renovate, or the pull request has an `agent/needs-human-review`, `agent/revert` or `blocked` label: skipped. In `Shadow` mode the `agent/needs-human-review` and `agent/auto-approved` labels are ignored.
+2. The author is not Renovate, or the pull request has an `agent/needs-human-review`, `agent/needs-triage`, `agent/revert` or `blocked` label: skipped. The `agent/needs-triage` label parks a pull request for the agent, so a hand-added one never starts a run.
+  In `Shadow` mode, and in `Live` while the head has an unapplied verdict, the `agent/needs-human-review`, `agent/needs-triage` and `agent/auto-approved` labels are ignored; an unapplied approving verdict still honours `agent/needs-human-review`.
 3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved. In `Shadow` mode reviews by the triage App are ignored.
 4. A verdict already exists for the head sha and mode: nothing to do. In `Live` only a verdict that `Apply` has written counts; an unapplied one is applied again on the next signal, without asking Jev again (see Writes).
 5. Every commit must be authored by Renovate and verified, with GitHub as committer, as in the Mergify gate. The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
@@ -210,12 +214,28 @@ Jev stays the judge; the code only guards the diff.
 
 `Apply` writes with an installation token for the pull request's repository. It first re-reads the pull request and writes nothing, only logging, when the head sha is not the judged one or the pull request is not open. It has its own retry options (up to 12 tries, about 35 minutes of backoff). Errors `400`, `404`, `410` and `422` are not retried; rate limits (`403` or `429`) and `5xx` are.
 
+Before it writes anything, `Apply` checks the pull request on fresh data at the judged head. A check that fails here leaves the pull request untouched.
+
+- Every verdict: the repository owner, `Live` mode, the pull request still open and the head still the judged one. Otherwise nothing is written and the verdict stays unapplied (`not-live`, `not-open`, `head-moved`).
+- An approving verdict (approve or `SAFE`) is re-assessed from scratch: the author must be Renovate, the head and base must be in the repository, and none of `agent/needs-human-review`, `agent/needs-triage`, `agent/revert` or `blocked` may be on the pull request, else `Apply` refuses (`not-renovate`, `blocking-label`, nothing written, the verdict stays unapplied).
+  Every commit must be one Renovate made (the gate of rule 5, so commits added after the judgement count); a failure is handed to the owner as needs review, `non-renovate-commit`.
+  Then the apply-precheck runs again (diff only version and digest updates, body through the scanner), whether or not `Assess` prechecked this head, because the diff and body can change after the verdict: a failure is handed to the owner as needs review with the precheck reason, and a head that moves while it reads aborts with nothing written.
+- `SAFE` is then checked against CI and status: failed checks make it `FIXABLE`; checks still pending, or a `renovate/stability-days` status that is not `success`, hand it to the owner as needs review (`ci-not-passed` or `renovate/stability-days`). A branch on the high-risk list is never approved: the label and the comment are written, the review is not.
+- A flagging verdict (`FIXABLE`, `BLOCKED`, `Owner` or needs review) skips those gates but is refused (`blocking-label`) when the owner has put `blocked` (for every flag but `BLOCKED`), `agent/needs-human-review` (for `FIXABLE` and `BLOCKED`) or `agent/revert` on the pull request meanwhile, or the author is not Renovate. The label a verdict writes itself does not refuse its own retry.
+
+What each verdict writes, after the gates:
+
 - Approve: an `APPROVE` review pinned to the judged commit (skipped when the App already approved that sha) and the label `agent/auto-approved`. If a sticky comment from an earlier needs-review exists, it is edited to say the new commit was auto-approved (see the table).
-- Needs review: the label `agent/needs-human-review`, the verdict comment, and a dismissal of every approval by the App, including one on the same commit. GitHub refusing a dismissal (`422`) is logged as a warning and the rest carries on.
+- `SAFE`: an `APPROVE` review with a fixed body that never carries agent text, the label `agent/safe`, and the agent's comment in the sticky comment.
+- `FIXABLE`: the label `agent/fixable` and the comment. A `SAFE` verdict that meets a red head is written as `FIXABLE`, with the comment `**Fixable:** CI failed on <short sha>. Failed: <check names, linked>.` built from the failed checks, not from the agent's text.
+- `BLOCKED`: the label `blocked` and the comment.
+- Owner and needs review: the label `agent/needs-human-review` and the comment. This is also the hand-off for every failed gate above, with the reason of the gate that failed.
+- Every flag (`FIXABLE`, `BLOCKED`, Owner, needs review) dismisses every approval by the App, including one on the same commit. GitHub refusing a dismissal (`422`) is logged as a warning and the rest carries on.
+- Whatever was written, the park label `agent/needs-triage` is removed when the pull request carries it.
 - One sticky comment per pull request, found by the hidden marker `<!-- agent-platform:renovate-triage -->` on a comment by the App. It is created once and edited for each new head sha, never duplicated.
-- When the writes are done the verdict row gets `applied_at`.
+  Agent text sits in a quoted `**Agent output (unverified)**` block below the header `**Agent verdict: SAFE|FIXABLE|BLOCKED|NEEDS REVIEW**`, capped at 8,000 characters, with HTML, backslashes, brackets, mentions, references and links defused, and a footer with the short head sha, the model and the run.
+- When the writes are done the verdict row gets `applied_at`, and its verdict, reason and comment are replaced by the ones written, so a downgrade or hand-off is stored as what was written, not as what the agent said.
 - An unapplied verdict is applied again with the App's own approval and the `agent/auto-approved` label ignored, and `agent/needs-human-review` ignored when the verdict is needs review. `blocked`, `agent/revert` and human approvals still skip it, and so does `agent/needs-human-review` when the verdict is approve.
-- `Apply` itself refuses an approve verdict (`blocking-label`, nothing written, the verdict stays unapplied) while the pull request carries `agent/needs-human-review`.
 
 The comments:
 
@@ -248,7 +268,7 @@ Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF C
 | -------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `runs`                     | workflow run          | `workflow_id` + `workflow_run_id` (unique), `workflow_type`, `status`, `input_event` and `context` (jsonb), `prompt_hash`, `model`, timings, token and cost totals, nullable `outcome` fields for later ground truth                                                 |
 | `run_steps`                | step of a run         | `run_id` + `seq` (unique), `name`, `rung` (`Rule`, `Jev`, `Claude`), `input` and `output` (jsonb), `confidence`, `stop_reason`, `prompt_hash`, `model`, tokens, `cost_usd`, timings                                                                                  |
-| `renovate_triage_verdicts` | pull request head sha | `repo` + `pr_number` + `head_sha` + `mode` (unique), `verdict`, `rung` (`Rule`, `Jev` or `Claude`), `reasons` (jsonb), `comment`, `created_at`, `applied_at` (set once a `Live` verdict is on GitHub), `action` (`Approve` or `Comment`, what was written to GitHub) |
+| `renovate_triage_verdicts` | pull request head sha | `repo` + `pr_number` + `head_sha` + `mode` (unique), `verdict` (`Approve`, `NeedsReview`, `Safe`, `Fixable`, `Blocked` or `Owner`; the one `Apply` wrote), `rung` (`Rule`, `Jev` or `Claude`), `reasons` (jsonb), `comment`, `created_at`, `applied_at` (set once a `Live` verdict is on GitHub), `action` (`Approve` or `Comment`, what was written to GitHub) |
 | `claude_runs`              | Claude run            | `id` (run id, the idempotency key), `repo` + `pr_number` + `head_sha`, `workflow_id`, `attempt`, `reserved_at`, `pod_created_at` (set at finish if the pod start was never marked), `finished_at`, `outcome`, `model`, tokens, `cost_usd`                            |
 | `claude_cooldowns`         | scope                 | `scope` (primary key: `global` or a repo), `until`, `cause`; a write never shortens a running cooldown                                                                                                                                                               |
 | `renovate_triage_pending`  | pull request          | `repo` + `pr_number` (unique), `head_sha`, `reason`, `status`, `attempts` (failed Claude runs on this head), `created_at`, `updated_at`; a head move carries the row and resets `attempts`                                                                           |

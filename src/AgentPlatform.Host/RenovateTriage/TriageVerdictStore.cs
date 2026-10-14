@@ -51,6 +51,26 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // The row keeps what Apply actually wrote, so a downgrade or hand-off is not recorded as the verdict the agent gave.
+    public async Task MarkAppliedAsAsync(string repo, int prNumber, string headSha, TriageVerdict recorded, TriageDecision effective, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(effective);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.TriageVerdicts
+            .SingleOrDefaultAsync(v => v.Repo == repo && v.PrNumber == prNumber && v.HeadSha == headSha && v.Mode == TriageMode.Live && v.Verdict == recorded && v.AppliedAt == null, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null)
+        {
+            return;
+        }
+
+        row.Verdict = effective.Verdict;
+        row.Reasons = JsonSerializer.Serialize(new[] { effective.Reason });
+        row.Comment = effective.Comment;
+        row.AppliedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     // The first verdict for a commit stands; a concurrent writer can win the unique key, so retry once on a fresh context.
     public Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, CancellationToken cancellationToken) =>
         RecordAsync(repo, prNumber, headSha, decision, mode, null, cancellationToken);
