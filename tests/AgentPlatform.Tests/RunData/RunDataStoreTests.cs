@@ -255,6 +255,34 @@ public class RunDataStoreTests
         Assert.Equal(run.PromptHash, (await db.RunSteps.SingleAsync(Ct)).PromptHash);
     }
 
+    [Fact]
+    public async Task RecordStep_WithAPromptBody_StoresThePromptOnceAndLinksTheStep()
+    {
+        var (store, factory) = NewStore();
+        var run = await store.BeginRunAsync("wf", "run", Begin(), Ct);
+
+        await store.RecordStepAsync(Step(run.RunId, 1) with { PromptName = "triage", PromptBody = "Triage {{pr}}" }, Ct);
+        await store.RecordStepAsync(Step(run.RunId, 2) with { PromptName = "triage", PromptBody = "Triage {{pr}}" }, Ct);
+
+        await using var db = await factory.CreateDbContextAsync(Ct);
+        var prompt = await db.Prompts.SingleAsync(Ct);
+        Assert.Equal((PromptHashing.Compute("Triage {{pr}}"), "triage", "Triage {{pr}}"), (prompt.Hash, prompt.Name, prompt.Body));
+        Assert.All(await db.RunSteps.ToListAsync(Ct), s => Assert.Equal(prompt.Hash, s.PromptHash));
+    }
+
+    [Fact]
+    public async Task RecordStep_WithAPromptBodyAndNoName_IsRejectedBeforeAnyWrite()
+    {
+        var (store, factory) = NewStore();
+        var run = await store.BeginRunAsync("wf", "run", Begin(), Ct);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.RecordStepAsync(Step(run.RunId) with { PromptBody = "body" }, Ct));
+
+        await using var db = await factory.CreateDbContextAsync(Ct);
+        Assert.Equal(0, await db.RunSteps.CountAsync(Ct));
+        Assert.Equal(0, await db.Prompts.CountAsync(Ct));
+    }
+
     [Theory]
     [InlineData(-0.1)]
     [InlineData(1.1)]

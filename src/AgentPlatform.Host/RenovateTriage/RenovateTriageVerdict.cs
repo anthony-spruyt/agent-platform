@@ -1,4 +1,12 @@
+using AgentPlatform.Host.RunData;
+
 namespace AgentPlatform.Host.RenovateTriage;
+
+public enum VerdictAction
+{
+    Approve,
+    Comment,
+}
 
 public sealed class RenovateTriageVerdict
 {
@@ -21,4 +29,8 @@ public sealed class RenovateTriageVerdict
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset? AppliedAt { get; set; }
+
+    public LadderRung? Rung { get; set; }
+
+    public VerdictAction? Action { get; set; }
 }

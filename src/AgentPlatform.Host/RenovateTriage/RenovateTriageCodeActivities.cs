@@ -27,7 +27,7 @@ public sealed record RerunResult(bool HeadMoved, RerunOutcome Outcome);
 
 public sealed record BuildContextInput(string Repo, int PrNumber, string HeadSha, string? Reason, ScannedText? PrBody = null);
 
-public sealed record BuildContextResult(bool HeadMoved, TriageContext? Context);
+public sealed record BuildContextResult(bool HeadMoved, TriageContext? Context, StatedVersions? Stated = null);
 
 public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevClient jev, IUntrustedTextScanner scanner, IOptions<RenovateTriageOptions> options)
 {
@@ -60,32 +60,7 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
                 return new PrecheckResult(true, PrecheckVerdict.Passed);
             }
 
-            var files = await github.ListPullRequestFilesAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            var reread = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            var shape = DiffShape.Classify(
-                [.. files.Select(f => new DiffFile(f.Filename, f.Status, f.Patch))],
-                pr.ChangedFiles,
-                pr.HeadSha,
-                [.. commits.Select(c => new DiffCommit(c.Sha, c.Message))],
-                reread.HeadSha);
-            if (shape.Failure == DiffShapeFailure.HeadMoved)
-            {
-                return new PrecheckResult(true, PrecheckVerdict.Passed);
-            }
-
-            if (!shape.Passed)
-            {
-                return new PrecheckResult(false, PrecheckVerdict.DiffNotVersionOnly, Detail: shape.Failure.ToString());
-            }
-
-            var scan = await scanner.ScanAsync(pr.Body ?? string.Empty, cancellationToken).ConfigureAwait(false);
-            return scan.Outcome switch
-            {
-                ScanOutcome.Clean => new PrecheckResult(false, PrecheckVerdict.Passed, scan.Text),
-                ScanOutcome.Flagged => new PrecheckResult(false, PrecheckVerdict.BodyFlagged),
-                _ => new PrecheckResult(false, PrecheckVerdict.BodyUnchecked),
-            };
+            return await TriagePrecheck.RunAsync(github, scanner, input.Repo, input.PrNumber, pr, cancellationToken).ConfigureAwait(false);
         });
 
     [Activity(BuildContextName)]
@@ -98,6 +73,12 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
             if (!string.Equals(pr.HeadSha, input.HeadSha, StringComparison.Ordinal))
             {
                 return new BuildContextResult(true, null);
+            }
+
+            var stated = await StatedVersionsAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            if (stated is null)
+            {
+                return new BuildContextResult(false, null);
             }
 
             var bundle = new Bundle();
@@ -135,7 +116,7 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
             }
 
             var facts = new TriageFacts(input.Repo, input.PrNumber, input.HeadSha, input.Reason, jobs.Count, bundle.HeldBack);
-            return new BuildContextResult(false, TriageContextBuilder.Build(facts, bundle.Items));
+            return new BuildContextResult(false, TriageContextBuilder.Build(facts, bundle.Items), stated);
         });
 
     [Activity(FetchChangelogName)]
@@ -323,6 +304,14 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
                 HeldBack++;
             }
         }
+    }
+
+    private async Task<StatedVersions?> StatedVersionsAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
+    {
+        var commits = await github.ListCommitsAsync(repo, prNumber, cancellationToken).ConfigureAwait(false);
+        return commits.Count > 0 && string.Equals(commits[^1].Sha, headSha, StringComparison.OrdinalIgnoreCase)
+            ? DiffShape.ReadStatedVersions(commits[^1].Message)
+            : null;
     }
 
     private async Task<bool> HeadMovedAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)

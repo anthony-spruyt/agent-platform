@@ -14,7 +14,7 @@ public static class RenovateTriageServiceCollectionExtensions
         var litellmSection = configuration.GetSection(LiteLlmOptions.SectionName);
         var triageSection = configuration.GetSection(RenovateTriageOptions.SectionName);
         Validate(litellmSection.Get<LiteLlmOptions>() ?? new LiteLlmOptions());
-        _ = triageSection.Get<RenovateTriageOptions>(); // Bind eagerly so an unknown Mode fails at startup, not on first use
+        Validate(triageSection.Get<RenovateTriageOptions>() ?? new RenovateTriageOptions()); // Binds eagerly so an unknown Mode fails at startup, not on first use
 
         services.Configure<LiteLlmOptions>(litellmSection);
         services.Configure<RenovateTriageOptions>(triageSection);
@@ -23,7 +23,18 @@ public static class RenovateTriageServiceCollectionExtensions
         services.AddHttpClient<IJevClient, JevClient>(client => client.Timeout = _jevTimeout).RemoveAllResilienceHandlers();
 #pragma warning restore EXTEXP0001
         services.AddSingleton<TriageVerdictStore>();
+        services.AddSingleton<TriagePendingStore>();
+        services.AddSingleton<ClaudeBudgetStore>();
         return services;
+    }
+
+    private static void Validate(RenovateTriageOptions triage)
+    {
+        var caps = triage.Claude;
+        if (caps.MaxPerHour < 1 || caps.MaxPerDay < 1 || caps.MaxPerPrPerDay < 1)
+        {
+            throw new InvalidOperationException("RenovateTriage:Claude:MaxPerHour, MaxPerDay and MaxPerPrPerDay must each be at least 1.");
+        }
     }
 
     private static void Validate(LiteLlmOptions litellm)

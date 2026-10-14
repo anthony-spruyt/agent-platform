@@ -109,7 +109,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
         return await McpClient.CreateAsync(transport, cancellationToken: Ct);
     }
 
-    private static string ValidToken() => Tokens.Issue("spike-1", "run-1", "spike", 1, InAnHour);
+    private static string ValidToken() => Tokens.Issue("wf-1", "run-1", "triage", 1, InAnHour);
 
     private async Task<HttpResponseMessage> PostRawAsync(string? authorization, string body)
     {
@@ -147,7 +147,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
         Assert.NotEqual(true, result.IsError);
         var (run, payload) = Assert.Single(_submitter.Signals);
-        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "spike", 1), run);
+        Assert.Equal(new AgentRunIdentity("wf-1", "run-1", "triage", 1), run);
         Assert.Equal("success", payload.Status);
         Assert.Equal("Looks fine", payload.Summary);
         Assert.Equal("safe", payload.Data!.Value.GetProperty("verdict").GetString());
@@ -189,7 +189,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
 
         Assert.NotEqual(true, result.IsError);
         Assert.Equal("facts and index", TextOf(result));
-        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "spike", 1), Assert.Single(_context.Asked));
+        Assert.Equal(new AgentRunIdentity("wf-1", "run-1", "triage", 1), Assert.Single(_context.Asked));
     }
 
     [Theory]
@@ -232,7 +232,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task GetTriageContext_WhenTheRunIsNoLongerActive_Fails()
     {
-        _context.Failure = new RunNotActiveException("spike-1");
+        _context.Failure = new RunNotActiveException("wf-1");
         await using var client = await ConnectAsync(ValidToken());
 
         var result = await client.CallToolAsync("get_triage_context", new Dictionary<string, object?>(), cancellationToken: Ct);
@@ -271,7 +271,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task TokenSignedWithAnotherKey_IsRejected()
     {
-        var foreign = new AgentSessionTokens("another-key-another-key-another-key").Issue("spike-1", "run-1", "spike", 1, InAnHour);
+        var foreign = new AgentSessionTokens("another-key-another-key-another-key").Issue("wf-1", "run-1", "triage", 1, InAnHour);
 
         using var response = await PostRawAsync($"Bearer {foreign}", CallBody);
 
@@ -282,7 +282,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task ExpiredToken_IsRejected()
     {
-        var expired = Tokens.Issue("spike-1", "run-1", "spike", 1, DateTimeOffset.UtcNow.AddMinutes(-1));
+        var expired = Tokens.Issue("wf-1", "run-1", "triage", 1, DateTimeOffset.UtcNow.AddMinutes(-1));
 
         using var response = await PostRawAsync($"Bearer {expired}", CallBody);
 
@@ -314,7 +314,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task WhenTheRunIsNoLongerActive_TheAgentGetsAToolError()
     {
-        _submitter.Failure = new RunNotActiveException("spike-1");
+        _submitter.Failure = new RunNotActiveException("wf-1");
         await using var client = await ConnectAsync(ValidToken());
 
         var result = await client.CallToolAsync(
@@ -329,7 +329,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task WhenAResultWasAlreadySubmitted_TheAgentGetsAnAlreadySubmittedToolError()
     {
-        _submitter.Failure = new ResultAlreadySubmittedException("spike-1");
+        _submitter.Failure = new ResultAlreadySubmittedException("wf-1");
         await using var client = await ConnectAsync(ValidToken());
 
         var result = await client.CallToolAsync(
@@ -359,7 +359,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task TheStepAndAttemptNonceInTheTokenTravelWithTheSubmittedPayload()
     {
-        await using var client = await ConnectAsync(Tokens.Issue("spike-1", "run-1", "triage", 3, InAnHour));
+        await using var client = await ConnectAsync(Tokens.Issue("wf-1", "run-1", "triage", 3, InAnHour));
 
         await client.CallToolAsync(
             "submit_result",
@@ -367,7 +367,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
             cancellationToken: Ct);
 
         var (run, payload) = Assert.Single(_submitter.Signals);
-        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "triage", 3), run);
+        Assert.Equal(new AgentRunIdentity("wf-1", "run-1", "triage", 3), run);
         Assert.Equal("triage", payload.Step);
         Assert.Equal(3, payload.Attempt);
     }

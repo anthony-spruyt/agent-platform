@@ -29,13 +29,14 @@ public static class WorkerServiceCollectionExtensions
         services
             .AddHostedTemporalWorker(temporal.Address, temporal.Namespace, TaskQueues.AgentPlatform)
             .AddWorkflow<PingWorkflow>()
-            .AddWorkflow<SpikeWorkflow>()
             .AddWorkflow<RenovateTriageWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<PromptActivities>()
             .AddSingletonActivities<RunDataActivities>()
+            .AddSingletonActivities<ClaudeBudgetActivities>()
             .AddScopedActivities<RenovateTriageActivities>()
             .AddScopedActivities<RenovateTriageCodeActivities>()
+            .AddScopedActivities<ClaudeRungActivities>()
             .AddScopedActivities<TriageCheckActivities>()
             .AddScopedActivities<AgentPodActivities>();
 
@@ -62,6 +63,8 @@ public static class WorkerServiceCollectionExtensions
 
         services.TryAddSingleton<IExitCodeSetter, EnvironmentExitCodeSetter>();
         services.AddHostedService<TemporalWorkerFaultMonitor>();
+        services.AddSingleton<TriageGauges>();
+        services.AddHostedService<TriageGaugeRefresher>();
 
         return services;
     }

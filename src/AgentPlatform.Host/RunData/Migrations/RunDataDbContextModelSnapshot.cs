@@ -22,11 +22,115 @@ namespace AgentPlatform.Host.RunData.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.ClaudeCooldown", b =>
+                {
+                    b.Property<string>("Scope")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("Cause")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("cause");
+
+                    b.Property<DateTimeOffset>("Until")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("until");
+
+                    b.HasKey("Scope");
+
+                    b.ToTable("claude_cooldowns", (string)null);
+                });
+
+            modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.ClaudeRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt");
+
+                    b.Property<decimal?>("CostUsd")
+                        .HasColumnType("numeric(18,8)")
+                        .HasColumnName("cost_usd");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<string>("HeadSha")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("head_sha");
+
+                    b.Property<long?>("InputTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("input_tokens");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("model");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("outcome");
+
+                    b.Property<long?>("OutputTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("output_tokens");
+
+                    b.Property<DateTimeOffset?>("PodCreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("pod_created_at");
+
+                    b.Property<int>("PrNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("pr_number");
+
+                    b.Property<string>("Repo")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("repo");
+
+                    b.Property<DateTimeOffset>("ReservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reserved_at");
+
+                    b.Property<string>("WorkflowId")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("workflow_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PodCreatedAt");
+
+                    b.HasIndex("Repo", "FinishedAt");
+
+                    b.HasIndex("Repo", "PrNumber", "HeadSha");
+
+                    b.ToTable("claude_runs", (string)null);
+                });
+
             modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.RenovateTriageVerdict", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("action");
 
                     b.Property<DateTimeOffset?>("AppliedAt")
                         .HasColumnType("timestamp with time zone")
@@ -69,6 +173,11 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("repo");
 
+                    b.Property<string>("Rung")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("rung");
+
                     b.Property<string>("Verdict")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -81,6 +190,79 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .IsUnique();
 
                     b.ToTable("renovate_triage_verdicts", (string)null);
+                });
+
+            modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.SweeperState", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("LastSeenDeliveredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_delivered_at");
+
+                    b.Property<DateTimeOffset?>("LastSuccessAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_success_at");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("sweeper_state", (string)null);
+                });
+
+            modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.TriagePending", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("HeadSha")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("head_sha");
+
+                    b.Property<int>("PrNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("pr_number");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("Repo")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("repo");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Repo", "PrNumber")
+                        .IsUnique();
+
+                    b.ToTable("renovate_triage_pending", (string)null);
                 });
 
             modelBuilder.Entity("AgentPlatform.Host.RunData.Prompt", b =>

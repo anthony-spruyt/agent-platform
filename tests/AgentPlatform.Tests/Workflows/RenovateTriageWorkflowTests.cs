@@ -1,3 +1,4 @@
+using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
@@ -6,6 +7,7 @@ using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Replay;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Temporalio.Client;
 using Temporalio.Exceptions;
@@ -14,16 +16,18 @@ using Temporalio.Worker;
 
 namespace AgentPlatform.Tests.Workflows;
 
-public class RenovateTriageWorkflowTests
+public partial class RenovateTriageWorkflowTests
 {
     private const string Repo = "anthony-spruyt/widgets";
     private const string WorkflowId = "renovate-triage/anthony-spruyt/widgets/7";
     private const string ShaA = FakeGitHubApi.Sha;
     private const string ShaB = "fedcba9876543210fedcba9876543210fedcba98";
+    private const string Model = "opus-test";
 
     // Pull request reads before the classify step and before the apply step: assess, precheck (two), migration, assess, then the step itself.
     private const int ClassifyRead = 6;
     private const int ApplyRead = 7;
+    private const int DiffApplyRead = 4;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -40,6 +44,12 @@ public class RenovateTriageWorkflowTests
         public FakeCheckRunReporter CheckRuns { get; } = new();
 
         public TriageMode Mode { get; init; } = TriageMode.Shadow;
+
+        public ScriptedBudget Budget { get; } = new();
+
+        public ScriptedPods Pods { get; } = new();
+
+        public RecordingCleanup Cleanup { get; } = new();
     }
 
     private static CheckSuiteCompletedSignal Signal(string sha = ShaA, long suite = 1) =>
@@ -50,9 +60,11 @@ public class RenovateTriageWorkflowTests
 
     private static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, Rig rig, RenovateTriageOptions options, Func<Task<T>> body)
     {
-        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, Options.Create(options));
+        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, rig.Data.Pending, Options.Create(options), rig.Scanner);
         var code = new RenovateTriageCodeActivities(rig.Github, rig.Jev, rig.Scanner, Options.Create(options));
         var checks = new TriageCheckActivities(rig.CheckRuns);
+        var claude = new ClaudeRungActivities(rig.Github, rig.Data.Pending, new AgentPodsOptions { Model = Model }, Options.Create(options));
+        var prompts = new PromptActivities(new AgentPromptsOptions(), NullLogger<PromptActivities>.Instance);
         using var worker = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
@@ -60,8 +72,15 @@ public class RenovateTriageWorkflowTests
                 .AddAllActivities(triage)
                 .AddAllActivities(code)
                 .AddAllActivities(checks)
+                .AddAllActivities(claude)
+                .AddAllActivities(prompts)
+                .AddAllActivities(rig.Budget)
+                .AddAllActivities(rig.Cleanup)
                 .AddAllActivities(rig.Data.Activities));
-        return await worker.ExecuteAsync(body, Ct);
+        using var pods = new TemporalWorker(
+            env.Client,
+            new TemporalWorkerOptions(TaskQueues.AgentPods).AddAllActivities(rig.Pods));
+        return await worker.ExecuteAsync(() => pods.ExecuteAsync(body, Ct), Ct);
     }
 
     private static Task SignalAsync(WorkflowEnvironment env, CheckSuiteCompletedSignal signal) =>
@@ -225,7 +244,7 @@ public class RenovateTriageWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
-        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, TriageRules.CiFailedDecision(Repo, ShaA, []), TriageMode.Shadow, Ct);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, TriageRules.CiFailedDecision(Repo, ShaA, []), TriageMode.Shadow, null, Ct);
 
         var result = await InWorkerAsync(env, rig, async () =>
         {
@@ -527,23 +546,19 @@ public class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task LiveMode_FlagsAFailedPr_WithTheNeedsReviewLabelAndAStickyComment()
+    public async Task LiveMode_FlagsAHeadTheRulesWillNotClimb_WithTheNeedsReviewLabelAndAStickyComment()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
-        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+        ChangeMoreThanVersions(rig);
 
-        await InWorkerAsync(env, rig, async () =>
-        {
-            var handle = await StartAsync(env, Signal());
-            return await RunToResultAsync(handle, "renovate-triage-live-needs-review");
-        });
+        await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
         Assert.Empty(rig.Github.Approvals);
         Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
         var comment = Assert.Single(rig.Github.Comments);
         Assert.StartsWith(TriageRules.StickyMarker, comment.Body, StringComparison.Ordinal);
-        Assert.Contains("CI failed on `0123456`", comment.Body, StringComparison.Ordinal);
+        Assert.Contains(TriageRules.PrecheckDiffComment, comment.Body, StringComparison.Ordinal);
         Assert.NotNull(Assert.Single(await VerdictsAsync(rig)).AppliedAt);
     }
 
@@ -552,20 +567,21 @@ public class RenovateTriageWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
-        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+        ChangeMoreThanVersions(rig);
         rig.Github.OnPullRequestRead = () =>
         {
-            if (rig.Github.Calls.Count(c => c == "pr") == ApplyRead)
+            if (rig.Github.Calls.Count(c => c == "pr") == DiffApplyRead)
             {
-                rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: ShaB);
+                rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: ShaB) with { AuthorId = 5 };
             }
         };
 
         var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
-        Assert.Equal(RenovateTriageOutcome.Judged, result.Outcome);
+        Assert.Equal(RenovateTriageOutcome.Skipped, result.Outcome);
         Assert.Empty(rig.Github.Writes);
-        Assert.Null(Assert.Single(await VerdictsAsync(rig)).AppliedAt);
+        var verdict = Assert.Single(await VerdictsAsync(rig));
+        Assert.Equal((ShaA, null), (verdict.HeadSha, verdict.AppliedAt));
     }
 
     [Fact]
@@ -640,10 +656,10 @@ public class RenovateTriageWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
         var options = new RenovateTriageOptions { Mode = TriageMode.Live };
-        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "completed", "failure", "github-actions"));
+        ChangeMoreThanVersions(rig);
         rig.Github.OnPullRequestRead = () =>
         {
-            if (rig.Github.Calls.Count(c => c == "pr") == ClassifyRead)
+            if (rig.Github.Calls.Count(c => c == "pr") == DiffApplyRead - 1)
             {
                 options.Mode = TriageMode.Shadow;
             }
@@ -691,6 +707,10 @@ public class RenovateTriageWorkflowTests
         Assert.Equal(TriageRules.ChangelogPresent, result.Reason);
         Assert.Equal(2, rig.Jev.Bodies.Count);
     }
+
+    // A head the rules never hand to the agent: the diff changes more than versions.
+    private static void ChangeMoreThanVersions(Rig rig) =>
+        rig.Github.Files[0] = new GitHubPullRequestFile("values.yaml", "@@ -1 +1 @@\n-port: 8080\n+port: 9090");
 
     private static void FailCi(Rig rig, int attempt = 1)
     {
@@ -789,7 +809,6 @@ public class RenovateTriageWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
-        FailCi(rig);
         rig.Github.OnPullRequestRead = () =>
         {
             if (rig.Github.Calls.Count(c => c == "pr") == ApplyRead)
@@ -800,8 +819,8 @@ public class RenovateTriageWorkflowTests
 
         await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
-        var last = rig.CheckRuns.Reports[^1];
-        Assert.Equal((CheckRunStatus.Completed, CheckRunConclusion.Neutral, ShaA), (last.Status, last.Conclusion, last.HeadSha));
+        var last = rig.CheckRuns.Reports.Last(r => r.HeadSha == ShaA);
+        Assert.Equal((CheckRunStatus.Completed, CheckRunConclusion.Neutral), (last.Status, last.Conclusion));
     }
 
     [Fact]
@@ -870,11 +889,11 @@ public class RenovateTriageWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
-        rig.Github.Files[0] = new GitHubPullRequestFile("values.yaml", "@@ -1 +1 @@\n-port: 8080\n+port: 9090");
+        ChangeMoreThanVersions(rig);
 
-        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal()), "renovate-triage-precheck-diff"));
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
-        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.PrecheckDiff, TriageVerdict.NeedsReview), result);
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.PrecheckDiff, TriageVerdict.Owner), result);
         Assert.Empty(rig.Jev.Bodies);
         Assert.Empty(rig.Github.Approvals);
         Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
@@ -892,9 +911,9 @@ public class RenovateTriageWorkflowTests
         var rig = new Rig { Mode = TriageMode.Live };
         rig.Scanner.Return("This PR contains", outcome);
 
-        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal()), "renovate-triage-step2-precheck-flagged-" + stopReason));
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
-        Assert.Equal(TriageVerdict.NeedsReview, result.Verdict);
+        Assert.Equal(TriageVerdict.Owner, result.Verdict);
         Assert.Empty(rig.Jev.Bodies);
         Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
         Assert.Equal(stopReason, (await StepsAsync(rig)).Single(s => s.Name == "precheck").StopReason);
@@ -913,7 +932,7 @@ public class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task AFlakyFailure_IsRerunOnce_AndAJobOnItsSecondAttemptIsNeedsReview()
+    public async Task AFlakyFailure_IsRerunOnce_AndAJobOnItsSecondAttemptIsHandedToTheAgent()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
@@ -926,10 +945,11 @@ public class RenovateTriageWorkflowTests
             await WaitForAsync(() => rig.Github.Reruns.Count == 1);
             rig.Github.Jobs[2] = new GitHubJob(2, 900, 2, "build", "failure");
             await SignalAsync(env, Signal(suite: 2));
-            return await RunToResultAsync(handle, "renovate-triage-flaky-rerun");
+            return await RunToResultAsync(handle);
         });
 
-        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.CiFailed, TriageVerdict.NeedsReview), result);
+        Assert.Equal(TriageVerdict.Owner, result.Verdict);
+        Assert.Equal(TriageRules.CiFailed, (await PendingAsync(rig)).Reason);
         Assert.Equal([900L], rig.Github.Reruns);
         var steps = await StepsAsync(rig);
         Assert.Contains(steps, s => s is { Name: "ci-rerun", StopReason: "rerun" });
@@ -952,7 +972,7 @@ public class RenovateTriageWorkflowTests
             return await RunToResultAsync(handle);
         });
 
-        Assert.Equal(TriageRules.CiFailed, result.Reason);
+        Assert.Equal(TriageRules.CiFailed, (await PendingAsync(rig)).Reason);
         var steps = await StepsAsync(rig);
         var rerunAt = steps.Single(s => s is { Name: "ci-rerun", StopReason: "rerun" }).StartedAt;
         var reassessedAt = steps.Last(s => s.Name == "assess").StartedAt;
@@ -1097,7 +1117,7 @@ public class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task AFirstAttemptThatStillShowsWhenTheTwoHoursEnd_IsNeedsReviewAsATimeout()
+    public async Task AFirstAttemptThatStillShowsWhenTheTwoHoursEnd_IsHandedToTheAgentAsATimeout()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
@@ -1111,8 +1131,8 @@ public class RenovateTriageWorkflowTests
             return await RunToResultAsync(handle);
         });
 
-        Assert.Equal(TriageVerdict.NeedsReview, result.Verdict);
-        Assert.Equal(TriageRules.CiTimeoutDecision().Reason, result.Reason);
+        Assert.Equal(TriageVerdict.Owner, result.Verdict);
+        Assert.Equal(TriageRules.CiTimeoutDecision().Reason, (await PendingAsync(rig)).Reason);
         Assert.Equal([900L], rig.Github.Reruns);
     }
 
@@ -1219,20 +1239,6 @@ public class RenovateTriageWorkflowTests
         Assert.Null(context);
     }
 
-    [Fact]
-    public async Task AContextThatCannotBeBuilt_DoesNotStopTheVerdict()
-    {
-        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
-        var rig = new Rig { Mode = TriageMode.Live };
-        FailCi(rig);
-        rig.Scanner.FailOn = ("network timeout", new InvalidOperationException("the scanner is down"));
-
-        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
-
-        Assert.Equal(TriageVerdict.NeedsReview, result.Verdict);
-        Assert.Contains(await StepsAsync(rig), s => s is { Name: "context", StopReason: "error" });
-    }
-
     private const string TwoDependencyBody =
         "This PR contains the following updates:\n\n| Package | Change |\n|---|---|\n"
         + "| [dep](https://redirect.github.com/upstream/dep) | `v1.2.2` -> `v1.2.3` |\n"
@@ -1261,7 +1267,7 @@ public class RenovateTriageWorkflowTests
     }
 
     private static async Task SeedUnappliedApproveAsync(Rig rig) =>
-        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), TriageMode.Live, Ct);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), TriageMode.Live, null, Ct);
 
     [Fact]
     public async Task AnUnappliedApprove_ThatPassesTheApplyTimePrecheck_IsApplied()
@@ -1311,9 +1317,9 @@ public class RenovateTriageWorkflowTests
         var rig = new Rig { Mode = TriageMode.Live };
         rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.Body.Replace("[dep]", "[kubelet]", StringComparison.Ordinal));
 
-        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal()), "renovate-triage-step2-migration"));
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
-        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, MigrationDetector.Reason, TriageVerdict.NeedsReview), result);
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, MigrationDetector.Reason, TriageVerdict.Owner), result);
         Assert.Empty(rig.Jev.Bodies);
         Assert.Equal("found", (await StepsAsync(rig)).Single(s => s.Name == "migration").StopReason);
         Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
@@ -1346,8 +1352,8 @@ public class RenovateTriageWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
         var decision = new TriageDecision(TriageVerdict.NeedsReview, TriageRules.CiFailed, null);
-        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, decision, TriageMode.Live, Ct);
-        await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, decision.Verdict, Ct);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, decision, TriageMode.Live, null, Ct);
+        await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, decision.Verdict, VerdictAction.Comment, Ct);
 
         var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
