@@ -35,7 +35,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
 
     private sealed record RepositoriesDto(List<RepositoryDto>? Repositories);
 
-    private sealed record RepositoryDto(string? FullName);
+    private sealed record RepositoryDto(string? FullName, bool? HasPullRequests);
 
     public async Task<HookDeliveryPage> ListHookDeliveriesAsync(string? cursor, CancellationToken cancellationToken)
     {
@@ -105,7 +105,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
                 GitHubHttp.Request(HttpMethod.Get, string.Create(CultureInfo.InvariantCulture, $"installation/repositories?per_page={PageSize}&page={page}"), token.Token),
                 "installation repositories list",
                 cancellationToken).ConfigureAwait(false)).Repositories ?? [];
-            repos.AddRange(batch.Select(r => r.FullName).OfType<string>());
+            repos.AddRange(batch.Where(r => r.HasPullRequests != false).Select(r => r.FullName).OfType<string>());
             if (batch.Count < PageSize)
             {
                 return repos;
