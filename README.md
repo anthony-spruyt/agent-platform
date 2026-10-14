@@ -119,7 +119,7 @@ The sweeper also calls the App endpoints that take the App JWT itself and no ins
 The installation is looked up per repository, and a token is reused until five minutes before it expires.
 
 `GitHub:AppId` is required and numeric on both roles. The check-run list leaves out the App's own check runs whose `external_id` starts with `renovate-triage/`, the check-suite list leaves out the App's own suites, and the webhook drops its own check suites, so the App's triage runs and suites never count as CI.
-Check runs are written through `ICheckRunReporter`: it finds the run by name and `external_id` on the commit first, creates it when missing, updates it while it is open and leaves a completed run as it is.
+Check runs are written through `ICheckRunReporter`: it finds the newest run with that name and `external_id` on the commit first, creates it when missing, updates it while it is open and leaves a completed run as it is. GitHub never reopens a completed run, so a report with `StartNew` set (queued or in progress) creates a new run of the same name when the newest one is completed, and reuses an open one; the PR page shows the newest run per name. Any workflow that reports checks can use it.
 
 ## Untrusted text scanner
 
@@ -163,7 +163,7 @@ A run started after the `renovate-triage-step2-v1` patch also does the following
 The pull request body, the changelog sections and the log tails in the triage context travel as `ScannedText`, and the activities refuse one whose hash does not match.
 
 The workflow reports a check run named `Agent triage` on the head sha, only in `Live` mode: in progress while it works, then one of `success` (verdict applied), `neutral` (verdict not applied or only recorded, head moved on, or cancelled), `skipped` or `failure` (the run stopped on an error).
-The check run is written in a `finally`, so it never stays open, and a failure to write it is logged without stopping the triage. Its `external_id` is `renovate-triage/{repo}/{pr}@{sha}`.
+The check run is written in a `finally`, so it never stays open, and a failure to write it is logged without stopping the triage. Its `external_id` is `renovate-triage/{repo}/{pr}@{sha}`. The first report a run makes for a head, once it is past the skip and already-judged gates, sets `StartNew`, so a re-triage of a head whose check was completed (for example `Skipped: blocking-label`, after the owner removed the label) shows a new run going in progress and then its result. A skipped, already-judged or duplicate run leaves a completed check as it is. The sweeper works on the newest run.
 
 ### Claude rung
 

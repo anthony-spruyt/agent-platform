@@ -472,10 +472,9 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         ArgumentException.ThrowIfNullOrEmpty(externalId);
 
         var runs = await ReadCheckRunsAsync(repo, sha, cancellationToken).ConfigureAwait(false);
-        return runs.FirstOrDefault(r =>
-            r.Name == name
-            && r.ExternalId == externalId
-            && r.AppId == _ownAppId);
+        return runs
+            .Where(r => r.Name == name && r.ExternalId == externalId && r.AppId == _ownAppId)
+            .MaxBy(r => r.Id);
     }
 
     private static JsonObject CheckRunPayload(GitHubCheckRunWrite run)

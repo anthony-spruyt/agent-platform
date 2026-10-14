@@ -28,6 +28,18 @@ public class TriageCheckActivitiesTests
         Assert.StartsWith(Host.GitHub.GitHubApiClient.TriageCheckExternalIdPrefix, report.ExternalId, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheStartNewFlag_ReachesTheReporter(bool startNew)
+    {
+        var reporter = new FakeCheckRunReporter();
+
+        await Run(new TriageCheckActivities(reporter), new TriageCheckInput("anthony-spruyt/widgets", 7, Sha, CheckRunStatus.InProgress, null, "Waiting for CI.", startNew));
+
+        Assert.Equal(startNew, Assert.Single(reporter.Reports).StartNew);
+    }
+
     [Fact]
     public async Task ACompletedReportCarriesItsConclusion()
     {

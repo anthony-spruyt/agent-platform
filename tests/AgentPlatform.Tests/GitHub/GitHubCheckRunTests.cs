@@ -136,6 +136,19 @@ public class GitHubCheckRunTests
     }
 
     [Fact]
+    public async Task FindCheckRun_WithSeveralMatchingRuns_ReturnsTheNewest()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json(Runs(
+            Run(5, "Agent triage", OwnAppId, TriageId, "completed", "skipped"),
+            Run(9, "Agent triage", OwnAppId, TriageId, "in_progress", null),
+            Run(7, "Agent triage", OwnAppId, TriageId, "completed", "success"))));
+
+        var found = await client.FindCheckRunAsync("octo/widgets", Sha, "Agent triage", TriageId, Ct);
+
+        Assert.Equal(9, found?.Id);
+    }
+
+    [Fact]
     public async Task FindCheckRun_IgnoresAnotherAppsRunWithTheSameExternalId()
     {
         var (client, _, _) = Create(_ => StubHttpHandler.Json(Runs(Run(1, "Agent triage", 15368, TriageId))));

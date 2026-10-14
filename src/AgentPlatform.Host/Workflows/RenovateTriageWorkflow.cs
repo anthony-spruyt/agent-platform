@@ -16,6 +16,7 @@ public partial class RenovateTriageWorkflow
     private const string JevRetryPatch = "renovate-triage-jev-retry-v1";
     private const string LivePatch = "renovate-triage-live-v1";
     private const string Step2Patch = "renovate-triage-step2-v1";
+    private const string FreshCheckPatch = "renovate-triage-fresh-check-v1";
 
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
@@ -243,6 +244,11 @@ public partial class RenovateTriageWorkflow
                     decision = assess.Decision;
                     break;
                 case AssessStatus.Decided:
+                    if (Workflow.Patched(FreshCheckPatch))
+                    {
+                        await ProgressAsync(input, assess.HeadSha, "Recording the verdict.");
+                    }
+
                     decision = assess.Decision;
                     break;
                 default:
@@ -513,9 +519,10 @@ public partial class RenovateTriageWorkflow
             return;
         }
 
+        var startNew = _checkSha != headSha && Workflow.Patched(FreshCheckPatch);
         _checkSha = headSha;
         _checkSummary = summary;
-        await ReportCheckAsync(input, headSha, CheckRunStatus.InProgress, null, summary);
+        await ReportCheckAsync(input, headSha, CheckRunStatus.InProgress, null, summary, startNew);
     }
 
     private async Task FinishCheckAsync(RenovateTriageInput input, string headSha, CheckRunConclusion conclusion, string summary)
@@ -548,12 +555,12 @@ public partial class RenovateTriageWorkflow
             cancelled ? "Triage was cancelled." : "Triage stopped on an error.");
     }
 
-    private static async Task ReportCheckAsync(RenovateTriageInput input, string headSha, CheckRunStatus status, CheckRunConclusion? conclusion, string summary)
+    private static async Task ReportCheckAsync(RenovateTriageInput input, string headSha, CheckRunStatus status, CheckRunConclusion? conclusion, string summary, bool startNew = false)
     {
         try
         {
             await Workflow.ExecuteActivityAsync(
-                (TriageCheckActivities activities) => activities.ReportAsync(new TriageCheckInput(input.Repo, input.PrNumber, headSha, status, conclusion, summary)),
+                (TriageCheckActivities activities) => activities.ReportAsync(new TriageCheckInput(input.Repo, input.PrNumber, headSha, status, conclusion, summary, startNew)),
                 new ActivityOptions
                 {
                     StartToCloseTimeout = _activityOptions.StartToCloseTimeout,
