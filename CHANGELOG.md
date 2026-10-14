@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.11.0...v1.11.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **triage:** skip repos with pull requests turned off in the sweeper ([#74](https://github.com/anthony-spruyt/agent-platform/issues/74)) ([3e1c567](https://github.com/anthony-spruyt/agent-platform/commit/3e1c567bc6382f839c5e1d10315448259f894536))
+
 ## [1.11.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.10.0...v1.11.0) (2026-10-14)
 
 
