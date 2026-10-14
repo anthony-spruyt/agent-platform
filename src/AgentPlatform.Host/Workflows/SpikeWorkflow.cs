@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using Temporalio.Common;
@@ -159,7 +160,7 @@ public partial class SpikeWorkflow
             return null;
         }
 
-        if (!TriageResult.TryParse(payload, _triageHeadSha, null, out var parsed, out var error))
+        if (!TriageResult.TryParse(payload, _triageHeadSha, new StatedVersions(null, null), out var parsed, out var error))
         {
             return error;
         }

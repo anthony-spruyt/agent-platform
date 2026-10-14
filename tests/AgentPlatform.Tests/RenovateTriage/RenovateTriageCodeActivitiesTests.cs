@@ -477,6 +477,41 @@ public class RenovateTriageCodeActivitiesTests
         }
 
         [Fact]
+        public async Task TheVersionsTheHeadCommitStates_AreReturnedForCheckingTheResult()
+        {
+            var rig = Create();
+
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
+
+            Assert.Equal([new StatedVersion("dep", "1.0.0", "1.0.1")], result.Stated!.Rows);
+        }
+
+        [Fact]
+        public async Task ACommitWithNoTable_StatesOnlyItsSubjectVersion()
+        {
+            var rig = Create();
+            rig.Github.Commits.Clear();
+            rig.Github.Commits.Add(FakeGitHubApi.RenovateCommit(message: "chore(deps): update dep to v1.0.1"));
+
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
+
+            Assert.Null(result.Stated!.Rows);
+            Assert.Equal("v1.0.1", result.Stated.SubjectVersion);
+        }
+
+        [Fact]
+        public async Task ACommitTheContextCannotRead_StatesNothing()
+        {
+            var rig = Create();
+            rig.Github.Commits.Clear();
+            rig.Github.Commits.Add(FakeGitHubApi.RenovateCommit(message: "chore(deps): update dep\n\n| package | to |\n|-|-|\n| dep | 1.0.1 |"));
+
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
+
+            Assert.Equal(new StatedVersions(null, null), result.Stated);
+        }
+
+        [Fact]
         public async Task TheGivenScannedBodyIsUsedAsIs_AndNotScannedAgain()
         {
             var rig = Create();

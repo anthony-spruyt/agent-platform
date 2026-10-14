@@ -23,11 +23,12 @@ public sealed record TriageResult(
 
     private static readonly string[] _verdicts = ["SAFE", "FIXABLE", "BLOCKED", "NEEDS_REVIEW"];
 
-    public static bool TryParse(SubmitResultPayload payload, string expectedHeadSha, StatedVersions? stated, out TriageResult? result, out string? error)
+    public static bool TryParse(SubmitResultPayload payload, string expectedHeadSha, StatedVersions stated, out TriageResult? result, out string? error)
     {
         ArgumentNullException.ThrowIfNull(payload);
+        ArgumentNullException.ThrowIfNull(stated);
         result = null;
-        error = Check(payload, expectedHeadSha, out var parsed) ?? (stated is null ? null : CheckVersions(parsed!.Versions, stated));
+        error = Check(payload, expectedHeadSha, out var parsed) ?? CheckVersions(parsed!.Versions, stated);
         if (error is not null)
         {
             return false;

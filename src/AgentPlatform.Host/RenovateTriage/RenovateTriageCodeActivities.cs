@@ -27,7 +27,7 @@ public sealed record RerunResult(bool HeadMoved, RerunOutcome Outcome);
 
 public sealed record BuildContextInput(string Repo, int PrNumber, string HeadSha, string? Reason, ScannedText? PrBody = null);
 
-public sealed record BuildContextResult(bool HeadMoved, TriageContext? Context);
+public sealed record BuildContextResult(bool HeadMoved, TriageContext? Context, StatedVersions? Stated = null);
 
 public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevClient jev, IUntrustedTextScanner scanner, IOptions<RenovateTriageOptions> options)
 {
@@ -110,7 +110,8 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
             }
 
             var facts = new TriageFacts(input.Repo, input.PrNumber, input.HeadSha, input.Reason, jobs.Count, bundle.HeldBack);
-            return new BuildContextResult(false, TriageContextBuilder.Build(facts, bundle.Items));
+            var stated = await StatedVersionsAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            return new BuildContextResult(false, TriageContextBuilder.Build(facts, bundle.Items), stated);
         });
 
     [Activity(FetchChangelogName)]
@@ -298,6 +299,15 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
                 HeldBack++;
             }
         }
+    }
+
+    private async Task<StatedVersions> StatedVersionsAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
+    {
+        var commits = await github.ListCommitsAsync(repo, prNumber, cancellationToken).ConfigureAwait(false);
+        var unreadable = new StatedVersions(null, null);
+        return commits.Count > 0 && string.Equals(commits[^1].Sha, headSha, StringComparison.OrdinalIgnoreCase)
+            ? DiffShape.ReadStatedVersions(commits[^1].Message) ?? unreadable
+            : unreadable;
     }
 
     private async Task<bool> HeadMovedAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)

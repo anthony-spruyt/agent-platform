@@ -16,7 +16,7 @@ public class TriageResultTests
 
     private static string? Error(SubmitResultPayload payload)
     {
-        TriageResult.TryParse(payload, Sha, null, out _, out var error);
+        TriageResult.TryParse(payload, Sha, ValidStated, out _, out var error);
         return error;
     }
 
@@ -27,7 +27,7 @@ public class TriageResultTests
     [InlineData("NEEDS_REVIEW")]
     public void TryParse_AcceptsEachVerdict(string verdict)
     {
-        Assert.True(TriageResult.TryParse(Payload(Valid(verdict)), Sha, null, out var result, out var error), error);
+        Assert.True(TriageResult.TryParse(Payload(Valid(verdict)), Sha, ValidStated, out var result, out var error), error);
 
         Assert.Equal(verdict, result!.Verdict);
         Assert.Equal("Looks fine.", result.Summary);
@@ -45,7 +45,7 @@ public class TriageResultTests
     [Fact]
     public void TryParse_TreatsMissingListsAsEmpty()
     {
-        Assert.True(TriageResult.TryParse(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}"}"""), Sha, null, out var result, out _));
+        Assert.True(TriageResult.TryParse(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}"}"""), Sha, NothingStated, out var result, out _));
         Assert.Empty(result!.Versions);
         Assert.Empty(result.Fix);
         Assert.Empty(result.Reasons);
@@ -127,6 +127,14 @@ public class TriageResultTests
         Assert.Contains(field, Error(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}","{{field}}":"nope"}""")), StringComparison.Ordinal);
         Assert.Contains(field, Error(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}","{{field}}":[1]}""")), StringComparison.Ordinal);
     }
+
+    private static readonly StatedVersions NothingStated = new(null, null);
+
+    private static readonly StatedVersions ValidStated = new([new StatedVersion("actions/checkout", "4.1.0", "4.2.0")], null);
+
+    [Fact]
+    public void TryParse_RequiresTheStatedVersions() =>
+        Assert.Throws<ArgumentNullException>(() => TriageResult.TryParse(Payload(Valid("SAFE")), Sha, null!, out _, out _));
 
     private static StatedVersions Table(params (string Dep, string From, string To)[] rows) =>
         new([.. rows.Select(r => new StatedVersion(r.Dep, r.From, r.To))], null);
