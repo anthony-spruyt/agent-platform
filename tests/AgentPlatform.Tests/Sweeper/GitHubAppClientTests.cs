@@ -107,6 +107,22 @@ public class GitHubAppClientTests
     }
 
     [Fact]
+    public async Task ListInstallationRepositories_SkipsReposWithPullRequestsTurnedOff_AndKeepsReposThatDoNotSayOtherwise()
+    {
+        var (client, _) = Create(request => request.Uri.AbsolutePath switch
+        {
+            "/app/installations" => StubHttpHandler.Json("""[{"id":42,"account":{"login":"anthony-spruyt"}}]"""),
+            "/app/installations/42/access_tokens" => StubHttpHandler.Json("""{"token":"ghs_scoped"}""", HttpStatusCode.Created),
+            "/installation/repositories" => StubHttpHandler.Json("""{"total_count":3,"repositories":[{"full_name":"anthony-spruyt/on","has_pull_requests":true},{"full_name":"anthony-spruyt/off","has_pull_requests":false},{"full_name":"anthony-spruyt/unset"}]}"""),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+        });
+
+        var repos = await client.ListInstallationRepositoriesAsync("anthony-spruyt", Ct);
+
+        Assert.Equal(["anthony-spruyt/on", "anthony-spruyt/unset"], repos);
+    }
+
+    [Fact]
     public async Task ListInstallationRepositories_IsEmpty_WhenTheOwnerHasNoInstallation()
     {
         var (client, _) = Create(_ => StubHttpHandler.Json("""[{"id":1,"account":{"login":"someone-else"}}]"""));
