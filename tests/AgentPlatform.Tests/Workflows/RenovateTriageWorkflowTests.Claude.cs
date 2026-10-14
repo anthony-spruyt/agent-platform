@@ -390,7 +390,7 @@ public partial class RenovateTriageWorkflowTests
         {
             var stale = await Assert.ThrowsAsync<WorkflowUpdateFailedException>(() => SubmitAsync(env, info.WorkflowId!, Submission("SAFE", input.Attempt + 1)));
             Assert.Equal(AgentResultUpdates.StaleRunErrorType, ((ApplicationFailureException)stale.InnerException!).ErrorType);
-            await Assert.ThrowsAsync<WorkflowUpdateFailedException>(() => SubmitAsync(env, info.WorkflowId!, Submission("SAFE", input.Attempt, step: "spike")));
+            await Assert.ThrowsAsync<WorkflowUpdateFailedException>(() => SubmitAsync(env, info.WorkflowId!, Submission("SAFE", input.Attempt, step: "other")));
             return await answer(input, info);
         };
 

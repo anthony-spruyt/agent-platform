@@ -45,7 +45,7 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `RenovateTriage:Mode`                      | `Shadow`                                                              | Worker role. `Shadow` records verdicts and writes nothing to GitHub; `Live` also approves, labels and comments as the App. Anything else fails startup      |
 | `RenovateTriage:Migration:PathGlobs`       | `talos/**`, `**/topf.yaml`                                            | Worker role. Changed paths that mark a pull request `hands-on-migration`; a configured list replaces the default                                            |
 | `RenovateTriage:Migration:DependencyGlobs` | `siderolabs/*`, `kubelet`, `kube-apiserver`, `kubernetes/*`           | Worker role. Dependency names that mark a pull request `hands-on-migration`; a configured list replaces the default                                         |
-| `RenovateTriage:Claude:MaxPerHour`         | `2`                                                                   | Worker role. Cap on Claude runs that created a pod in a rolling hour; an open reservation counts for 2 hours. At least 1, or startup fails                  |
+| `RenovateTriage:Claude:MaxPerHour`         | `2`                                                                   | Worker role. Cap on Claude runs that created a pod in a rolling hour; an open reservation counts for the window, at most 2 hours. At least 1, or startup fails                  |
 | `RenovateTriage:Claude:MaxPerDay`          | `8`                                                                   | Worker role. The same cap over a rolling 24 hours. At least 1                                                                                               |
 | `RenovateTriage:Claude:MaxPerPrPerDay`     | `2`                                                                   | Worker role. The same cap per pull request over a rolling 24 hours. At least 1                                                                              |
 | `TextScanner:BaseUrl`                      | `http://litellm-llm-tool-guard.litellm.svc:8080`                      | Worker role. The llm-tool-guard service that scans untrusted pull request text; an absolute http or https URL                                               |
@@ -60,14 +60,14 @@ Environment variables use `__` as the separator, for example `AgentPlatform__Rol
 
 In the cluster the run-data connection string uses `SSL Mode=VerifyFull` with `Root Certificate=/etc/agent-platform/rundata-ca/ca.crt`, the mounted CA of the database cluster.
 
-## Agent pods and the spike workflow
+## Agent pods
 
-`SpikeWorkflow` proves the agent-pod loop end to end.
+The Claude rung of `RenovateTriageWorkflow` (see Renovate triage) runs one agent pod per attempt.
 
 1. The workflow runs the `RunAgentPod` activity on task queue `agent-pods`.
 2. The activity (`KubernetesAgentRunner`) creates a Claude Code pod in `AgentPods:Namespace` and then a per-run Secret owned by the pod. It watches the pod to completion, heartbeating. The workflow then runs the `DeleteAgentPod` activity as a local activity, also when the run activity fails, so cleanup never waits behind long runs on the `agent-pods` queue.
 3. The agent calls the `submit_result` tool of AgentGateway. The gateway checks the per-run session token and sends the result to the waiting workflow as a Temporal Update. The workflow accepts the first result and rejects any further one, so a repeated `submit_result` call gets an error.
-4. The workflow returns the submitted result with the run metadata (`Status`, `Result`, `Agent`, `Tier`, `WorkflowId`, `RunId`, and `Triage` for a triage run).
+4. The workflow parses the submitted result into a verdict, or ends the attempt as failed.
 
 Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod and re-attaches instead of creating a second one. A re-attach keeps the pod's per-run Secret and its deadline. If the pod has started (Running, ended, or an init container running or finished), the kubelet already mounted the Secret, so the runner mints nothing and creates nothing.
 If it is still Pending, the Secret may be missing (the worker died before creating it): the runner asks for the run's credentials again, creates the Secret and leaves an existing one untouched on `AlreadyExists`.
@@ -77,11 +77,11 @@ Pod deletion has two owners. The activity deletes the pod when the workflow canc
 final backstop.
 
 The activity timeout and the pod's `activeDeadlineSeconds` come from the same deadline (`AgentRunTimeouts`); the deadline is at most 3600 seconds. The session token of a run expires 60 seconds after the pod deadline plus the scheduling grace. The runner classifies each run from the pod's `stream-json` stdout: `Succeeded`, `Truncated` (no result event, a non-success subtype, zero output tokens or
-an empty result), `UsageLimit`, `LimitExceeded` (Claude Code stopped at `--max-turns` or `--max-budget-usd`), `PodFailed` or `TimedOut`. Any outcome other than `Succeeded` ends the workflow with status `AgentFailed`.
+an empty result), `UsageLimit`, `LimitExceeded` (Claude Code stopped at `--max-turns` or `--max-budget-usd`), `PodFailed` or `TimedOut`. Any outcome other than `Succeeded` ends the attempt as failed.
 
 ### Repository runs on the read tier
 
-A run with `repo`, `pullRequest` and `headSha` and a `promptName` runs a named prompt (embedded under `Prompts/`, where `AgentPrompts:Directory` can override them; `renovate-triage`) against one pull request.
+The Claude rung runs the `renovate-triage` prompt (embedded under `Prompts/`, where `AgentPrompts:Directory` can override it) against one pull request head.
 
 - The `GitHub:ReadApp` App mints a read-only installation token for that one repository. The provider's `expires_at` caps the pod deadline: `min(configured, expires_at - now - token grace - scheduling grace)`.
 - The per-run Secret holds the MCP config, the prompt, the session token, the GitHub token and a git credential file. The pod gets the tokens only as environment variables (`AP_MCP_SESSION_KEY`, `AP_LITELLM_API_KEY`, `GH_TOKEN`) and reads the prompt from stdin; no token or prompt text appears in a command line.
@@ -90,22 +90,8 @@ A run with `repo`, `pullRequest` and `headSha` and a `promptName` runs a named p
 - The `get_triage_context` tool of AgentGateway returns one numbered section of the context the worker pre-fetched for the run (facts and an index first, then changelogs, CI logs and other fetched text), at most 50,000 characters each. Text from outside the system sits inside blocks with a random per-context tag that the first section names, so it is read as data.
   The tool needs the same per-run session token and answers only while the run is active.
 - The session token carries the step and attempt of the run. The workflow rejects a `submit_result` whose step or attempt is not the current one.
-- For `renovate-triage` the workflow validates the submitted result (verdict `SAFE`, `FIXABLE`, `BLOCKED` or `NEEDS_REVIEW`, the echoed `head_sha`, and field length caps). An invalid result comes back to the agent as a tool error, so it can resubmit once; a second invalid result ends the run with status `InvalidResult`, and the workflow returns the parsed result, not the raw payload.
+- For `renovate-triage` the workflow validates the submitted result (verdict `SAFE`, `FIXABLE`, `BLOCKED` or `NEEDS_REVIEW`, the echoed `head_sha`, and field length caps). An invalid result comes back to the agent as a tool error, so it can resubmit once; a second invalid result ends the attempt as failed, and the workflow keeps the parsed result, not the raw payload.
 - The runner reads pod logs line by line with a 1 MiB cap per line (longer lines are skipped and counted) and caps the final read in bytes. A failed or unpullable init container ends the run as `PodFailed`, naming the container. Runs stop at the configured turn (`AgentPods:MaxTurns`) and budget (`AgentPods:MaxBudgetUsd`) limits and end as `LimitExceeded`.
-
-Start a run with the Temporal CLI in the admin-tools pod, which the frontend already accepts connections from:
-
-```bash
-kubectl -n temporal-system exec deploy/temporal-admintools -- temporal workflow start \
-  --address temporal-frontend:7233 --namespace default \
-  --task-queue agent-platform --type SpikeWorkflow \
-  --workflow-id "spike-$(date +%s)" \
-  --input '{"prompt":"Reply with a one line greeting, then call the submit_result tool.","tier":"read"}'
-```
-
-A triage run adds `"promptName":"renovate-triage","repo":"<owner>/<name>","pullRequest":<n>,"headSha":"<40 hex>"` to the input and needs `GitHub:ReadApp`.
-
-`tier` is `read` or `cluster-read`; the `cluster-read` tier needs `AgentPods:ClusterReadServiceAccountName`. Read the outcome with `temporal workflow show --address temporal-frontend:7233 --workflow-id <id>` through the same pod, or in the Temporal UI.
 
 ## GitHub webhook intake and App client
 
@@ -153,7 +139,7 @@ The workflow waits for all CI: while `Assess` returns `Pending` it waits for the
 
 ### Code rungs
 
-A run started after the `renovate-triage-step2-v1` patch also does the following; a run started before it carries on as before. None of it calls Claude.
+A run started after the `renovate-triage-step2-v1` patch also does the following; a run started before it carries on as before. None of the rungs below calls Claude; the Claude rung follows them.
 
 1. Once `Assess` has passed the commit gate it returns `NeedsPrecheck`. `Precheck` reads the pull request head, files and commits, checks that the diff is only version and digest updates (the file count must match the pull request, and the head must not move while it reads), and sends the pull request body through `IUntrustedTextScanner`.
    A diff beyond version updates, or a body that comes back `Flagged` or `Unchecked`, ends the run as needs review with reason `precheck-diff`, `precheck-flagged` or `precheck-unchecked`: Jev is never called, and the step is recorded as `precheck`.
@@ -169,15 +155,28 @@ A run started after the `renovate-triage-step2-v1` patch also does the following
    `BuildContext` builds the triage context for the Claude rung: typed facts (repository, pull request, head sha, reason, count of failing jobs, texts held back) plus the scanned pull request body, changelog sections and CI log tails (each ending at the log's last `##[error]` line, or the plain tail when there is none),
    each in a block with a random per-context tag. A CI job is titled `CI job <n>` in the trusted index; its name sits inside the scanned block.
    The changelogs are fetched only when the body scan is clean.
-   The workflow keeps it for the `get_triage_context` query, which both `RenovateTriageWorkflow` and `SpikeWorkflow` answer;
-   `SpikeWorkflow` builds it before the pod starts when the run is a triage run (patch `spike-triage-context-v1`).
-   A context that cannot be built is logged and the verdict carries on.
-   The Claude rung itself is off, so nothing reads the context yet.
+   The workflow keeps it for the `get_triage_context` query that the Claude rung's pod reads.
+   A context that cannot be built parks the run (see Claude rung).
 
 The pull request body, the changelog sections and the log tails in the triage context travel as `ScannedText`, and the activities refuse one whose hash does not match.
 
 The workflow reports a check run named `Agent triage` on the head sha, only in `Live` mode: in progress while it works, then one of `success` (verdict applied), `neutral` (verdict not applied or only recorded, head moved on, or cancelled), `skipped` or `failure` (the run stopped on an error).
 The check run is written in a `finally`, so it never stays open, and a failure to write it is logged without stopping the triage. Its `external_id` is `renovate-triage/{repo}/{pr}@{sha}`.
+
+### Claude rung
+
+A run started after the `renovate-triage-claude-v1` patch climbs to Claude in `Live` mode when a pull request would be handed to the owner for a reason the code cannot settle by itself. These reasons never climb: `non-renovate-commit`, the precheck reasons, `hands-on-migration`, `ci-not-passed` and `renovate/stability-days`. Each of them is handed to the owner as before. `ci-failed`, `ci-timeout` and `breaking` do climb.
+A verdict already stored for the head is never climbed again. `Shadow` mode never climbs.
+
+1. `QueueAsync` writes a pending row in `renovate_triage_pending`, adds the `agent/needs-triage` label and a sticky "Queued" comment, and no verdict row. A head that moved meanwhile reassesses.
+2. `BuildContext` builds the triage context. A context that cannot be built parks the run.
+3. `ReserveAsync` reserves a Claude run against the caps in `RenovateTriage:Claude:*`, and returns one of three answers. Reserved: a pod may run. Park: a cap or a cooldown is in force, and the run parks until it ends. Owner: the head already has 2 failed attempts, or the repository breaker is open (3 consecutive failed runs, open for an hour), and the pull request goes to the owner as needs review.
+4. The pod runs as described in Agent pods. While it runs the workflow reads the head again after each check suite signal. A head that moved cancels the pod, finishes the reservation as cancelled and continues as new on the same input.
+5. The parsed result is stored as the verdict with rung `Claude`; `SAFE` goes through the same CI and status gates in `Apply` as any other `SAFE`. A pod failure or an invalid result counts as a failed attempt and the loop reserves again. A usage-limit stop counts as a failed attempt, sets the global cooldown and parks.
+
+Parking ends the run with the check run `Queued`. The pending row and the `agent/needs-triage` label stay, and the next `CheckSuiteCompleted` signal for the pull request starts the run again. `Apply` removes the label with the verdict. Every pull request comment of the rung is built from the fixed sticky-comment templates; agent text sits in the quoted, defused block described under Writes.
+
+The worker exports two gauges on the meter `AgentPlatform.Triage`, refreshed every 30 seconds: `triage_pending_total` (open pending rows) and `claude_cooldown_active` (cooldowns in force).
 
 ### Modes
 
@@ -218,7 +217,7 @@ Before it writes anything, `Apply` checks the pull request on fresh data at the 
 
 - Every verdict: the repository owner, `Live` mode, the pull request still open and the head still the judged one. Otherwise nothing is written and the verdict stays unapplied (`not-live`, `not-open`, `head-moved`).
 - An approving verdict (approve or `SAFE`) is re-assessed from scratch: the author must be Renovate, the head and base must be in the repository, and none of `agent/needs-human-review`, `agent/needs-triage`, `agent/revert` or `blocked` may be on the pull request, else `Apply` refuses (`not-renovate`, `blocking-label`, nothing written, the verdict stays unapplied).
-  `agent/needs-human-review` only refuses an outcome that still approves: a hand-off writes that label itself, so its retry completes.
+  `agent/needs-human-review` refuses every outcome except the needs-review hand-off, which writes that label itself, so its retry completes.
   Every commit must be one Renovate made (the gate of rule 5, so commits added after the judgement count); a failure is handed to the owner as needs review, `non-renovate-commit`.
   Then the apply-precheck runs again (diff only version and digest updates, body through the scanner), whether or not `Assess` prechecked this head, because the diff and body can change after the verdict: a failure is handed to the owner as needs review with the precheck reason, and a head that moves while it reads aborts with nothing written.
 - `SAFE` is then checked against CI and status: failed checks make it `FIXABLE`; checks still pending, or a `renovate/stability-days` status that is not `success`, hand it to the owner as needs review (`ci-not-passed` or `renovate/stability-days`). A branch on the high-risk list is never approved: the label and the comment are written, the review is not.
@@ -322,9 +321,9 @@ The workflow tests run against Temporal's time-skipping test server, which the S
 
 The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
 time-skipping tests. The `renovate-triage-v141-*` histories were captured from release 1.4.1 while a run waited for CI or for Jev; no test records them, so they stay as committed and prove that runs started by 1.4.1 replay on the current code.
-The `renovate-triage-v150-*` histories and `spike-live-triage-run` were exported read-only from the cluster's Temporal namespace (worker identities and pod names scrubbed) and prove that runs started before the code rungs replay on the current code.
+The `renovate-triage-v150-*` histories were exported read-only from the cluster's Temporal namespace (worker identities and pod names scrubbed) and prove that runs started before the code rungs replay on the current code.
 The other `renovate-triage-live-*` histories (`live-approve`, `live-needs-review`) are synthetic, like the rest.
-Every workflow change must sit behind `Workflow.Patched` (`renovate-triage-jev-retry-v1`, `renovate-triage-live-v1`, `renovate-triage-step2-v1`, `spike-triage-context-v1`). Re-recording rewrites every history a test names: restore the older ones with `git checkout` so they keep proving the older flow.
+Every workflow change must sit behind `Workflow.Patched` (`renovate-triage-jev-retry-v1`, `renovate-triage-live-v1`, `renovate-triage-step2-v1`, `renovate-triage-claude-v1`, `renovate-triage-head-v1`). Re-recording rewrites every history a test names: restore the older ones with `git checkout` so they keep proving the older flow.
 
 The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row, check that the Migrate role finished with exit code 0 and post a signed `check_suite` delivery to the Web role to see the triage workflow schedule its `Assess` activity on the Worker. They need a container
 runtime, which GitHub's ubuntu runners have; with Podman, set `ASPIRE_CONTAINER_RUNTIME=podman`.

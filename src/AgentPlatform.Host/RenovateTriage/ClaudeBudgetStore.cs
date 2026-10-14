@@ -66,7 +66,7 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         }
     }
 
-    // The first outcome stands. Any outcome but NotStarted counts the run from its reservation if MarkPodCreated never ran. A failure counts against the head's attempts only while the pending row is still on that head.
+    // The first outcome stands; any outcome but NotStarted counts the run even if MarkPodCreated never ran.
     public async Task FinishAsync(FinishClaudeRunInput input, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);

@@ -29,7 +29,6 @@ public static class WorkerServiceCollectionExtensions
         services
             .AddHostedTemporalWorker(temporal.Address, temporal.Namespace, TaskQueues.AgentPlatform)
             .AddWorkflow<PingWorkflow>()
-            .AddWorkflow<SpikeWorkflow>()
             .AddWorkflow<RenovateTriageWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<PromptActivities>()

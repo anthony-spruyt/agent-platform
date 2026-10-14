@@ -15,9 +15,9 @@ public class KubernetesAgentRunnerTests
         """{"type":"result","subtype":"success","is_error":false,"result":"all good","stop_reason":"end_turn","duration_ms":10,"num_turns":2,"total_cost_usd":0.5,"session_id":"s-1","usage":{"input_tokens":10,"output_tokens":20}}""";
 
     private static readonly AgentRunRequest Request =
-        new("spike-1", "run-1", "claude", "Say hello", AgentTier.Read, 1800);
+        new("wf-1", "run-1", "claude", "Say hello", AgentTier.Read, 1800);
 
-    private static readonly string PodName = AgentPodNaming.PodName("spike-1", "run-1", "claude");
+    private static readonly string PodName = AgentPodNaming.PodName("wf-1", "run-1", "claude");
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -119,7 +119,7 @@ public class KubernetesAgentRunnerTests
         Assert.Equal("agent-platform-agents", secret.Metadata.NamespaceProperty);
         var token = secret.StringData["session-token"];
         Assert.True(new AgentSessionTokens(SessionKey).TryValidate(token, out var run));
-        Assert.Equal(new AgentRunIdentity("spike-1", "run-1", "claude", 1), run);
+        Assert.Equal(new AgentRunIdentity("wf-1", "run-1", "claude", 1), run);
     }
 
     [Fact]
@@ -327,12 +327,12 @@ public class KubernetesAgentRunnerTests
 
         await NewRunner(api).RunAsync(Request with { Step = "claude", Attempt = 2 }, Ct);
 
-        var data = api.Secrets[AgentPodNaming.PodName("spike-1", "run-1", "claude")].StringData;
+        var data = api.Secrets[AgentPodNaming.PodName("wf-1", "run-1", "claude")].StringData;
         Assert.Equal("Say hello", data[AgentPodSpecBuilder.PromptKey]);
         Assert.Contains("${AP_MCP_SESSION_KEY}", data[AgentPodSpecBuilder.McpConfigKey], StringComparison.Ordinal);
         Assert.True(new AgentSessionTokens(SessionKey).TryValidate(data[AgentPodSpecBuilder.SessionTokenKey], out var run));
         Assert.Equal(2, run!.Attempt);
-        Assert.DoesNotContain(api.Pods[AgentPodNaming.PodName("spike-1", "run-1", "claude")].Spec.Containers[0].Args, a => a.Contains("Say hello", StringComparison.Ordinal));
+        Assert.DoesNotContain(api.Pods[AgentPodNaming.PodName("wf-1", "run-1", "claude")].Spec.Containers[0].Args, a => a.Contains("Say hello", StringComparison.Ordinal));
     }
 
     [Fact]

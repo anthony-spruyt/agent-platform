@@ -73,7 +73,7 @@ public class AgentPodActivitiesTests
     private static ActivityEnvironment Environment(Action<object?[]>? heartbeat = null) =>
         new()
         {
-            Info = ActivityEnvironment.DefaultInfo with { WorkflowId = "spike-1", WorkflowRunId = "run-1" },
+            Info = ActivityEnvironment.DefaultInfo with { WorkflowId = "wf-1", WorkflowRunId = "run-1" },
             Heartbeater = details => heartbeat?.Invoke(details),
         };
 
@@ -85,7 +85,7 @@ public class AgentPodActivitiesTests
         var result = await Environment().RunAsync(() => Activities(runner).RunAgentPodAsync(Input));
 
         var request = Assert.Single(runner.Runs);
-        Assert.Equal(new AgentRunRequest("spike-1", "run-1", "claude", "Say hello", AgentTier.Read, 1800), request);
+        Assert.Equal(new AgentRunRequest("wf-1", "run-1", "claude", "Say hello", AgentTier.Read, 1800), request);
         Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
     }
 
@@ -97,7 +97,7 @@ public class AgentPodActivitiesTests
         await Environment().RunAsync(() => Activities(runner).DeleteAgentPodAsync("claude"));
 
         var cancel = Assert.Single(runner.Cancels);
-        Assert.Equal("spike-1", cancel.WorkflowId);
+        Assert.Equal("wf-1", cancel.WorkflowId);
         Assert.Equal("run-1", cancel.RunId);
         Assert.Equal("claude", cancel.Step);
     }
@@ -182,7 +182,7 @@ public class AgentPodActivitiesTests
     public async Task RunAgentPod_AnAttemptThatTimedOutNeverDeletesThePodTheRetryReattachedTo()
     {
         var api = new FakeKubeApi();
-        var podName = AgentPodNaming.PodName("spike-1", "run-1", "claude");
+        var podName = AgentPodNaming.PodName("wf-1", "run-1", "claude");
         var held = new PodBehavior { Logs = FakeKubeApi.SuccessLogs };
         api.SetBehavior(podName, held);
         var reattachLog = new CapturingLogger();

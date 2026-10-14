@@ -71,16 +71,6 @@ public class WorkerConfigurationTests
     }
 
     [Fact]
-    public void AgentPlatformWorker_RunsTheSpikeWorkflow()
-    {
-        using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
-
-        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
-
-        Assert.Contains(typeof(SpikeWorkflow), options.Workflows.Select(w => w.Type));
-    }
-
-    [Fact]
     public void AgentPlatformWorker_RegistersTheRunDataStore()
     {
         using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });

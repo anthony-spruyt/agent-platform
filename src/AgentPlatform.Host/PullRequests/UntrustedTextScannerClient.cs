@@ -9,7 +9,7 @@ public sealed class UntrustedTextScannerClient(IHttpClientFactory httpClients, I
 {
     public const string ClientName = "text-scanner";
 
-    // The scanner has one model thread that LiteLLM shares, so texts go through it one at a time
+    // Each scanner copy has one model thread, so texts go through one at a time
     private readonly SemaphoreSlim _serial = new(1, 1);
 
     public void Dispose() => _serial.Dispose();

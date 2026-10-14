@@ -13,7 +13,7 @@ namespace AgentPlatform.Tests.Gateway;
 public class TemporalWorkflowResultSubmitterTests
 {
     private static readonly SubmitResultPayload Payload =
-        new("success", "from the agent", JsonDocument.Parse("""{"n":1}""").RootElement.Clone(), "spike", 1);
+        new("success", "from the agent", JsonDocument.Parse("""{"n":1}""").RootElement.Clone(), SubmitterProbeWorkflow.Step, 1);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -38,21 +38,21 @@ public class TemporalWorkflowResultSubmitterTests
 
     private static async Task<T> WithRunningWorkflowAsync<T>(
         TaskCompletionSource release,
-        Func<WorkflowEnvironment, WorkflowHandle<SpikeWorkflow, SpikeResult>, Task<T>> body)
+        Func<WorkflowEnvironment, WorkflowHandle<SubmitterProbeWorkflow, ProbeResult>, Task<T>> body)
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var activities = new HoldingActivities(release);
         using var workflows = new TemporalWorker(
             env.Client,
-            new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<SpikeWorkflow>().AddAllActivities(activities).AddAllActivities(InMemoryRunData.Create().Activities));
+            new TemporalWorkerOptions(TaskQueues.AgentPlatform).AddWorkflow<SubmitterProbeWorkflow>().AddAllActivities(activities));
         using var pods = new TemporalWorker(env.Client, new TemporalWorkerOptions(TaskQueues.AgentPods).AddAllActivities(activities));
 
         return await workflows.ExecuteAsync(() => pods.ExecuteAsync(
             async () =>
             {
                 var handle = await env.Client.StartWorkflowAsync(
-                    (SpikeWorkflow wf) => wf.RunAsync(new SpikeInput("p", AgentTier.Read)),
-                    new WorkflowOptions($"spike-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
+                    (SubmitterProbeWorkflow wf) => wf.RunAsync(),
+                    new WorkflowOptions($"probe-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
                 return await body(env, handle);
             },
             Ct), Ct);
@@ -67,13 +67,13 @@ public class TemporalWorkflowResultSubmitterTests
         {
             var submitter = new TemporalWorkflowResultSubmitter(env.Client);
 
-            await submitter.SubmitResultAsync(new AgentRunIdentity(handle.Id, handle.ResultRunId!, "spike", 1), Payload, Ct);
+            await submitter.SubmitResultAsync(new AgentRunIdentity(handle.Id, handle.ResultRunId!, SubmitterProbeWorkflow.Step, 1), Payload, Ct);
             release.SetResult();
             return await handle.GetResultAsync();
         });
 
-        Assert.Equal(SpikeStatus.Succeeded, result.Status);
-        Assert.Equal("from the agent", result.Result!.Summary);
+        Assert.Equal(AgentPodStepStatus.Succeeded, result.Status);
+        Assert.Equal("from the agent", result.Summary);
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class TemporalWorkflowResultSubmitterTests
         var result = await WithRunningWorkflowAsync(release, async (env, handle) =>
         {
             var submitter = new TemporalWorkflowResultSubmitter(env.Client);
-            var run = new AgentRunIdentity(handle.Id, handle.ResultRunId!, "spike", 1);
+            var run = new AgentRunIdentity(handle.Id, handle.ResultRunId!, SubmitterProbeWorkflow.Step, 1);
 
             await submitter.SubmitResultAsync(run, Payload, Ct);
             await Assert.ThrowsAsync<ResultAlreadySubmittedException>(
@@ -93,7 +93,7 @@ public class TemporalWorkflowResultSubmitterTests
             return await handle.GetResultAsync();
         });
 
-        Assert.Equal("from the agent", result.Result!.Summary);
+        Assert.Equal("from the agent", result.Summary);
     }
 
     [Fact]
@@ -104,15 +104,15 @@ public class TemporalWorkflowResultSubmitterTests
         var result = await WithRunningWorkflowAsync(release, async (env, handle) =>
         {
             var submitter = new TemporalWorkflowResultSubmitter(env.Client);
-            var stale = new AgentRunIdentity(handle.Id, handle.ResultRunId!, "spike", 2);
+            var stale = new AgentRunIdentity(handle.Id, handle.ResultRunId!, SubmitterProbeWorkflow.Step, 2);
 
             await Assert.ThrowsAsync<RunNotActiveException>(() => submitter.SubmitResultAsync(stale, Payload with { Attempt = 2 }, Ct));
-            await submitter.SubmitResultAsync(new AgentRunIdentity(handle.Id, handle.ResultRunId!, "spike", 1), Payload, Ct);
+            await submitter.SubmitResultAsync(new AgentRunIdentity(handle.Id, handle.ResultRunId!, SubmitterProbeWorkflow.Step, 1), Payload, Ct);
             release.SetResult();
             return await handle.GetResultAsync();
         });
 
-        Assert.Equal(SpikeStatus.Succeeded, result.Status);
+        Assert.Equal(AgentPodStepStatus.Succeeded, result.Status);
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public class TemporalWorkflowResultSubmitterTests
             var submitter = new TemporalWorkflowResultSubmitter(env.Client);
 
             await Assert.ThrowsAsync<RunNotActiveException>(
-                () => submitter.SubmitResultAsync(new AgentRunIdentity(handle.Id, handle.ResultRunId!, "spike", 1), Payload, Ct));
+                () => submitter.SubmitResultAsync(new AgentRunIdentity(handle.Id, handle.ResultRunId!, SubmitterProbeWorkflow.Step, 1), Payload, Ct));
             return 0;
         });
     }
@@ -139,6 +139,6 @@ public class TemporalWorkflowResultSubmitterTests
         var submitter = new TemporalWorkflowResultSubmitter(env.Client);
 
         await Assert.ThrowsAsync<RunNotActiveException>(
-            () => submitter.SubmitResultAsync(new AgentRunIdentity("does-not-exist", "run", "spike", 1), Payload, Ct));
+            () => submitter.SubmitResultAsync(new AgentRunIdentity("does-not-exist", "run", SubmitterProbeWorkflow.Step, 1), Payload, Ct));
     }
 }

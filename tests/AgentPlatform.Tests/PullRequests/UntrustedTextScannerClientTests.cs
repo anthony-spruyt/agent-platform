@@ -15,7 +15,7 @@ public class UntrustedTextScannerClientTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static UntrustedTextScannerClient Create(Func<RecordedRequest, HttpResponseMessage> respond, out StubHttpHandler handler, Action<UntrustedTextScannerOptions>? configure = null)
+    private static UntrustedTextScannerClient Create(Func<RecordedRequest, HttpResponseMessage> respond, out StubHttpHandler handler, Action<UntrustedTextScannerOptions>? configure = null, TimeProvider? time = null)
     {
         handler = new StubHttpHandler(respond);
         var options = new UntrustedTextScannerOptions
@@ -24,7 +24,7 @@ public class UntrustedTextScannerClientTests
             RetryDelay = TimeSpan.FromMilliseconds(1),
         };
         configure?.Invoke(options);
-        return new UntrustedTextScannerClient(new StubHttpClientFactory(handler, new Uri("http://unused.example.test/")), Options.Create(options), TimeProvider.System);
+        return new UntrustedTextScannerClient(new StubHttpClientFactory(handler, new Uri("http://unused.example.test/")), Options.Create(options), time ?? TimeProvider.System);
     }
 
     private static HttpResponseMessage Flagged(params string[] hashes) =>
@@ -138,12 +138,26 @@ public class UntrustedTextScannerClientTests
         var client = Create(
             _ => StubHttpHandler.Json("{}", HttpStatusCode.ServiceUnavailable),
             out var handler,
-            o => o.RetryBudget = TimeSpan.FromMilliseconds(60));
+            o => o.RetryBudget = TimeSpan.FromSeconds(60),
+            new SteppingTime());
 
         var scan = await client.ScanAsync(GoldenText, Ct);
 
         Assert.Equal(ScanOutcome.Unchecked, scan.Outcome);
         Assert.True(handler.Requests.Count > 1);
+    }
+
+    // Every clock read advances ten seconds and a retry pause ends at once, so the budget runs out after a fixed number of requests; the request timeout stays a real timer.
+    private sealed class SteppingTime : TimeProvider
+    {
+        private long _ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => Interlocked.Add(ref _ticks, 10 * TimeSpan.TicksPerSecond);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            base.CreateTimer(callback, state, dueTime <= TimeSpan.FromSeconds(1) ? TimeSpan.Zero : dueTime, period);
     }
 
     private sealed class HangingHandler : HttpMessageHandler

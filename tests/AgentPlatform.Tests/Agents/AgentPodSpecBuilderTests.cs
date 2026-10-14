@@ -7,7 +7,7 @@ namespace AgentPlatform.Tests.Agents;
 public class AgentPodSpecBuilderTests
 {
     private static readonly AgentRunRequest Request =
-        new("spike-1", "run-1", "claude", "Summarise the repo", AgentTier.Read, 1800);
+        new("wf-1", "run-1", "claude", "Summarise the repo", AgentTier.Read, 1800);
 
     private static readonly AgentRepoContext Repo = new("octo/widgets", 7, "0123456789abcdef0123456789abcdef01234567");
 
@@ -40,7 +40,7 @@ public class AgentPodSpecBuilderTests
     {
         var pod = Build();
 
-        Assert.Equal(AgentPodNaming.PodName("spike-1", "run-1", "claude"), pod.Metadata.Name);
+        Assert.Equal(AgentPodNaming.PodName("wf-1", "run-1", "claude"), pod.Metadata.Name);
         Assert.Equal("agent-platform-agents", pod.Metadata.NamespaceProperty);
     }
 
@@ -58,7 +58,7 @@ public class AgentPodSpecBuilderTests
     {
         var pod = Build();
 
-        Assert.Equal("spike-1", pod.Metadata.Annotations["agent-platform/workflow-id"]);
+        Assert.Equal("wf-1", pod.Metadata.Annotations["agent-platform/workflow-id"]);
         Assert.Equal("run-1", pod.Metadata.Annotations["agent-platform/run-id"]);
     }
 
