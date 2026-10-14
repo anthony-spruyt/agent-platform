@@ -46,6 +46,23 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
         return true;
     }
 
+    // A decided head leaves no reason to wait on an earlier one, so an open row of another head would only inflate the pending count.
+    public async Task SettleOtherHeadsAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.TriagePending
+            .SingleOrDefaultAsync(p => p.Repo == repo && p.PrNumber == prNumber && p.HeadSha != headSha && (p.Status == TriagePendingStatus.Pending || p.Status == TriagePendingStatus.Redriven), cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null)
+        {
+            return;
+        }
+
+        row.Status = TriagePendingStatus.Settled;
+        row.UpdatedAt = time.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<int> CountOpenAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

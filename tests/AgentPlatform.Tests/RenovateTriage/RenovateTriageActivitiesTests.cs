@@ -712,7 +712,7 @@ public class RenovateTriageActivitiesTests
         {
             var rig = Live();
             await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, TriageRules.CiFailedDecision(Repo, Sha, []), TriageMode.Live, null, Ct);
-            await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.NeedsReview, null, Ct);
+            await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.NeedsReview, VerdictAction.Comment, Ct);
 
             Assert.Equal(new AssessResult(AssessStatus.AlreadyJudged, Sha, Mode: TriageMode.Live), await Assess(rig));
         }
@@ -1217,6 +1217,46 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
+        public async Task Approve_StoresTheApproveAction()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+
+            await Apply(rig, _approve);
+
+            Assert.Equal(VerdictAction.Approve, await ActionAsync(rig));
+        }
+
+        [Fact]
+        public async Task Approve_ThatOnlyLabelsBecauseTheAppAlreadyApproved_StillStoresTheApproveAction()
+        {
+            var rig = Live();
+            rig.Github.Reviews.Add(BotApproval(1, Sha));
+            await Record(rig, _approve);
+
+            await Apply(rig, _approve);
+
+            Assert.Equal(VerdictAction.Approve, await ActionAsync(rig));
+        }
+
+        [Fact]
+        public async Task NeedsReview_StoresTheCommentAction()
+        {
+            var rig = Live();
+            await Record(rig, _needsReview);
+
+            await Apply(rig, _needsReview);
+
+            Assert.Equal(VerdictAction.Comment, await ActionAsync(rig));
+        }
+
+        private static async Task<VerdictAction?> ActionAsync(Rig rig)
+        {
+            await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+            return (await db.TriageVerdicts.SingleAsync(Ct)).Action;
+        }
+
+        [Fact]
         public async Task Approve_SkipsTheReviewWhenTheAppAlreadyApprovedThisCommit_ButStillLabels()
         {
             var rig = Live();
@@ -1674,15 +1714,47 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task AVerdictForAnEarlierHead_NeverSettlesTheRowOfTheNewHead()
+        public async Task AVerdictForAHeadThatMoved_NeverSettlesTheRowOfTheNewHead()
+        {
+            var rig = Live();
+            const string newHead = "fedcba9876543210fedcba9876543210fedcba98";
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: newHead);
+            await rig.Data.Pending.UpsertAsync(Repo, 7, newHead, TriageRules.CiFailed, Ct);
+            await Record(rig, _safe);
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, "head-moved"), result);
+            Assert.Equal(TriagePendingStatus.Pending, (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!.Status);
+        }
+
+        [Theory]
+        [InlineData(TriagePendingStatus.Pending)]
+        [InlineData(TriagePendingStatus.Redriven)]
+        public async Task AVerdictForTheCurrentHead_SettlesAnOpenRowOfAnOlderHead(TriagePendingStatus status)
         {
             var rig = Live();
             await rig.Data.Pending.UpsertAsync(Repo, 7, "fedcba9876543210fedcba9876543210fedcba98", TriageRules.CiFailed, Ct);
+            await rig.Data.Pending.SetStatusAsync(Repo, 7, "fedcba9876543210fedcba9876543210fedcba98", status, Ct);
             await Record(rig, _safe);
 
             await Apply(rig, _safe);
 
-            Assert.Equal(TriagePendingStatus.Pending, (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!.Status);
+            Assert.Equal(TriagePendingStatus.Settled, (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!.Status);
+            Assert.Equal(0, await rig.Data.Pending.CountOpenAsync(Ct));
+        }
+
+        [Fact]
+        public async Task AVerdictForTheCurrentHead_LeavesAnOlderRowThatTheOwnerTookOverAlone()
+        {
+            var rig = Live();
+            await rig.Data.Pending.UpsertAsync(Repo, 7, "fedcba9876543210fedcba9876543210fedcba98", TriageRules.CiFailed, Ct);
+            await rig.Data.Pending.SetStatusAsync(Repo, 7, "fedcba9876543210fedcba9876543210fedcba98", TriagePendingStatus.Owner, Ct);
+            await Record(rig, _safe);
+
+            await Apply(rig, _safe);
+
+            Assert.Equal(TriagePendingStatus.Owner, (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!.Status);
         }
 
         [Fact]
@@ -1774,6 +1846,59 @@ public class RenovateTriageActivitiesTests
             Assert.Contains($"/runs/{rig.Github.Checks[0].Id}", comment, StringComparison.Ordinal);
             Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
             await AssertStoredAsync(rig, TriageVerdict.Fixable, TriageRules.CiFailed, result.Effective.Comment);
+        }
+
+        [Fact]
+        public async Task Safe_StoresTheApproveAction()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+
+            await Apply(rig, _safe);
+
+            Assert.Equal(VerdictAction.Approve, await ActionAsync(rig));
+        }
+
+        [Fact]
+        public async Task Safe_OnARiskyBranch_StoresTheCommentAction()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(branch: "renovate/major-postgres");
+            await Record(rig, _safe);
+
+            await Apply(rig, _safe);
+
+            Assert.Equal(VerdictAction.Comment, await ActionAsync(rig));
+        }
+
+        [Fact]
+        public async Task Safe_OnARedHead_StoresTheCommentActionOfTheFlagItBecame()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Conclusion = "failure" };
+
+            await Apply(rig, _safe);
+
+            Assert.Equal(VerdictAction.Comment, await ActionAsync(rig));
+        }
+
+        [Fact]
+        public async Task AFlaggingVerdict_StoresTheCommentAction()
+        {
+            var rig = Live();
+            var decision = new TriageDecision(TriageVerdict.Fixable, "agent", StickyComment.Verdict(TriageVerdict.Fixable, "Why.", Sha, null, null));
+            await Record(rig, decision);
+
+            await Apply(rig, decision);
+
+            Assert.Equal(VerdictAction.Comment, await ActionAsync(rig));
+        }
+
+        private static async Task<VerdictAction?> ActionAsync(Rig rig)
+        {
+            await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+            return (await db.TriageVerdicts.SingleAsync(Ct)).Action;
         }
 
         [Fact]

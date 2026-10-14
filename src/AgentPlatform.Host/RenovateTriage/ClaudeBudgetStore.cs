@@ -111,8 +111,8 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    // Keeps the later end, so a second limit result never shortens a cooldown that is already running.
-    public async Task SetCooldownAsync(SetClaudeCooldownInput input, CancellationToken cancellationToken)
+    // Keeps the later end, so a second limit result never shortens a cooldown that is already running; returns the end now in force.
+    public async Task<DateTimeOffset> SetCooldownAsync(SetClaudeCooldownInput input, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Scope);
@@ -123,14 +123,15 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         var until = input.ResetsAt is { } resetsAt ? Clamp(resetsAt.ToUniversalTime(), now + _minCooldown, now + _day) : now + _hour;
         var scope = input.Scope;
         var cause = input.Cause;
-        await db.Database.ExecuteSqlInterpolatedAsync(
+        var effective = await db.Database.SqlQuery<DateTimeOffset>(
             $"""
             INSERT INTO claude_cooldowns (scope, until, cause) VALUES ({scope}, {until}, {cause})
             ON CONFLICT (scope) DO UPDATE SET
                 cause = CASE WHEN EXCLUDED.until > claude_cooldowns.until THEN EXCLUDED.cause ELSE claude_cooldowns.cause END,
                 until = GREATEST(claude_cooldowns.until, EXCLUDED.until)
-            """,
-            cancellationToken).ConfigureAwait(false);
+            RETURNING until AS "Value"
+            """).ToListAsync(cancellationToken).ConfigureAwait(false);
+        return effective.Single();
     }
 
     public async Task<int> CountActiveCooldownsAsync(CancellationToken cancellationToken)

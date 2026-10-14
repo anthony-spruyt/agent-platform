@@ -63,7 +63,7 @@ public partial class RenovateTriageWorkflowTests
         var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, rig.Data.Pending, Options.Create(options), rig.Scanner);
         var code = new RenovateTriageCodeActivities(rig.Github, rig.Jev, rig.Scanner, Options.Create(options));
         var checks = new TriageCheckActivities(rig.CheckRuns);
-        var claude = new ClaudeRungActivities(rig.Github, rig.Data.Pending, new AgentPodsOptions { Model = Model });
+        var claude = new ClaudeRungActivities(rig.Github, rig.Data.Pending, new AgentPodsOptions { Model = Model }, Options.Create(options));
         var prompts = new PromptActivities(new AgentPromptsOptions(), NullLogger<PromptActivities>.Instance);
         using var worker = new TemporalWorker(
             env.Client,
@@ -1353,7 +1353,7 @@ public partial class RenovateTriageWorkflowTests
         var rig = new Rig { Mode = TriageMode.Live };
         var decision = new TriageDecision(TriageVerdict.NeedsReview, TriageRules.CiFailed, null);
         await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, decision, TriageMode.Live, null, Ct);
-        await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, decision.Verdict, null, Ct);
+        await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, decision.Verdict, VerdictAction.Comment, Ct);
 
         var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 

@@ -16,6 +16,7 @@ public partial class RenovateTriageWorkflow
     private const string PodStep = "claude";
     private const string ContextUnavailable = "context-unavailable";
     private const string BudgetUnavailable = "budget-unavailable";
+    private const string NotLiveReason = "not-live";
 
     private static readonly ActivityOptions _promptOptions = new()
     {
@@ -63,7 +64,7 @@ public partial class RenovateTriageWorkflow
     private string _climbHead = string.Empty;
     private int _seq;
 
-    private sealed record Climb(RenovateTriageInput Input, BeginRunResult? Run, string HeadSha, string Prompt, string Model, int SignalsSeen);
+    private sealed record Climb(RenovateTriageInput Input, BeginRunResult? Run, string HeadSha, string Template, string Prompt, string Model, int SignalsSeen);
 
     private sealed record Attempt(TriageDecision? Decision, bool UsageLimit = false, DateTimeOffset? ResetsAt = null);
 
@@ -84,7 +85,7 @@ public partial class RenovateTriageWorkflow
         decision is not null && assess.Mode == TriageMode.Live && !assess.Stored && TriageRules.Climbs(decision);
 
     // Null means the head moved and the caller reassesses; the step counter carries on in _seq.
-    private async Task<RenovateTriageResult?> ClimbAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, string reason, ScannedText? body)
+    private async Task<RenovateTriageResult?> ClimbAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, string reason, ScannedText? body, TriageMode mode)
     {
         _seq = seq;
         var signalsSeen = _signalCount;
@@ -94,7 +95,14 @@ public partial class RenovateTriageWorkflow
         var queued = await Workflow.ExecuteActivityAsync(
             (ClaudeRungActivities activities) => activities.QueueAsync(new QueueInput(input.Repo, input.PrNumber, headSha, reason)),
             _activityOptions);
-        await RecordStepAsync(run, ++_seq, "queue", LadderRung.Rule, queued.HeadMoved ? "head_moved" : "queued", stepStarted, queued);
+        await RecordStepAsync(run, ++_seq, "queue", LadderRung.Rule, queued.NotLive ? "not_live" : queued.HeadMoved ? "head_moved" : "queued", stepStarted, queued);
+        if (queued.NotLive)
+        {
+            await FinishCheckAsync(input, headSha, CheckRunConclusion.Skipped, $"Skipped: {NotLiveReason}.");
+            await CompleteAsync(run);
+            return new RenovateTriageResult(RenovateTriageOutcome.Skipped, headSha, NotLiveReason, null);
+        }
+
         if (queued.HeadMoved)
         {
             return null;
@@ -111,7 +119,7 @@ public partial class RenovateTriageWorkflow
         var template = await Workflow.ExecuteActivityAsync(
             (PromptActivities activities) => activities.LoadPromptAsync(AgentPrompts.RenovateTriage),
             _promptOptions);
-        var climb = new Climb(input, run, headSha, AgentPrompts.Render(template, new AgentRepoContext(input.Repo, input.PrNumber, headSha)), queued.Model, signalsSeen);
+        var climb = new Climb(input, run, headSha, template, AgentPrompts.Render(template, new AgentRepoContext(input.Repo, input.PrNumber, headSha)), queued.Model, signalsSeen);
 
         while (true)
         {
@@ -123,13 +131,13 @@ public partial class RenovateTriageWorkflow
                 case ClaudeReservationKind.Park:
                     return await ParkAsync(input, run, headSha, reservation.Cause!, reservation.Until);
                 case ClaudeReservationKind.Owner:
-                    return await RecordVerdictAsync(input, run, ++_seq, headSha, ClaudeVerdicts.Unavailable(reservation.Cause!), TriageMode.Live, body, null);
+                    return await RecordVerdictAsync(input, run, ++_seq, headSha, ClaudeVerdicts.Unavailable(reservation.Cause!), mode, body, null);
             }
 
             var attempt = await AttemptAsync(climb, reservation);
             if (attempt.Decision is not null)
             {
-                return await RecordVerdictAsync(input, run, ++_seq, headSha, attempt.Decision, TriageMode.Live, body, LadderRung.Claude);
+                return await RecordVerdictAsync(input, run, ++_seq, headSha, attempt.Decision, mode, body, LadderRung.Claude);
             }
 
             if (attempt.UsageLimit)
@@ -146,15 +154,21 @@ public partial class RenovateTriageWorkflow
         {
             var built = await Workflow.ExecuteActivityAsync(
                 (RenovateTriageCodeActivities activities) => activities.BuildContextAsync(new BuildContextInput(input.Repo, input.PrNumber, headSha, reason, body)),
-                ScanOptions);
-            await RecordStepAsync(run, ++_seq, "context", LadderRung.Rule, built.HeadMoved ? "head_moved" : "built", stepStarted, new { built.HeadMoved, sections = built.Context?.Sections.Count });
+                _scanOptions);
+            var stopReason = built.HeadMoved ? "head_moved" : built.Context is null ? "unavailable" : "built";
+            await RecordStepAsync(run, ++_seq, "context", LadderRung.Rule, stopReason, stepStarted, new { built.HeadMoved, sections = built.Context?.Sections.Count });
             if (built.HeadMoved)
             {
                 return ContextState.HeadMoved;
             }
 
+            if (built.Context is null || built.Stated is null)
+            {
+                return ContextState.Unavailable;
+            }
+
             _context = built.Context;
-            _stated = built.Stated ?? new StatedVersions(null, null);
+            _stated = built.Stated;
             return ContextState.Ready;
         }
         catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
@@ -255,7 +269,7 @@ public partial class RenovateTriageWorkflow
         var succeeded = outcome.Status == AgentPodStepStatus.Succeeded;
         if (climb.Run is not null)
         {
-            await podStep.RecordAsync(climb.Run, ++_seq, outcome, started, RunRecorder.ToJson(new { reservation.Attempt, runId }), succeeded ? _parsed : null);
+            await podStep.RecordAsync(climb.Run, ++_seq, outcome, started, RunRecorder.ToJson(new { reservation.Attempt, runId }), succeeded ? _parsed : null, AgentPrompts.RenovateTriage, climb.Template);
         }
 
         var usage = agent.Usage;
@@ -271,10 +285,10 @@ public partial class RenovateTriageWorkflow
             return new Attempt(null);
         }
 
-        await BestEffortAsync(Workflow.ExecuteActivityAsync(
+        var until = await BestEffortAsync(Workflow.ExecuteActivityAsync(
             (ClaudeBudgetActivities activities) => activities.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, agent.ResetsAt, ClaudeBudgetCauses.UsageLimit)),
             _budgetWriteOptions));
-        return new Attempt(null, true, agent.ResetsAt);
+        return new Attempt(null, true, until);
     }
 
     private async Task<string> WatchHeadAsync(Climb climb, CancellationToken cancellationToken)
@@ -375,6 +389,19 @@ public partial class RenovateTriageWorkflow
         catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {
             LogBudgetWriteFailed(Workflow.Logger, ex);
+        }
+    }
+
+    private static async Task<DateTimeOffset?> BestEffortAsync(Task<DateTimeOffset> activity)
+    {
+        try
+        {
+            return await activity;
+        }
+        catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
+        {
+            LogBudgetWriteFailed(Workflow.Logger, ex);
+            return null;
         }
     }
 

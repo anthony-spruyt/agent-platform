@@ -323,6 +323,8 @@ internal sealed class FakeJev : IJevClient
 
     public Func<Task>? OnClassifyCi { get; set; }
 
+    public Action? OnAsk { get; set; }
+
     public async Task<CiFailureKind> ClassifyCiAsync(string ciLogs, CancellationToken cancellationToken)
     {
         CiLogs.Add(ciLogs);
@@ -338,6 +340,7 @@ internal sealed class FakeJev : IJevClient
     {
         Bodies.Add(prBody);
         Diffs.Add(prDiff);
+        OnAsk?.Invoke();
         if (Failure is not null && FailuresBeforeAnswer is not <= 0)
         {
             FailuresBeforeAnswer--;

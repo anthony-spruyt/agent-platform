@@ -28,7 +28,9 @@ public sealed record RecordStepInput(
     string? Model = null,
     long? InputTokens = null,
     long? OutputTokens = null,
-    decimal? CostUsd = null);
+    decimal? CostUsd = null,
+    string? PromptName = null,
+    string? PromptBody = null);
 
 public sealed record CompleteRunInput(Guid RunId, RunStatus Status, DateTimeOffset CompletedAt, string? Model = null);
 

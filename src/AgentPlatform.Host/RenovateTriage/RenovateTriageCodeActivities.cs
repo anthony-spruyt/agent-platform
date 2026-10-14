@@ -75,6 +75,12 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
                 return new BuildContextResult(true, null);
             }
 
+            var stated = await StatedVersionsAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            if (stated is null)
+            {
+                return new BuildContextResult(false, null);
+            }
+
             var bundle = new Bundle();
             ScannedText body;
             var bodyClean = true;
@@ -110,7 +116,6 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
             }
 
             var facts = new TriageFacts(input.Repo, input.PrNumber, input.HeadSha, input.Reason, jobs.Count, bundle.HeldBack);
-            var stated = await StatedVersionsAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
             return new BuildContextResult(false, TriageContextBuilder.Build(facts, bundle.Items), stated);
         });
 
@@ -301,13 +306,12 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
         }
     }
 
-    private async Task<StatedVersions> StatedVersionsAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
+    private async Task<StatedVersions?> StatedVersionsAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
     {
         var commits = await github.ListCommitsAsync(repo, prNumber, cancellationToken).ConfigureAwait(false);
-        var unreadable = new StatedVersions(null, null);
         return commits.Count > 0 && string.Equals(commits[^1].Sha, headSha, StringComparison.OrdinalIgnoreCase)
-            ? DiffShape.ReadStatedVersions(commits[^1].Message) ?? unreadable
-            : unreadable;
+            ? DiffShape.ReadStatedVersions(commits[^1].Message)
+            : null;
     }
 
     private async Task<bool> HeadMovedAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)

@@ -27,7 +27,7 @@ public sealed class ClaudeBudgetActivities(ClaudeBudgetStore store)
         GuardAsync(() => store.FinishAsync(input, ActivityExecutionContext.Current.CancellationToken));
 
     [Activity(SetCooldownName)]
-    public Task SetCooldownAsync(SetClaudeCooldownInput input) =>
+    public Task<DateTimeOffset> SetCooldownAsync(SetClaudeCooldownInput input) =>
         GuardAsync(() => store.SetCooldownAsync(input, ActivityExecutionContext.Current.CancellationToken));
 
     private static ApplicationFailureException MustBeStartedByAWorkflow() =>

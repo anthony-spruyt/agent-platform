@@ -200,7 +200,7 @@ public sealed partial class RenovateTriageActivities(
                 return stop;
             }
 
-            await WriteEffectAsync(input, gate, cancellationToken).ConfigureAwait(false);
+            var action = await WriteEffectAsync(input, gate, cancellationToken).ConfigureAwait(false);
             if (pr.Labels.Contains(TriageRules.NeedsTriageLabel, StringComparer.Ordinal))
             {
                 await github.RemoveLabelAsync(input.Repo, input.PrNumber, TriageRules.NeedsTriageLabel, cancellationToken).ConfigureAwait(false);
@@ -208,13 +208,14 @@ public sealed partial class RenovateTriageActivities(
 
             var handedToOwner = gate.Decision.Verdict is TriageVerdict.Owner or TriageVerdict.NeedsReview;
             await pendings.SetStatusAsync(input.Repo, input.PrNumber, input.HeadSha, handedToOwner ? TriagePendingStatus.Owner : TriagePendingStatus.Settled, cancellationToken).ConfigureAwait(false);
+            await pendings.SettleOtherHeadsAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
             if (gate.Decision == input.Decision)
             {
-                await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, null, cancellationToken).ConfigureAwait(false);
+                await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, action, cancellationToken).ConfigureAwait(false);
                 return new ApplyResult(ApplyOutcome.Applied);
             }
 
-            await verdicts.MarkAppliedAsAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, gate.Decision, cancellationToken).ConfigureAwait(false);
+            await verdicts.MarkAppliedAsAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, gate.Decision, action, cancellationToken).ConfigureAwait(false);
             return new ApplyResult(ApplyOutcome.Applied, Effective: gate.Decision);
         });
 
@@ -296,7 +297,7 @@ public sealed partial class RenovateTriageActivities(
         };
     }
 
-    private async Task WriteEffectAsync(ApplyInput input, Gate gate, CancellationToken cancellationToken)
+    private async Task<VerdictAction> WriteEffectAsync(ApplyInput input, Gate gate, CancellationToken cancellationToken)
     {
         var decision = gate.Decision;
         switch (decision.Verdict)
@@ -304,13 +305,13 @@ public sealed partial class RenovateTriageActivities(
             case TriageVerdict.Approve:
             case TriageVerdict.Safe when !gate.CommentOnly:
                 await ApproveAsync(input, decision, cancellationToken).ConfigureAwait(false);
-                break;
+                return VerdictAction.Approve;
             case TriageVerdict.Safe:
                 await FlagAsync(input, decision, TriageRules.SafeLabel, cancellationToken).ConfigureAwait(false);
-                break;
+                return VerdictAction.Comment;
             default:
                 await FlagAsync(input, decision, FlagLabel(decision.Verdict), cancellationToken).ConfigureAwait(false);
-                break;
+                return VerdictAction.Comment;
         }
     }
 

@@ -500,7 +500,7 @@ public class RenovateTriageCodeActivitiesTests
         }
 
         [Fact]
-        public async Task ACommitTheContextCannotRead_StatesNothing()
+        public async Task ACommitTheContextCannotRead_MakesTheContextUnavailable()
         {
             var rig = Create();
             rig.Github.Commits.Clear();
@@ -508,7 +508,18 @@ public class RenovateTriageCodeActivitiesTests
 
             var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
 
-            Assert.Equal(new StatedVersions(null, null), result.Stated);
+            Assert.Equal(new BuildContextResult(false, null), result);
+        }
+
+        [Fact]
+        public async Task AHeadThatIsNotTheLastListedCommit_MakesTheContextUnavailable()
+        {
+            var rig = Create();
+            rig.Github.Commits.Add(FakeGitHubApi.RenovateCommit("fedcba9876543210fedcba9876543210fedcba98"));
+
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
+
+            Assert.Equal(new BuildContextResult(false, null), result);
         }
 
         [Fact]

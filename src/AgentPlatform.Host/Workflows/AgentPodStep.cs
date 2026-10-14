@@ -103,7 +103,7 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
         return new AgentPodStepOutcome(status, agent);
     }
 
-    public Task RecordAsync(BeginRunResult run, int seq, AgentPodStepOutcome outcome, DateTime started, JsonElement? input, object? submitted)
+    public Task RecordAsync(BeginRunResult run, int seq, AgentPodStepOutcome outcome, DateTime started, JsonElement? input, object? submitted, string? promptName = null, string? promptBody = null)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(outcome);
@@ -123,7 +123,9 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
             Model: agent.Model,
             InputTokens: usage?.InputTokens,
             OutputTokens: usage?.OutputTokens,
-            CostUsd: AgentRunUsage.ToCostUsd(usage?.CostUsd)));
+            CostUsd: AgentRunUsage.ToCostUsd(usage?.CostUsd),
+            PromptName: promptName,
+            PromptBody: promptBody));
     }
 
     private async Task<AgentRunResult> RunPodAsync(string prompt, AgentTier tier, AgentRepoContext? repo, int deadline, CancellationToken cancellationToken)

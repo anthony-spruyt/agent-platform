@@ -7,6 +7,7 @@ using AgentPlatform.Host.RunData;
 using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Replay;
 using AgentPlatform.Tests.Support;
+using Microsoft.EntityFrameworkCore;
 using Temporalio.Activities;
 using Temporalio.Api.Enums.V1;
 using Temporalio.Client;
@@ -111,8 +112,12 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal((CheckRunStatus.Completed, CheckRunConclusion.Success), (last.Status, last.Conclusion));
         Assert.Contains("Triage reason: breaking", string.Join('\n', context!.Sections), StringComparison.Ordinal);
         var steps = await StepsAsync(rig);
-        Assert.Contains(steps, s => s is { Name: "claude", Rung: LadderRung.Claude, StopReason: "submitted" });
+        var claudeStep = Assert.Single(steps, s => s is { Name: "claude", Rung: LadderRung.Claude, StopReason: "submitted" });
         Assert.Contains(steps, s => s is { Name: "verdict", Rung: LadderRung.Claude });
+        Assert.NotNull(claudeStep.PromptHash);
+        await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+        var prompt = await db.Prompts.SingleAsync(p => p.Hash == claudeStep.PromptHash, Ct);
+        Assert.Equal(AgentPrompts.RenovateTriage, prompt.Name);
     }
 
     [Theory]
@@ -188,6 +193,43 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal((CheckRunStatus.Queued, null), (queued.Status, queued.Conclusion));
         Assert.Contains("usage-limit", queued.Summary, StringComparison.Ordinal);
         Assert.Empty(await VerdictsAsync(rig));
+    }
+
+    [Fact]
+    public async Task AUsageLimitStop_ParksUntilTheEndTheBooksStored_NotTheEndTheAgentReported()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = (_, _) => Task.FromResult(ScriptedPods.Failed(AgentRunOutcome.UsageLimit, ResetsAt));
+        rig.Budget.OnCooldown = input => input.ResetsAt!.Value.AddHours(3);
+
+        await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        var queued = rig.CheckRuns.Reports[^1];
+        Assert.Contains("2030-01-01 15:00 UTC", queued.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("12:00", queued.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AModeThatTurnsShadowBeforeTheQueue_SkipsTheClimb_WithoutWritingAnything()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        var options = new RenovateTriageOptions { Mode = TriageMode.Live };
+        rig.Jev.OnAsk = () => options.Mode = TriageMode.Shadow;
+        rig.Pods.OnRun = Answers(env);
+
+        var result = await InWorkerAsync(env, rig, options, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(RenovateTriageOutcome.Skipped, result.Outcome);
+        Assert.Equal("not-live", result.Reason);
+        Assert.Null(await rig.Data.Pending.FindAsync(Repo, 7, Ct));
+        Assert.Empty(rig.Github.AddedLabels);
+        Assert.Empty(rig.Github.Comments);
+        Assert.Empty(rig.Budget.Calls);
+        Assert.Empty(rig.Pods.Inputs);
+        Assert.Empty(await VerdictsAsync(rig));
+        Assert.Contains(await StepsAsync(rig), s => s is { Name: "queue", StopReason: "not_live" });
     }
 
     [Fact]
@@ -460,6 +502,21 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Parked, ShaA, "context-unavailable", null), result);
         Assert.Empty(rig.Budget.Calls);
         Assert.Contains(await StepsAsync(rig), s => s is { Name: "context", StopReason: "error" });
+    }
+
+    [Fact]
+    public async Task AContextTheActivityCannotRead_ParksTheRun_InsteadOfClimbingWithNoVersions()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Jev.OnAsk = () => rig.Github.Commits.Add(FakeGitHubApi.RenovateCommit("fedcba9876543210fedcba9876543210fedcba98"));
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Parked, ShaA, "context-unavailable", null), result);
+        Assert.Empty(rig.Budget.Calls);
+        Assert.Empty(rig.Pods.Inputs);
+        Assert.Contains(await StepsAsync(rig), s => s is { Name: "context", StopReason: "unavailable" });
     }
 
     [Fact]

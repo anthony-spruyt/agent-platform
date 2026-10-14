@@ -53,12 +53,14 @@ internal sealed class ScriptedBudget
         return Task.CompletedTask;
     }
 
+    public Func<SetClaudeCooldownInput, DateTimeOffset?> OnCooldown { get; set; } = input => input.ResetsAt;
+
     [Activity("SetClaudeCooldown")]
-    public Task SetCooldownAsync(SetClaudeCooldownInput input)
+    public Task<DateTimeOffset> SetCooldownAsync(SetClaudeCooldownInput input)
     {
         Calls.Add("cooldown");
         Cooldowns.Add(input);
-        return Task.CompletedTask;
+        return Task.FromResult(OnCooldown(input) ?? DateTimeOffset.UnixEpoch);
     }
 }
 

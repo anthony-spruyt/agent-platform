@@ -2,6 +2,7 @@ using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Tests.Support;
+using Microsoft.Extensions.Options;
 using Temporalio.Exceptions;
 using Temporalio.Testing;
 
@@ -15,11 +16,11 @@ public class ClaudeRungActivitiesTests
 
     private sealed record Rig(ClaudeRungActivities Activities, FakeGitHubApi Github, InMemoryRunData Data);
 
-    private static Rig Create(string model = "opus")
+    private static Rig Create(string model = "opus", TriageMode mode = TriageMode.Live)
     {
         var github = new FakeGitHubApi();
         var data = InMemoryRunData.Create();
-        return new Rig(new ClaudeRungActivities(github, data.Pending, new AgentPodsOptions { Model = model }), github, data);
+        return new Rig(new ClaudeRungActivities(github, data.Pending, new AgentPodsOptions { Model = model }, Options.Create(new RenovateTriageOptions { Mode = mode })), github, data);
     }
 
     private static Task<T> Run<T>(Func<Task<T>> action) => new ActivityEnvironment().RunAsync(action);
@@ -39,6 +40,20 @@ public class ClaudeRungActivitiesTests
         var note = Assert.Single(rig.Github.Comments);
         Assert.Contains(TriageRules.StickyMarker, note.Body, StringComparison.Ordinal);
         Assert.Contains("**Queued for agent review:** breaking-change", note.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Queue_WhenTheModeIsNoLongerLive_WritesNothing()
+    {
+        var rig = Create(mode: TriageMode.Shadow);
+
+        var result = await Run(() => rig.Activities.QueueAsync(new QueueInput(Repo, 7, Sha, "breaking-change")));
+
+        Assert.True(result.NotLive);
+        Assert.False(result.HeadMoved);
+        Assert.Null(await rig.Data.Pending.FindAsync(Repo, 7, Ct));
+        Assert.Empty(rig.Github.AddedLabels);
+        Assert.Empty(rig.Github.Comments);
     }
 
     [Fact]

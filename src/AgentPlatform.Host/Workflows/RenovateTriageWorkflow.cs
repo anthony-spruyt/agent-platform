@@ -20,7 +20,7 @@ public partial class RenovateTriageWorkflow
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
     // The scanner takes up to 10 minutes per text and texts go through it one at a time.
-    internal static readonly ActivityOptions ScanOptions = new()
+    private static readonly ActivityOptions _scanOptions = new()
     {
         StartToCloseTimeout = TimeSpan.FromHours(1),
         ScheduleToCloseTimeout = TimeSpan.FromHours(3),
@@ -273,7 +273,7 @@ public partial class RenovateTriageWorkflow
 
             if (_claude && (climbReason is not null || WantsAgent(assess, decision)))
             {
-                var climbed = await ClimbAsync(input, run, seq, assess.HeadSha, climbReason ?? decision!.Reason, body);
+                var climbed = await ClimbAsync(input, run, seq, assess.HeadSha, climbReason ?? decision!.Reason, body, assess.Mode);
                 seq = _seq;
                 if (climbed is null)
                 {
@@ -315,7 +315,7 @@ public partial class RenovateTriageWorkflow
         var stepStarted = Workflow.UtcNow;
         var result = await Workflow.ExecuteActivityAsync(
             (RenovateTriageCodeActivities activities) => activities.PrecheckAsync(new PrecheckInput(input.Repo, input.PrNumber, headSha)),
-            ScanOptions);
+            _scanOptions);
         await RecordStepAsync(
             run,
             seq,
@@ -380,7 +380,7 @@ public partial class RenovateTriageWorkflow
         var stepStarted = Workflow.UtcNow;
         var fetched = await Workflow.ExecuteActivityAsync(
             (RenovateTriageCodeActivities activities) => activities.FetchChangelogAsync(new FetchChangelogInput(input.Repo, input.PrNumber, headSha, body)),
-            ScanOptions);
+            _scanOptions);
         var held = fetched.Sections.Count(s => s.Outcome != ScanOutcome.Clean);
         await RecordStepAsync(
             run,
@@ -415,7 +415,7 @@ public partial class RenovateTriageWorkflow
         {
             var built = await Workflow.ExecuteActivityAsync(
                 (RenovateTriageCodeActivities activities) => activities.BuildContextAsync(new BuildContextInput(input.Repo, input.PrNumber, headSha, reason, body)),
-                ScanOptions);
+                _scanOptions);
             _context = built.Context;
             await RecordStepAsync(run, ++seq, "context", LadderRung.Rule, built.HeadMoved ? "head_moved" : "built", stepStarted, new { built.HeadMoved, sections = built.Context?.Sections.Count });
         }

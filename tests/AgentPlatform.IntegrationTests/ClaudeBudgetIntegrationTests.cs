@@ -422,10 +422,11 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
         using var _ = Scope(out var ct);
         var h = await StartAsync(ct);
 
-        await h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, Start.AddMinutes(resetsInMinutes), ClaudeBudgetCauses.UsageLimit), ct);
+        var until = await h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, Start.AddMinutes(resetsInMinutes), ClaudeBudgetCauses.UsageLimit), ct);
 
         await using var db = await h.Factory.CreateDbContextAsync(ct);
         Assert.Equal(Start.AddMinutes(expectedMinutes), (await db.ClaudeCooldowns.SingleAsync(ct)).Until);
+        Assert.Equal(Start.AddMinutes(expectedMinutes), until);
     }
 
     [Fact]
@@ -434,10 +435,11 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
         using var _ = Scope(out var ct);
         var h = await StartAsync(ct);
 
-        await h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, null, ClaudeBudgetCauses.UsageLimit), ct);
+        var until = await h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, null, ClaudeBudgetCauses.UsageLimit), ct);
 
         await using var db = await h.Factory.CreateDbContextAsync(ct);
         Assert.Equal(Start.AddHours(1), (await db.ClaudeCooldowns.SingleAsync(ct)).Until);
+        Assert.Equal(Start.AddHours(1), until);
     }
 
     [Fact]
@@ -447,10 +449,11 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
         var h = await StartAsync(ct);
         await h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, Start.AddHours(5), ClaudeBudgetCauses.UsageLimit), ct);
 
-        await h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, Start.AddHours(1), ClaudeBudgetCauses.UsageLimit), ct);
+        var until = await h.Budget.SetCooldownAsync(new SetClaudeCooldownInput(ClaudeCooldown.Global, Start.AddHours(1), ClaudeBudgetCauses.UsageLimit), ct);
 
         await using var db = await h.Factory.CreateDbContextAsync(ct);
         Assert.Equal(Start.AddHours(5), (await db.ClaudeCooldowns.SingleAsync(ct)).Until);
+        Assert.Equal(Start.AddHours(5), until);
     }
 
     [Fact]
