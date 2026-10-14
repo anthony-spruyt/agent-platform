@@ -66,11 +66,9 @@ public class GitHubApiClientSweeperTests
 
         Assert.Equal(7, pr.Number);
         Assert.Equal(29139614, pr.AuthorId);
-        Assert.Equal("renovate/foo", pr.HeadRef);
         Assert.Equal("sha7", pr.HeadSha);
         Assert.Equal("o/r", pr.HeadRepo);
         Assert.Equal("o/r", pr.BaseRepo);
-        Assert.Equal(Since.AddHours(2), pr.UpdatedAt);
         Assert.Equal(["agent/needs-triage"], pr.Labels);
     }
 

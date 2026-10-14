@@ -46,6 +46,24 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
         return true;
     }
 
+    // Only while the row still waits: a run that settled it first must not be reopened.
+    public async Task<bool> MarkRedrivenAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.TriagePending
+            .SingleOrDefaultAsync(p => p.Repo == repo && p.PrNumber == prNumber && p.HeadSha == headSha && (p.Status == TriagePendingStatus.Pending || p.Status == TriagePendingStatus.Redriven), cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null)
+        {
+            return false;
+        }
+
+        row.Status = TriagePendingStatus.Redriven;
+        row.UpdatedAt = time.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     // A decided head leaves no reason to wait on an earlier one, so an open row of another head would only inflate the pending count.
     public async Task SettleOtherHeadsAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
     {
@@ -98,6 +116,7 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
                 Reason = reason,
                 Status = TriagePendingStatus.Pending,
                 CreatedAt = now,
+                OpenedAt = now,
                 UpdatedAt = now,
             };
             db.TriagePending.Add(row);
@@ -108,6 +127,7 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
             row.Reason = reason;
             row.Status = TriagePendingStatus.Pending;
             row.Attempts = 0;
+            row.OpenedAt = now;
             row.UpdatedAt = now;
         }
         else

@@ -35,7 +35,7 @@ public sealed record GitHubReview(long Id, string? AuthorLogin, string? AuthorAs
 
 public sealed record GitHubIssueComment(long Id, string? AuthorLogin, string Body);
 
-public sealed record GitHubListedPullRequest(int Number, long? AuthorId, string HeadRef, string HeadSha, string? HeadRepo, string? BaseRepo, DateTimeOffset UpdatedAt, IReadOnlyList<string> Labels);
+public sealed record GitHubListedPullRequest(int Number, long? AuthorId, string HeadSha, string? HeadRepo, string? BaseRepo, IReadOnlyList<string> Labels);
 
 public sealed record GitHubIssueEvent(string Event, string? ActorLogin, string? Label, DateTimeOffset CreatedAt);
 
@@ -619,11 +619,9 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             .Select(p => new GitHubListedPullRequest(
                 p.Number,
                 p.User?.Id,
-                p.Head?.Ref ?? string.Empty,
                 p.Head?.Sha ?? string.Empty,
                 p.Head?.Repo?.FullName,
                 p.Base?.Repo?.FullName,
-                p.UpdatedAt,
                 [.. (p.Labels ?? []).Select(l => l.Name).OfType<string>()]))];
     }
 

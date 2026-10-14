@@ -33,9 +33,9 @@ public class RenovateTriageSweeperWorkflow
             Workflow.UtcNow));
 
         var failed = false;
-        failed |= await StepAsync(run, 1, "redrive", () => Workflow.ExecuteActivityAsync((SweeperActivities a) => a.RedriveAsync(), _activityOptions));
-        failed |= await StepAsync(run, 2, "redeliver", () => Workflow.ExecuteActivityAsync((SweeperActivities a) => a.RedeliverAsync(), _activityOptions));
-        failed |= await StepAsync(run, 3, "reconcile", () => Workflow.ExecuteActivityAsync((SweeperActivities a) => a.ReconcileAsync(), _activityOptions));
+        failed |= await StepAsync(run, 1, "redrive", () => Workflow.ExecuteActivityAsync((SweeperActivities a) => a.RedriveAsync(), _activityOptions), r => r.Errors > 0);
+        failed |= await StepAsync(run, 2, "redeliver", () => Workflow.ExecuteActivityAsync((SweeperActivities a) => a.RedeliverAsync(), _activityOptions), _ => false);
+        failed |= await StepAsync(run, 3, "reconcile", () => Workflow.ExecuteActivityAsync((SweeperActivities a) => a.ReconcileAsync(), _activityOptions), r => r.Errors > 0);
 
         if (failed)
         {
@@ -55,15 +55,16 @@ public class RenovateTriageSweeperWorkflow
     }
 
     // One failing step must not stop the others: each recovers a different way a webhook can be lost.
-    private static async Task<bool> StepAsync<T>(BeginRunResult? run, int seq, string name, Func<Task<T>> step)
+    private static async Task<bool> StepAsync<T>(BeginRunResult? run, int seq, string name, Func<Task<T>> step, Func<T, bool> hadErrors)
     {
         var started = Workflow.UtcNow;
         object output;
         string stopReason;
         try
         {
-            output = (await step())!;
-            stopReason = "completed";
+            var result = await step();
+            output = result!;
+            stopReason = hadErrors(result) ? "error" : "completed";
         }
         catch (ActivityFailureException ex) when (!TemporalException.IsCanceledException(ex))
         {

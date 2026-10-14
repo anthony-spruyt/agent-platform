@@ -6,7 +6,7 @@ using Temporalio.Activities;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public sealed record RedriveResult(int Open, int Running, int Settled, int Redriven, int Errors);
+public sealed record RedriveResult(int Open, int Running, int Settled, int Redriven, int Errors, int Skipped);
 
 public sealed record RedeliverResult(int Pages, int Planned, int Redelivered, int Refused);
 
@@ -41,13 +41,13 @@ public sealed partial class SweeperActivities(
     public async Task<RedriveResult> RedriveAsync()
     {
         var cancellationToken = ActivityExecutionContext.Current.CancellationToken;
-        var open = await pendings.ListOpenAsync(cancellationToken).ConfigureAwait(false);
+        var open = (await pendings.ListOpenAsync(cancellationToken).ConfigureAwait(false)).Where(r => TriageRules.IsAllowedOwner(r.Repo)).ToList();
         if (open.Count == 0 || options.Value.Mode != TriageMode.Live)
         {
-            return new RedriveResult(open.Count, 0, 0, 0, 0);
+            return new RedriveResult(open.Count, 0, 0, 0, 0, 0);
         }
 
-        int running = 0, settled = 0, errors = 0;
+        int running = 0, settled = 0, skipped = 0, errors = 0;
         var candidates = new List<(TriagePending Row, GitHubPullRequest Pr)>();
         foreach (var row in open)
         {
@@ -56,14 +56,21 @@ public sealed partial class SweeperActivities(
                 if (await probe.IsRunningAsync(row.Repo, row.PrNumber, cancellationToken).ConfigureAwait(false))
                 {
                     running++;
+                    continue;
                 }
-                else if (await SettledByOwnerAsync(row, cancellationToken).ConfigureAwait(false) is { } pr)
+
+                var (state, pr) = await AssessRowAsync(row, cancellationToken).ConfigureAwait(false);
+                switch (state)
                 {
-                    candidates.Add((row, pr));
-                }
-                else
-                {
-                    settled++;
+                    case RowState.Redrive:
+                        candidates.Add((row, pr));
+                        break;
+                    case RowState.Settled:
+                        settled++;
+                        break;
+                    default:
+                        skipped++;
+                        break;
                 }
             }
             catch (GitHubApiException ex)
@@ -79,11 +86,11 @@ public sealed partial class SweeperActivities(
         {
             var (row, pr) = candidates.First(c => c.Row.Repo == pick.Repo && c.Row.PrNumber == pick.PrNumber);
             await SignalAsync(pick.Repo, pick.PrNumber, pr.HeadSha, cancellationToken).ConfigureAwait(false);
-            await pendings.SetStatusAsync(row.Repo, row.PrNumber, row.HeadSha, TriagePendingStatus.Redriven, cancellationToken).ConfigureAwait(false);
+            await pendings.MarkRedrivenAsync(row.Repo, row.PrNumber, row.HeadSha, cancellationToken).ConfigureAwait(false);
             redriven++;
         }
 
-        return new RedriveResult(open.Count, running, settled, redriven, errors);
+        return new RedriveResult(open.Count, running, settled, redriven, errors, skipped);
     }
 
     [Activity(RedeliverName)]
@@ -171,6 +178,13 @@ public sealed partial class SweeperActivities(
     [Activity(RecordSuccessName)]
     public Task RecordSuccessAsync() => state.SaveSuccessAsync(ActivityExecutionContext.Current.CancellationToken);
 
+    private enum RowState
+    {
+        Redrive,
+        Settled,
+        Skipped,
+    }
+
     private enum Reconciled
     {
         Nothing,
@@ -178,11 +192,11 @@ public sealed partial class SweeperActivities(
         Failed,
     }
 
-    // Null when the row was settled instead: closed, handed to the owner, or already the owner's call.
-    private async Task<GitHubPullRequest?> SettledByOwnerAsync(TriagePending row, CancellationToken cancellationToken)
+    private async Task<(RowState State, GitHubPullRequest Pr)> AssessRowAsync(TriagePending row, CancellationToken cancellationToken)
     {
         var pr = await github.GetPullRequestAsync(row.Repo, row.PrNumber, cancellationToken).ConfigureAwait(false);
         TriagePendingStatus? status = null;
+        var endsSkipped = false;
         if (TriageRules.IsNotOpen(pr.State, pr.Merged, shadow: false))
         {
             status = TriagePendingStatus.OwnerHandled;
@@ -195,20 +209,28 @@ public sealed partial class SweeperActivities(
         {
             var reviews = await github.ListReviewsAsync(row.Repo, row.PrNumber, cancellationToken).ConfigureAwait(false);
             var events = await github.ListIssueEventsAsync(row.Repo, row.PrNumber, cancellationToken).ConfigureAwait(false);
-            if (OwnerHandling.IsHandled(options.Value.OwnerLogin, row.UpdatedAt, reviews, events))
+            if (OwnerHandling.IsHandled(row.OpenedAt, reviews, events))
             {
                 status = TriagePendingStatus.OwnerHandled;
+            }
+            else
+            {
+                var unapplied = await verdicts.FindUnappliedAsync(row.Repo, row.PrNumber, pr.HeadSha, cancellationToken).ConfigureAwait(false);
+                var ignoreTriageSignals = unapplied is not null;
+                var honourNeedsReviewLabel = unapplied is not null && TriageRules.IsApproving(unapplied.Verdict);
+                endsSkipped = TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals, honourNeedsReviewLabel, hasPendingRow: true) is not null
+                    || TriageRules.IsApproved(reviews, pr.HeadSha, ignoreTriageSignals);
             }
         }
 
         if (status is not { } settled)
         {
-            return pr;
+            return (endsSkipped ? RowState.Skipped : RowState.Redrive, pr);
         }
 
         await pendings.SetStatusAsync(row.Repo, row.PrNumber, row.HeadSha, settled, cancellationToken).ConfigureAwait(false);
         await CompleteOpenCheckAsync(row.Repo, row.PrNumber, row.HeadSha, "neutral", "No further agent triage: this pull request is no longer waiting in the queue.", cancellationToken).ConfigureAwait(false);
-        return null;
+        return (RowState.Settled, pr);
     }
 
     private async Task<Reconciled> ReconcileAsync(string repo, GitHubListedPullRequest pr, CancellationToken cancellationToken)

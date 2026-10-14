@@ -38,7 +38,44 @@ public class TriagePendingStoreTests
         var row = await store.UpsertAsync(Repo, 7, Sha, "ci-failed", Ct);
 
         Assert.Equal((Repo, 7, Sha, "ci-failed", TriagePendingStatus.Pending, 0), (row.Repo, row.PrNumber, row.HeadSha, row.Reason, row.Status, row.Attempts));
-        Assert.Equal((time.Now, time.Now), (row.CreatedAt, row.UpdatedAt));
+        Assert.Equal((time.Now, time.Now, time.Now), (row.CreatedAt, row.OpenedAt, row.UpdatedAt));
+    }
+
+    [Fact]
+    public async Task OpenedAt_MovesWithTheHead_AndNotWithAnyOtherWrite()
+    {
+        var (store, data, time) = Create();
+        var opened = time.Now;
+        await store.UpsertAsync(Repo, 7, Sha, "ci-failed", Ct);
+
+        time.Now += TimeSpan.FromMinutes(5);
+        await store.UpsertAsync(Repo, 7, Sha, "breaking", Ct);
+        await store.SetStatusAsync(Repo, 7, Sha, TriagePendingStatus.Redriven, Ct);
+        Assert.True(await store.MarkRedrivenAsync(Repo, 7, Sha, Ct));
+        Assert.Equal(opened, (await store.FindAsync(Repo, 7, Ct))!.OpenedAt);
+
+        time.Now += TimeSpan.FromMinutes(5);
+        var moved = await store.UpsertAsync(Repo, 7, _movedSha, "major", Ct);
+
+        Assert.Equal((opened, time.Now), (moved.CreatedAt, moved.OpenedAt));
+        Assert.Equal(1, await CountAsync(data));
+    }
+
+    [Fact]
+    public async Task MarkRedriven_ReopensAWaitingRowOnly()
+    {
+        var (store, _, time) = Create();
+        await store.UpsertAsync(Repo, 7, Sha, "ci-failed", Ct);
+        time.Now += TimeSpan.FromMinutes(1);
+
+        Assert.False(await store.MarkRedrivenAsync(Repo, 7, _movedSha, Ct));
+        Assert.True(await store.MarkRedrivenAsync(Repo, 7, Sha, Ct));
+        var row = (await store.FindAsync(Repo, 7, Ct))!;
+        Assert.Equal((TriagePendingStatus.Redriven, time.Now), (row.Status, row.UpdatedAt));
+
+        await store.SetStatusAsync(Repo, 7, Sha, TriagePendingStatus.OwnerHandled, Ct);
+        Assert.False(await store.MarkRedrivenAsync(Repo, 7, Sha, Ct));
+        Assert.Equal(TriagePendingStatus.OwnerHandled, (await store.FindAsync(Repo, 7, Ct))!.Status);
     }
 
     [Fact]

@@ -41,11 +41,6 @@ public static class RenovateTriageServiceCollectionExtensions
         {
             throw new InvalidOperationException("RenovateTriage:Sweeper:Interval must be at least one minute.");
         }
-
-        if (string.IsNullOrWhiteSpace(triage.OwnerLogin))
-        {
-            throw new InvalidOperationException("RenovateTriage:OwnerLogin must not be blank.");
-        }
     }
 
     private static void Validate(LiteLlmOptions litellm)

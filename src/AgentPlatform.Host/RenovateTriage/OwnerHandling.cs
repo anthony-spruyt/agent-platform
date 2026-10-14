@@ -4,18 +4,17 @@ namespace AgentPlatform.Host.RenovateTriage;
 
 public static class OwnerHandling
 {
-    // Only the owner login counts: the platform's own label changes and other reviewers never take a PR out of the queue.
-    public static bool IsHandled(string ownerLogin, DateTimeOffset since, IReadOnlyList<GitHubReview> reviews, IReadOnlyList<GitHubIssueEvent> events)
+    // Only the owner counts: the platform's own label changes and other reviewers never take a PR out of the queue.
+    public static bool IsHandled(DateTimeOffset since, IReadOnlyList<GitHubReview> reviews, IReadOnlyList<GitHubIssueEvent> events)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerLogin);
         ArgumentNullException.ThrowIfNull(reviews);
         ArgumentNullException.ThrowIfNull(events);
 
-        return reviews.Any(r => IsOwner(r.AuthorLogin, ownerLogin) && r.SubmittedAt >= since)
-            || events.Any(e => IsOwner(e.ActorLogin, ownerLogin) && e.CreatedAt >= since && TakesOver(e));
+        return reviews.Any(r => IsOwner(r.AuthorLogin) && r.SubmittedAt >= since)
+            || events.Any(e => IsOwner(e.ActorLogin) && e.CreatedAt >= since && TakesOver(e));
     }
 
-    private static bool IsOwner(string? login, string ownerLogin) => string.Equals(login, ownerLogin, StringComparison.OrdinalIgnoreCase);
+    private static bool IsOwner(string? login) => string.Equals(login, TriageRules.AllowedOwner, StringComparison.OrdinalIgnoreCase);
 
     private static bool TakesOver(GitHubIssueEvent change) => change.Event switch
     {

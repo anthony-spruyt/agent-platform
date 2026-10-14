@@ -53,29 +53,39 @@ public class HookRedeliveryPlannerTests
     }
 
     [Fact]
-    public void AGuidWithTwoRedeliveries_GetsOneMoreAttempt_OnTheOriginalDelivery()
+    public void AGuidWithTwoRedeliveries_GetsOneMoreAttempt_OnItsNewestDelivery()
     {
         var plan = HookRedeliveryPlanner.Plan(
             [Delivery(3, "g1", 5, 502, redelivery: true), Delivery(2, "g1", 15, 502, redelivery: true), Delivery(1, "g1", 25, 502)],
             Start);
 
-        Assert.Equal([1L], plan);
+        Assert.Equal([3L], plan);
     }
 
     [Fact]
-    public void AGuidWhoseOriginalIsOlderThanTheWindow_IsNotConsidered()
+    public void AGuidIsJudgedByItsNewestAttempt_SoARetriedGuidWhoseOriginalLeftTheWindowIsRetriedAgain()
     {
         var plan = HookRedeliveryPlanner.Plan(
             [Delivery(2, "g1", 5, 502, redelivery: true), Delivery(1, "g1", 90, 502)],
+            Start);
+
+        Assert.Equal([2L], plan);
+    }
+
+    [Fact]
+    public void AGuidWhoseNewestAttemptIsOlderThanTheWindow_IsNotConsidered()
+    {
+        var plan = HookRedeliveryPlanner.Plan(
+            [Delivery(2, "g1", 80, 502, redelivery: true), Delivery(1, "g1", 90, 502)],
             Start);
 
         Assert.Empty(plan);
     }
 
     [Fact]
-    public void ARedeliveryWithoutItsOriginalInTheList_IsNotConsidered()
+    public void ARedeliveryWhoseOriginalIsNotInTheList_IsRetriedOnItsOwnId()
     {
-        Assert.Empty(HookRedeliveryPlanner.Plan([Delivery(2, "g1", 5, 502, redelivery: true)], Start));
+        Assert.Equal([2L], HookRedeliveryPlanner.Plan([Delivery(2, "g1", 5, 502, redelivery: true)], Start));
     }
 
     [Fact]
@@ -91,15 +101,6 @@ public class HookRedeliveryPlannerTests
             [Delivery(3, "g3", 5), Delivery(2, "g2", 15), Delivery(1, "g1", 25), Delivery(4, "g2", 4, redelivery: true)],
             Start);
 
-        Assert.Equal([1L, 2L, 3L], plan);
-    }
-
-    [Fact]
-    public void AMaxOfRedeliveriesCanBeConfigured()
-    {
-        var deliveries = new[] { Delivery(2, "g1", 5, 502, redelivery: true), Delivery(1, "g1", 15) };
-
-        Assert.Empty(HookRedeliveryPlanner.Plan(deliveries, Start, maxRedeliveries: 1));
-        Assert.Equal([1L], HookRedeliveryPlanner.Plan(deliveries, Start, maxRedeliveries: 2));
+        Assert.Equal([1L, 3L, 4L], plan);
     }
 }

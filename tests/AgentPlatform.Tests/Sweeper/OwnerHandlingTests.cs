@@ -15,7 +15,7 @@ public class OwnerHandlingTests
         new(name, actor, label, Since.AddMinutes(minutesAfter));
 
     private static bool Handled(IReadOnlyList<GitHubReview>? reviews = null, IReadOnlyList<GitHubIssueEvent>? events = null) =>
-        OwnerHandling.IsHandled(Owner, Since, reviews ?? [], events ?? []);
+        OwnerHandling.IsHandled(Since, reviews ?? [], events ?? []);
 
     [Theory]
     [InlineData("APPROVED")]
@@ -29,7 +29,7 @@ public class OwnerHandlingTests
     [Fact]
     public void TheOwnerLogin_IsMatchedWithoutCase()
     {
-        Assert.True(OwnerHandling.IsHandled("Anthony-Spruyt", Since, [Review(Owner, 5)], []));
+        Assert.True(Handled(reviews: [Review("Anthony-Spruyt", 5)]));
     }
 
     [Fact]

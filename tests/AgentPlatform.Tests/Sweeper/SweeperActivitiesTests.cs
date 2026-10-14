@@ -92,7 +92,7 @@ public class SweeperActivitiesTests
         var signal = Assert.Single(rig.Signaler.Signals);
         Assert.Equal((Repo, 7, Sha), (signal.Repo, signal.PrNumber, signal.HeadSha));
         Assert.Equal(TriagePendingStatus.Redriven, await rig.StatusAsync(7));
-        Assert.Equal(new RedriveResult(1, 0, 0, 1, 0), result);
+        Assert.Equal(new RedriveResult(1, 0, 0, 1, 0, 0), result);
     }
 
     [Fact]
@@ -195,6 +195,104 @@ public class SweeperActivitiesTests
 
         Assert.Empty(rig.Signaler.Signals);
         Assert.Equal(TriagePendingStatus.OwnerHandled, await rig.StatusAsync(7));
+    }
+
+    [Fact]
+    public async Task AnOwnerReview_StillSettlesThePullRequest_AfterAFailedAttemptBumpedTheRow()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7);
+        rig.Github.Reviews.Add(new GitHubReview(1, TriageRules.AllowedOwner, "OWNER", "COMMENTED", Sha, rig.Now.AddMinutes(5)));
+        await using (var db = await rig.Data.Factory.CreateDbContextAsync(Ct))
+        {
+            (await db.TriagePending.SingleAsync(Ct)).UpdatedAt = rig.Now.AddMinutes(10);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await Run(rig.Activities.RedriveAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Equal(TriagePendingStatus.OwnerHandled, await rig.StatusAsync(7));
+    }
+
+    [Theory]
+    [InlineData(TriageRules.BlockedLabel)]
+    [InlineData(TriageRules.RevertLabel)]
+    public async Task ARowWhosePullRequestCarriesABlockingLabel_IsNotRedriven_AndDoesNotUseUpTheCap(string label)
+    {
+        var rig = new Rig(perHour: 2);
+        foreach (var pr in new[] { 1, 2, 3 })
+        {
+            await rig.ParkAsync(pr);
+            await rig.Data.Pending.SetStatusAsync(Repo, pr, Sha, TriagePendingStatus.Redriven, Ct);
+        }
+
+        rig.OpenPullRequest(1, label);
+        rig.OpenPullRequest(2, label);
+        rig.OpenPullRequest(3);
+
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal([3], rig.Signaler.Signals.Select(s => s.PrNumber));
+        Assert.Equal(TriagePendingStatus.Redriven, await rig.StatusAsync(1));
+        Assert.Equal((1, 2), (result.Redriven, result.Skipped));
+    }
+
+    [Fact]
+    public async Task ARowWhosePullRequestIsAlreadyApproved_IsNotRedriven_AndDoesNotUseUpTheCap()
+    {
+        var rig = new Rig(perHour: 1);
+        foreach (var pr in new[] { 1, 2 })
+        {
+            await rig.ParkAsync(pr);
+            rig.OpenPullRequest(pr);
+        }
+
+        rig.Github.ReviewsByNumber[1] = [new GitHubReview(1, TriageRules.TriageBotLogin, "NONE", "APPROVED", Sha, rig.Now.AddHours(-1))];
+
+        await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal([2], rig.Signaler.Signals.Select(s => s.PrNumber));
+    }
+
+    [Fact]
+    public async Task ARowWithAnUnappliedVerdict_IsRedriven_EvenWhenTheTriageBotAlreadyApproved()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7);
+        rig.Github.ReviewsByNumber[7] = [new GitHubReview(1, TriageRules.TriageBotLogin, "NONE", "APPROVED", Sha, rig.Now.AddHours(-1))];
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Safe, "r", null), TriageMode.Live, null, Ct);
+
+        await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal(7, Assert.Single(rig.Signaler.Signals).PrNumber);
+    }
+
+    [Fact]
+    public async Task ARowOfAnotherOwner_IsLeftAloneWithoutAnyGitHubCall()
+    {
+        var rig = new Rig();
+        await rig.Data.Pending.UpsertAsync("someone-else/widgets", 7, Sha, "claude-pending", Ct);
+
+        await Run(rig.Activities.RedriveAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Empty(rig.Github.Calls);
+    }
+
+    [Fact]
+    public async Task ARowThatSettledWhileTheRunWasStarting_IsNotMarkedRedriven()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7);
+        rig.Signaler.OnSignal = () => rig.Data.Pending.SetStatusAsync(Repo, 7, Sha, TriagePendingStatus.Settled, Ct);
+
+        await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal(TriagePendingStatus.Settled, await rig.StatusAsync(7));
     }
 
     [Theory]
@@ -301,6 +399,24 @@ public class SweeperActivitiesTests
     }
 
     [Fact]
+    public async Task AFailedRedelivery_IsRetriedByTheNextSweep_EvenWhenNewerDeliveriesMovedItsOriginalOutOfTheWindow()
+    {
+        var rig = new Rig();
+        rig.App.Pages.Add([Delivery(2, "g-2", TimeSpan.FromMinutes(5), rig.Now, status: 200), Delivery(1, "g-1", TimeSpan.FromMinutes(30), rig.Now)]);
+        await Run(rig.Activities.RedeliverAsync);
+
+        rig.App.Pages.Clear();
+        rig.App.Pages.Add([
+            Delivery(3, "g-1", TimeSpan.FromMinutes(2), rig.Now, redelivery: true),
+            Delivery(2, "g-2", TimeSpan.FromMinutes(5), rig.Now, status: 200),
+            Delivery(1, "g-1", TimeSpan.FromMinutes(30), rig.Now),
+        ]);
+        await Run(rig.Activities.RedeliverAsync);
+
+        Assert.Equal([1L, 3L], rig.App.Redelivered);
+    }
+
+    [Fact]
     public async Task ARefusedRedelivery_IsTreatedAsDone_AndDoesNotFailTheStep()
     {
         var rig = new Rig();
@@ -388,8 +504,8 @@ public class SweeperActivitiesTests
         Assert.Equal(rig.Now, (await rig.Sweeper.GetAsync(Ct)).LastSeenDeliveredAt);
     }
 
-    private static GitHubListedPullRequest Listed(int number, DateTimeOffset now, long? author = TriageRules.RenovateUserId, string? headRepo = Repo, params string[] labels) =>
-        new(number, author, "renovate/dep", Sha, headRepo, Repo, now.AddHours(-1), labels);
+    private static GitHubListedPullRequest Listed(int number, long? author = TriageRules.RenovateUserId, string? headRepo = Repo, params string[] labels) =>
+        new(number, author, Sha, headRepo, Repo, labels);
 
     private static Rig ReconcileRig()
     {
@@ -402,7 +518,7 @@ public class SweeperActivitiesTests
     public async Task ARenovatePullRequestWithNoVerdictAndNoPendingRow_IsSignalled()
     {
         var rig = ReconcileRig();
-        rig.Github.OpenPullRequests.Add(Listed(7, rig.Now));
+        rig.Github.OpenPullRequests.Add(Listed(7));
 
         var result = await Run(rig.Activities.ReconcileAsync);
 
@@ -414,7 +530,7 @@ public class SweeperActivitiesTests
     public async Task APullRequestWithAPendingRow_OrARunningTriage_OrABlockingLabel_OrAVerdict_IsNotSignalled()
     {
         var rig = ReconcileRig();
-        rig.Github.OpenPullRequests.AddRange([Listed(1, rig.Now), Listed(2, rig.Now), Listed(3, rig.Now, labels: TriageRules.NeedsTriageLabel), Listed(4, rig.Now), Listed(5, rig.Now, labels: TriageRules.RevertLabel)]);
+        rig.Github.OpenPullRequests.AddRange([Listed(1), Listed(2), Listed(3, labels: TriageRules.NeedsTriageLabel), Listed(4), Listed(5, labels: TriageRules.RevertLabel)]);
         await rig.Data.Pending.UpsertAsync(Repo, 1, Sha, "claude-pending", Ct);
         rig.Probe.Running.Add((Repo, 2));
         await rig.Data.Verdicts.RecordAsync(Repo, 4, Sha, new TriageDecision(TriageVerdict.Safe, "r", null), TriageMode.Live, null, Ct);
@@ -429,7 +545,7 @@ public class SweeperActivitiesTests
     public async Task APullRequestWhoseHeadAlreadyHasATriageCheck_IsNotSignalledAgain()
     {
         var rig = ReconcileRig();
-        rig.Github.OpenPullRequests.Add(Listed(7, rig.Now));
+        rig.Github.OpenPullRequests.Add(Listed(7));
         rig.OpenCheck(7, "neutral", "completed");
 
         await Run(rig.Activities.ReconcileAsync);
@@ -439,13 +555,12 @@ public class SweeperActivitiesTests
     }
 
     [Fact]
-    public async Task APullRequestNotByRenovate_OrFromAFork_OrOlderThanThreeDays_IsIgnored()
+    public async Task APullRequestNotByRenovate_OrFromAFork_IsIgnored()
     {
         var rig = ReconcileRig();
         rig.Github.OpenPullRequests.AddRange([
-            Listed(1, rig.Now, author: 99),
-            Listed(2, rig.Now, headRepo: "someone/widgets"),
-            Listed(3, rig.Now) with { UpdatedAt = rig.Now.AddDays(-4) },
+            Listed(1, author: 99),
+            Listed(2, headRepo: "someone/widgets"),
         ]);
 
         await Run(rig.Activities.ReconcileAsync);
@@ -457,7 +572,7 @@ public class SweeperActivitiesTests
     public async Task AnOpenTriageCheckWithNoPendingRowAndNoRunningTriage_IsCompletedAsFailure()
     {
         var rig = ReconcileRig();
-        rig.Github.OpenPullRequests.Add(Listed(7, rig.Now));
+        rig.Github.OpenPullRequests.Add(Listed(7));
         rig.OpenCheck(7);
 
         var result = await Run(rig.Activities.ReconcileAsync);
@@ -472,7 +587,7 @@ public class SweeperActivitiesTests
     public async Task AnOpenTriageCheckWithAPendingRow_OrARunningTriage_IsLeftOpen()
     {
         var rig = ReconcileRig();
-        rig.Github.OpenPullRequests.AddRange([Listed(1, rig.Now), Listed(2, rig.Now) with { HeadSha = "b" + Sha[1..] }]);
+        rig.Github.OpenPullRequests.AddRange([Listed(1), Listed(2) with { HeadSha = "b" + Sha[1..] }]);
         rig.OpenCheck(1);
         await rig.Data.Pending.UpsertAsync(Repo, 1, Sha, "claude-pending", Ct);
         rig.Github.StoredCheckRuns.Add((900, new GitHubCheckRunWrite(TriageCheckActivities.CheckName, "b" + Sha[1..], TriageCheckActivities.ExternalId(Repo, 2, "b" + Sha[1..]), "in_progress", null, TriageCheckActivities.CheckName, "s")));

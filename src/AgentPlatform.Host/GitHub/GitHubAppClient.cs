@@ -23,7 +23,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
 {
     private const int PageSize = 100;
 
-    private static readonly Dictionary<string, string> _pullRequestsRead = new() { ["pull_requests"] = "read" };
+    private static readonly Dictionary<string, string> _metadataRead = new() { ["metadata"] = "read" };
 
     private sealed record DeliveryDto(long Id, string? Guid, DateTimeOffset DeliveredAt, bool Redelivery, int StatusCode, string? Event);
 
@@ -89,7 +89,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
                 HttpMethod.Post,
                 string.Create(CultureInfo.InvariantCulture, $"app/installations/{installation.Id}/access_tokens"),
                 jwt.CreateJwt(),
-                JsonContent.Create(new { permissions = _pullRequestsRead }, options: GitHubJson.Options)),
+                JsonContent.Create(new { permissions = _metadataRead }, options: GitHubJson.Options)),
             "installation token request",
             cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrEmpty(token.Token))

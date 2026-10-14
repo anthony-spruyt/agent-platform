@@ -11,8 +11,6 @@ public sealed class RenovateTriageOptions
     public ClaudeBudgetOptions Claude { get; set; } = new();
 
     public SweeperOptions Sweeper { get; set; } = new();
-
-    public string OwnerLogin { get; set; } = TriageRules.AllowedOwner;
 }
 
 public sealed class SweeperOptions

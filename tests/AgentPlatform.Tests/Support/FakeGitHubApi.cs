@@ -11,6 +11,8 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public List<GitHubReview> Reviews { get; } = [];
 
+    public Dictionary<int, GitHubReview[]> ReviewsByNumber { get; } = [];
+
     public List<GitHubCheckRun> Checks { get; } = [new(1, "build", "completed", "success", "github-actions")];
 
     public List<GitHubCheckSuite> Suites { get; } = [new(1, "completed", "success", "github-actions", 1)];
@@ -96,7 +98,7 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     public Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)
     {
         Calls.Add("reviews");
-        return Result<IReadOnlyList<GitHubReview>>([.. Reviews]);
+        return Result<IReadOnlyList<GitHubReview>>(ReviewsByNumber.TryGetValue(number, out var own) ? [.. own] : [.. Reviews]);
     }
 
     public Task<IReadOnlyList<string>> ListLabelsAsync(string repo, int number, CancellationToken cancellationToken)
@@ -311,7 +313,7 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     public Task<IReadOnlyList<GitHubListedPullRequest>> ListOpenPullRequestsAsync(string repo, DateTimeOffset updatedSince, CancellationToken cancellationToken)
     {
         Calls.Add($"open-prs:{repo}");
-        return Result<IReadOnlyList<GitHubListedPullRequest>>([.. OpenPullRequests.Where(p => p.UpdatedAt >= updatedSince)]);
+        return Result<IReadOnlyList<GitHubListedPullRequest>>([.. OpenPullRequests]);
     }
 
     public Task<IReadOnlyList<GitHubIssueEvent>> ListIssueEventsAsync(string repo, int number, CancellationToken cancellationToken)

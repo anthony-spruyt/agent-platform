@@ -135,12 +135,30 @@ public class SweeperWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new SweeperActivitiesTests.Rig();
         rig.App.Repositories.Add(Repo);
-        rig.Github.OpenPullRequests.Add(new GitHubListedPullRequest(7, TriageRules.RenovateUserId, "renovate/dep", Sha, Repo, Repo, rig.Now.AddHours(-1), []));
+        rig.Github.OpenPullRequests.Add(new GitHubListedPullRequest(7, TriageRules.RenovateUserId, Sha, Repo, Repo, []));
         rig.OpenCheck(7);
 
         await InWorkerAsync(env, rig, async () => await SweepAsync(env));
 
         Assert.Equal("failure", Assert.Single(rig.Github.StoredCheckRuns).Run.Conclusion);
+    }
+
+    [Fact]
+    public async Task AStepThatCouldNotReachGitHubForARow_IsRecordedAsAnError_AndLeavesTheSuccessTimeAlone()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new SweeperActivitiesTests.Rig();
+        rig.Github.Failure = new GitHubApiException("GitHub is down", System.Net.HttpStatusCode.BadGateway);
+        rig.App.Repositories.Add(Repo);
+        await rig.ParkAsync(7);
+
+        await InWorkerAsync(env, rig, async () => await SweepAsync(env));
+
+        var run = Assert.Single(await RunsAsync(rig));
+        Assert.Equal(RunStatus.Failed, run.Status);
+        Assert.Equal(["error", "completed", "error"], run.Steps.OrderBy(s => s.Seq).Select(s => s.StopReason));
+        Assert.Contains("\"errors\":1", run.Steps.Single(s => s.Name == "redrive").Output, StringComparison.Ordinal);
+        Assert.Null((await rig.Sweeper.GetAsync(Ct)).LastSuccessAt);
     }
 
     [Fact]

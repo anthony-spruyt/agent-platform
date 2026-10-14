@@ -231,6 +231,10 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("head_sha");
 
+                    b.Property<DateTimeOffset>("OpenedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("opened_at");
+
                     b.Property<int>("PrNumber")
                         .HasColumnType("integer")
                         .HasColumnName("pr_number");

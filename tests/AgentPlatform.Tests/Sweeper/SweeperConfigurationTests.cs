@@ -32,25 +32,23 @@ public class SweeperConfigurationTests
     }
 
     [Fact]
-    public void TheSweeperInterval_DefaultsToThirtyMinutes_AndTheOwnerToTheAllowedOwner()
+    public void TheSweeperInterval_DefaultsToThirtyMinutes()
     {
         using var provider = Build();
 
         var options = provider.GetRequiredService<IOptions<RenovateTriageOptions>>().Value;
 
         Assert.Equal(TimeSpan.FromMinutes(30), options.Sweeper.Interval);
-        Assert.Equal(TriageRules.AllowedOwner, options.OwnerLogin);
     }
 
     [Fact]
-    public void TheSweeperIntervalAndTheOwnerLogin_BindFromConfiguration()
+    public void TheSweeperInterval_BindsFromConfiguration()
     {
-        using var provider = Build(new() { ["RenovateTriage:Sweeper:Interval"] = "00:10:00", ["RenovateTriage:OwnerLogin"] = "someone" });
+        using var provider = Build(new() { ["RenovateTriage:Sweeper:Interval"] = "00:10:00" });
 
         var options = provider.GetRequiredService<IOptions<RenovateTriageOptions>>().Value;
 
         Assert.Equal(TimeSpan.FromMinutes(10), options.Sweeper.Interval);
-        Assert.Equal("someone", options.OwnerLogin);
     }
 
     [Theory]
@@ -60,12 +58,6 @@ public class SweeperConfigurationTests
     public void ASweeperIntervalUnderAMinute_FailsAtStartup(string interval)
     {
         Assert.Throws<InvalidOperationException>(() => Build(new() { ["RenovateTriage:Sweeper:Interval"] = interval }));
-    }
-
-    [Fact]
-    public void ABlankOwnerLogin_FailsAtStartup()
-    {
-        Assert.Throws<InvalidOperationException>(() => Build(new() { ["RenovateTriage:OwnerLogin"] = " " }));
     }
 
     [Fact]

@@ -45,10 +45,15 @@ internal sealed class RecordingSignaler : IRenovateTriageSignaler
 {
     public List<CheckSuiteCompletedSignal> Signals { get; } = [];
 
-    public Task SignalAsync(CheckSuiteCompletedSignal signal, CancellationToken cancellationToken)
+    public Func<Task>? OnSignal { get; set; }
+
+    public async Task SignalAsync(CheckSuiteCompletedSignal signal, CancellationToken cancellationToken)
     {
         Signals.Add(signal);
-        return Task.CompletedTask;
+        if (OnSignal is { } hook)
+        {
+            await hook().ConfigureAwait(false);
+        }
     }
 }
 

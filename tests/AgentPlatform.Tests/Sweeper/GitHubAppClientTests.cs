@@ -102,7 +102,7 @@ public class GitHubAppClientTests
         Assert.Equal(["anthony-spruyt/one", "anthony-spruyt/two"], repos);
         Assert.Equal("Bearer app.jwt.value", handler.Requests[0].Authorization);
         Assert.Equal("Bearer app.jwt.value", handler.Requests[1].Authorization);
-        Assert.Contains("\"pull_requests\":\"read\"", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Equal("""{"permissions":{"metadata":"read"}}""", handler.Requests[1].Body);
         Assert.Equal("Bearer ghs_scoped", handler.Requests[2].Authorization);
     }
 
