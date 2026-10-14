@@ -11,6 +11,10 @@ public enum TriageVerdict
 {
     Approve,
     NeedsReview,
+    Safe,
+    Fixable,
+    Blocked,
+    Owner,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<CiState>))]

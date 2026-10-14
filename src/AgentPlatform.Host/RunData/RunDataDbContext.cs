@@ -17,6 +17,14 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
 
     public DbSet<RenovateTriageVerdict> TriageVerdicts => Set<RenovateTriageVerdict>();
 
+    public DbSet<ClaudeRun> ClaudeRuns => Set<ClaudeRun>();
+
+    public DbSet<TriagePending> TriagePending => Set<TriagePending>();
+
+    public DbSet<ClaudeCooldown> ClaudeCooldowns => Set<ClaudeCooldown>();
+
+    public DbSet<SweeperState> SweeperState => Set<SweeperState>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
@@ -30,9 +38,54 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             verdict.Property(v => v.HeadSha).HasMaxLength(64);
             verdict.Property(v => v.Verdict).HasConversion<string>().HasMaxLength(16);
             verdict.Property(v => v.Mode).HasConversion<string>().HasMaxLength(16);
+            verdict.Property(v => v.Rung).HasConversion<string>().HasMaxLength(16);
+            verdict.Property(v => v.Action).HasConversion<string>().HasMaxLength(16);
             verdict.Property(v => v.Reasons).HasColumnType(Jsonb);
             verdict.Property(v => v.CreatedAt).HasDefaultValueSql("now()");
             verdict.HasIndex(v => new { v.Repo, v.PrNumber, v.HeadSha, v.Mode }).IsUnique();
+        });
+
+        modelBuilder.Entity<ClaudeRun>(claudeRun =>
+        {
+            claudeRun.ToTable("claude_runs");
+            claudeRun.HasKey(r => r.Id);
+            claudeRun.Property(r => r.Id).ValueGeneratedNever();
+            claudeRun.Property(r => r.Repo).HasMaxLength(200);
+            claudeRun.Property(r => r.HeadSha).HasMaxLength(64);
+            claudeRun.Property(r => r.WorkflowId).HasMaxLength(300);
+            claudeRun.Property(r => r.Outcome).HasConversion<string>().HasMaxLength(16);
+            claudeRun.Property(r => r.Model).HasMaxLength(100);
+            claudeRun.Property(r => r.CostUsd).HasColumnType(Money);
+            claudeRun.HasIndex(r => r.PodCreatedAt);
+            claudeRun.HasIndex(r => new { r.Repo, r.PrNumber, r.HeadSha });
+            claudeRun.HasIndex(r => new { r.Repo, r.FinishedAt });
+        });
+
+        modelBuilder.Entity<TriagePending>(pending =>
+        {
+            pending.ToTable("renovate_triage_pending");
+            pending.HasKey(p => p.Id);
+            pending.Property(p => p.Id).ValueGeneratedNever();
+            pending.Property(p => p.Repo).HasMaxLength(200);
+            pending.Property(p => p.HeadSha).HasMaxLength(64);
+            pending.Property(p => p.Reason).HasMaxLength(200);
+            pending.Property(p => p.Status).HasConversion<string>().HasMaxLength(16);
+            pending.HasIndex(p => new { p.Repo, p.PrNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<ClaudeCooldown>(cooldown =>
+        {
+            cooldown.ToTable("claude_cooldowns");
+            cooldown.HasKey(c => c.Scope);
+            cooldown.Property(c => c.Scope).HasMaxLength(200);
+            cooldown.Property(c => c.Cause).HasMaxLength(100);
+        });
+
+        modelBuilder.Entity<SweeperState>(state =>
+        {
+            state.ToTable("sweeper_state");
+            state.HasKey(s => s.Id);
+            state.Property(s => s.Id).ValueGeneratedNever();
         });
 
         modelBuilder.Entity<Prompt>(prompt =>

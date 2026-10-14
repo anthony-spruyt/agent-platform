@@ -264,7 +264,7 @@ public class WorkerConfigurationTests
     [Fact]
     public void TheLiteLlmBaseUrl_DefaultsToTheInClusterService()
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["LiteLlm:ApiKey"] = "test-key" }).Build();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["LiteLlm:ApiKey"] = "test-key", ["RenovateTriage:OwnerLogin"] = "test-owner" }).Build();
         var services = new ServiceCollection();
         services.AddRenovateTriage(configuration);
         using var provider = services.BuildServiceProvider();

@@ -1,0 +1,33 @@
+namespace AgentPlatform.Host.RenovateTriage;
+
+public enum TriagePendingStatus
+{
+    Pending,
+    Redriven,
+    Settled,
+    Owner,
+    OwnerHandled,
+}
+
+public sealed class TriagePending
+{
+    public Guid Id { get; set; }
+
+    public required string Repo { get; set; }
+
+    public int PrNumber { get; set; }
+
+    public required string HeadSha { get; set; }
+
+    public required string Reason { get; set; }
+
+    public TriagePendingStatus Status { get; set; }
+
+    public int Attempts { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; }
+
+    public bool IsOpen => Status is TriagePendingStatus.Pending or TriagePendingStatus.Redriven;
+}

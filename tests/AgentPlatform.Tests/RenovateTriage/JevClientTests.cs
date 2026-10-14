@@ -278,6 +278,7 @@ public class JevClientTests
         {
             ["LiteLlm:BaseUrl"] = "http://litellm.example.test:4000",
             ["LiteLlm:ApiKey"] = "sk-test-virtual",
+            ["RenovateTriage:OwnerLogin"] = "test-owner",
         });
         builder.AddServiceDefaults();
         builder.Services.AddRenovateTriage(builder.Configuration);

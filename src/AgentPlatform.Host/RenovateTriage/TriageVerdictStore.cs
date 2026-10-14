@@ -32,7 +32,7 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
     }
 
     // Only the row of the verdict that was written counts: a flag written over an unapplied approval leaves that approval unapplied.
-    public async Task MarkAppliedAsync(string repo, int prNumber, string headSha, TriageVerdict verdict, CancellationToken cancellationToken)
+    public async Task MarkAppliedAsync(string repo, int prNumber, string headSha, TriageVerdict verdict, CancellationToken cancellationToken, VerdictAction? action = null)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var row = await db.TriageVerdicts
@@ -44,11 +44,12 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
         }
 
         row.AppliedAt = DateTimeOffset.UtcNow;
+        row.Action = action;
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // The first verdict for a commit stands; a concurrent writer can win the unique key, so retry once on a fresh context.
-    public async Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, CancellationToken cancellationToken)
+    public async Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, CancellationToken cancellationToken, LadderRung? rung = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repo);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(prNumber);
@@ -57,18 +58,18 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
 
         try
         {
-            return await InsertAsync(repo, prNumber, headSha, decision, mode, cancellationToken).ConfigureAwait(false);
+            return await InsertAsync(repo, prNumber, headSha, decision, mode, rung, cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException)
         {
-            return await InsertAsync(repo, prNumber, headSha, decision, mode, cancellationToken).ConfigureAwait(false);
+            return await InsertAsync(repo, prNumber, headSha, decision, mode, rung, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private static Task<bool> RowExistsAsync(RunDataDbContext db, string repo, int prNumber, string headSha, TriageMode mode, CancellationToken cancellationToken) =>
         db.TriageVerdicts.AnyAsync(v => v.Repo == repo && v.PrNumber == prNumber && v.HeadSha == headSha && v.Mode == mode, cancellationToken);
 
-    private async Task<bool> InsertAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, CancellationToken cancellationToken)
+    private async Task<bool> InsertAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, LadderRung? rung, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         if (await RowExistsAsync(db, repo, prNumber, headSha, mode, cancellationToken).ConfigureAwait(false))
@@ -86,6 +87,7 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
             Reasons = JsonSerializer.Serialize(new[] { decision.Reason }),
             Comment = decision.Comment,
             Mode = mode,
+            Rung = rung,
         });
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return true;

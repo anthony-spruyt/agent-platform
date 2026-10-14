@@ -34,6 +34,7 @@ public static class WorkerServiceCollectionExtensions
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<PromptActivities>()
             .AddSingletonActivities<RunDataActivities>()
+            .AddSingletonActivities<ClaudeBudgetActivities>()
             .AddScopedActivities<RenovateTriageActivities>()
             .AddScopedActivities<RenovateTriageCodeActivities>()
             .AddScopedActivities<TriageCheckActivities>()
