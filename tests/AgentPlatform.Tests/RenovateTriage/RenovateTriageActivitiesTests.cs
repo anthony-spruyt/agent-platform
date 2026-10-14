@@ -20,13 +20,13 @@ public class RenovateTriageActivitiesTests
 
     private sealed record Rig(RenovateTriageActivities Activities, FakeGitHubApi Github, FakeJev Jev, InMemoryRunData Data, FakeTextScanner Scanner);
 
-    private static Rig Create(TriageMode mode = TriageMode.Shadow, string? ownerLogin = null)
+    private static Rig Create(TriageMode mode = TriageMode.Shadow)
     {
         var github = new FakeGitHubApi();
         var jev = new FakeJev();
         var data = InMemoryRunData.Create();
         var scanner = new FakeTextScanner();
-        var activities = new RenovateTriageActivities(github, jev, data.Verdicts, Options.Create(new RenovateTriageOptions { Mode = mode, OwnerLogin = ownerLogin }), scanner);
+        var activities = new RenovateTriageActivities(github, jev, data.Verdicts, Options.Create(new RenovateTriageOptions { Mode = mode }), scanner);
         return new Rig(activities, github, jev, data, scanner);
     }
 
@@ -1432,11 +1432,10 @@ public class RenovateTriageActivitiesTests
 
     public class ApplyVerdictTests
     {
-        private const string Owner = "the-owner";
         private static readonly TriageDecision _safe = new(TriageVerdict.Safe, "agent", StickyComment.Verdict(TriageVerdict.Safe, "Looks fine.", Sha, "opus", "1"));
         private static readonly TriageDecision _approve = new(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog.");
 
-        private static Rig Live() => Create(TriageMode.Live, Owner);
+        private static Rig Live() => Create(TriageMode.Live);
 
         private static Task<ApplyResult> Apply(Rig rig, TriageDecision decision) =>
             Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, Sha, decision, TriageMode.Live)));
@@ -1635,17 +1634,6 @@ public class RenovateTriageActivitiesTests
             var result = await Apply(rig, _safe);
 
             AssertHandedToTheOwner(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
-        }
-
-        [Fact]
-        public async Task Safe_WhenTheOwnerRequestedChanges_GoesToTheOwner()
-        {
-            var rig = Live();
-            rig.Github.Reviews.Add(new GitHubReview(5, Owner, "OWNER", "CHANGES_REQUESTED", Sha, null));
-
-            var result = await Apply(rig, _safe);
-
-            AssertHandedToTheOwner(rig, result, TriageRules.OwnerChangesRequested, "requested changes");
         }
 
         [Fact]

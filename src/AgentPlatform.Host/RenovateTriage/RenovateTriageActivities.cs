@@ -216,12 +216,6 @@ public sealed partial class RenovateTriageActivities(
             return new Gate(TriageRules.NonRenovateCommitDecision());
         }
 
-        var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-        if (TriageRules.HasOwnerChangesRequested(reviews, options.Value.OwnerLogin))
-        {
-            return new Gate(TriageRules.OwnerChangesRequestedDecision());
-        }
-
         var precheck = await TriagePrecheck.RunAsync(github, scanner, input.Repo, input.PrNumber, pr, cancellationToken).ConfigureAwait(false);
         if (precheck.HeadMoved)
         {

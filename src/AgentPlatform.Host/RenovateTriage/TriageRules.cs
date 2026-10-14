@@ -77,7 +77,6 @@ public static partial class TriageRules
     public const string PrecheckUnchecked = "precheck-unchecked";
     public const string CiNotPassed = "ci-not-passed";
     public const string StabilityDays = "renovate/stability-days";
-    public const string OwnerChangesRequested = "owner-changes-requested";
 
     public const string NonRenovateCommitComment = "**Needs review:** this PR has commits that Renovate didn't make.";
     public const string CiTimeoutComment = "**Needs review:** CI didn't finish within 2 hours.";
@@ -88,7 +87,6 @@ public static partial class TriageRules
     public const string PrecheckDiffComment = "**Needs review:** this PR changes more than version and digest updates.";
     public const string PrecheckFlaggedComment = "**Needs review:** some of this PR's content is held for a human look.";
     public const string PrecheckUncheckedComment = "**Needs review:** some of this PR's content could not be checked.";
-    public const string OwnerChangesRequestedComment = $"{NeedsReviewPrefix} the owner has requested changes on this PR.";
     public const string SafeApprovalComment = "**Auto-approved:** the agent judged this PR safe.";
     public const string DigestApprovalComment = "**Auto-approved:** digest bump.";
     public const string AllowlistedApprovalComment = "**Auto-approved:** allowlisted.";
@@ -108,7 +106,7 @@ public static partial class TriageRules
 
     private static readonly string[] _blockingLabels = [NeedsReviewLabel, NeedsTriageLabel, "agent/revert", BlockedLabel];
 
-    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason, CiNotPassed, StabilityDays, OwnerChangesRequested];
+    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason, CiNotPassed, StabilityDays];
 
     private static readonly string[] _livePathLabels = [NeedsReviewLabel, NeedsTriageLabel, AutoApprovedLabel];
 
@@ -149,21 +147,6 @@ public static partial class TriageRules
     }
 
     public static bool IsApproving(TriageVerdict verdict) => verdict is TriageVerdict.Approve or TriageVerdict.Safe;
-
-    public static bool HasOwnerChangesRequested(IReadOnlyList<GitHubReview> reviews, string? ownerLogin)
-    {
-        ArgumentNullException.ThrowIfNull(reviews);
-        if (string.IsNullOrEmpty(ownerLogin))
-        {
-            return false;
-        }
-
-        var latest = reviews.LastOrDefault(r =>
-            string.Equals(r.AuthorLogin, ownerLogin, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(r.State, "COMMENTED", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(r.State, "PENDING", StringComparison.OrdinalIgnoreCase));
-        return latest is not null && string.Equals(latest.State, "CHANGES_REQUESTED", StringComparison.OrdinalIgnoreCase);
-    }
 
     public static SafeAssessment AssessSafe(CiState ci, IReadOnlyList<GitHubCommitStatus> statuses, string branch)
     {
@@ -333,8 +316,6 @@ public static partial class TriageRules
         ArgumentNullException.ThrowIfNull(decision);
         return decision.Verdict == TriageVerdict.NeedsReview && !_neverClimb.Contains(decision.Reason, StringComparer.Ordinal);
     }
-
-    public static TriageDecision OwnerChangesRequestedDecision() => new(TriageVerdict.NeedsReview, OwnerChangesRequested, OwnerChangesRequestedComment);
 
     public static TriageDecision SafeHandoffDecision(string failedCheck, string headSha)
     {

@@ -1081,61 +1081,6 @@ public class TriageRulesTests
         public void TheHandoffDecision_NeverClimbs()
         {
             Assert.False(TriageRules.Climbs(TriageRules.SafeHandoffDecision(TriageRules.CiNotPassed, Head)));
-            Assert.False(TriageRules.Climbs(TriageRules.OwnerChangesRequestedDecision()));
-        }
-    }
-
-    public class OwnerReview
-    {
-        [Fact]
-        public void TheOwnersLatestReviewRequestingChanges_Counts()
-        {
-            Assert.True(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED")], "owner"));
-        }
-
-        [Fact]
-        public void LoginsAreComparedIgnoringCase()
-        {
-            Assert.True(TriageRules.HasOwnerChangesRequested([Review("Owner", "CHANGES_REQUESTED")], "owner"));
-        }
-
-        [Fact]
-        public void AnotherReviewersRequest_DoesNotCount()
-        {
-            Assert.False(TriageRules.HasOwnerChangesRequested([Review("someone", "CHANGES_REQUESTED")], "owner"));
-        }
-
-        [Fact]
-        public void AnAppsRequest_DoesNotCountEvenWithTheOwnersName()
-        {
-            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner[bot]", "CHANGES_REQUESTED")], "owner"));
-        }
-
-        [Fact]
-        public void ALaterApprovalOrDismissal_ClearsIt()
-        {
-            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED"), Review("owner", "APPROVED")], "owner"));
-            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED"), Review("owner", "DISMISSED")], "owner"));
-        }
-
-        [Fact]
-        public void ALaterComment_DoesNotClearIt()
-        {
-            Assert.True(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED"), Review("owner", "COMMENTED")], "owner"));
-        }
-
-        [Fact]
-        public void ARequestOnAnOlderCommit_StillCounts()
-        {
-            Assert.True(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED", commit: "a".PadRight(40, 'a'))], "owner"));
-        }
-
-        [Theory]
-        [InlineData(null)]
-        [InlineData("")]
-        public void WithoutAnOwnerLogin_NothingCounts(string? login)
-        {
-            Assert.False(TriageRules.HasOwnerChangesRequested([Review("owner", "CHANGES_REQUESTED")], login));
         }
     }
 }

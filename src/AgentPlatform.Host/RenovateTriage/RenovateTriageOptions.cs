@@ -8,8 +8,6 @@ public sealed class RenovateTriageOptions
 
     public MigrationOptions? Migration { get; set; }
 
-    public string? OwnerLogin { get; set; }
-
     public ClaudeBudgetOptions Claude { get; set; } = new();
 }
 
