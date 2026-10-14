@@ -11,14 +11,14 @@ public partial class AgentPodNamingTests
     [Fact]
     public void PodName_IsDeterministic()
     {
-        var first = AgentPodNaming.PodName("spike-1", "run-a", "claude");
-        var second = AgentPodNaming.PodName("spike-1", "run-a", "claude");
+        var first = AgentPodNaming.PodName("wf-1", "run-a", "claude");
+        var second = AgentPodNaming.PodName("wf-1", "run-a", "claude");
 
         Assert.Equal(first, second);
     }
 
     [Theory]
-    [InlineData("spike-1", "run-a", "claude")]
+    [InlineData("wf-1", "run-a", "claude")]
     [InlineData("renovate-triage/anthony-spruyt/spruyt-labs/3467", "019f1c2e-aaaa-bbbb-cccc-1234567890ab", "ladder-3")]
     [InlineData("UPPER_case.and spaces!!", "run", "step with spaces")]
     [InlineData("---", "run", "---")]
@@ -41,12 +41,12 @@ public partial class AgentPodNamingTests
     }
 
     [Theory]
-    [InlineData("spike-2", "run-a", "claude")]
-    [InlineData("spike-1", "run-b", "claude")]
-    [InlineData("spike-1", "run-a", "jev")]
+    [InlineData("wf-2", "run-a", "claude")]
+    [InlineData("wf-1", "run-b", "claude")]
+    [InlineData("wf-1", "run-a", "jev")]
     public void PodName_DiffersWhenAnyInputDiffers(string workflowId, string runId, string step)
     {
-        var baseline = AgentPodNaming.PodName("spike-1", "run-a", "claude");
+        var baseline = AgentPodNaming.PodName("wf-1", "run-a", "claude");
 
         Assert.NotEqual(baseline, AgentPodNaming.PodName(workflowId, runId, step));
     }

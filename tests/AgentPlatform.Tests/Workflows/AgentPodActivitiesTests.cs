@@ -1,6 +1,7 @@
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Support;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Activities;
 using Temporalio.Exceptions;
@@ -13,6 +14,36 @@ public class AgentPodActivitiesTests
     private static readonly RunAgentPodInput Input = new("claude", "Say hello", AgentTier.Read, 1800);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private sealed class CapturingLogger : ILogger<KubernetesAgentRunner>
+    {
+        private readonly object _gate = new();
+        private readonly List<string> _messages = [];
+
+        public IReadOnlyList<string> Messages
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return [.. _messages];
+                }
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_gate)
+            {
+                _messages.Add(formatter(state, exception));
+            }
+        }
+    }
 
     private sealed class FakeRunner : IAgentRunner
     {
@@ -42,7 +73,7 @@ public class AgentPodActivitiesTests
     private static ActivityEnvironment Environment(Action<object?[]>? heartbeat = null) =>
         new()
         {
-            Info = ActivityEnvironment.DefaultInfo with { WorkflowId = "spike-1", WorkflowRunId = "run-1" },
+            Info = ActivityEnvironment.DefaultInfo with { WorkflowId = "wf-1", WorkflowRunId = "run-1" },
             Heartbeater = details => heartbeat?.Invoke(details),
         };
 
@@ -54,7 +85,7 @@ public class AgentPodActivitiesTests
         var result = await Environment().RunAsync(() => Activities(runner).RunAgentPodAsync(Input));
 
         var request = Assert.Single(runner.Runs);
-        Assert.Equal(new AgentRunRequest("spike-1", "run-1", "claude", "Say hello", AgentTier.Read, 1800), request);
+        Assert.Equal(new AgentRunRequest("wf-1", "run-1", "claude", "Say hello", AgentTier.Read, 1800), request);
         Assert.Equal(AgentRunOutcome.Succeeded, result.Outcome);
     }
 
@@ -66,7 +97,7 @@ public class AgentPodActivitiesTests
         await Environment().RunAsync(() => Activities(runner).DeleteAgentPodAsync("claude"));
 
         var cancel = Assert.Single(runner.Cancels);
-        Assert.Equal("spike-1", cancel.WorkflowId);
+        Assert.Equal("wf-1", cancel.WorkflowId);
         Assert.Equal("run-1", cancel.RunId);
         Assert.Equal("claude", cancel.Step);
     }
@@ -151,9 +182,10 @@ public class AgentPodActivitiesTests
     public async Task RunAgentPod_AnAttemptThatTimedOutNeverDeletesThePodTheRetryReattachedTo()
     {
         var api = new FakeKubeApi();
-        var podName = AgentPodNaming.PodName("spike-1", "run-1", "claude");
+        var podName = AgentPodNaming.PodName("wf-1", "run-1", "claude");
         var held = new PodBehavior { Logs = FakeKubeApi.SuccessLogs };
         api.SetBehavior(podName, held);
+        var reattachLog = new CapturingLogger();
         var options = new AgentPodsOptions();
         var runner = new KubernetesAgentRunner(
             api.CreateClient(),
@@ -162,7 +194,7 @@ public class AgentPodActivitiesTests
             [],
             options,
             TimeProvider.System,
-            NullLogger<KubernetesAgentRunner>.Instance);
+            reattachLog);
         var activities = new AgentPodActivities(runner, options, NullLogger<AgentPodActivities>.Instance);
 
         var firstAttempt = Environment();
@@ -170,7 +202,7 @@ public class AgentPodActivitiesTests
         await WaitUntilAsync(() => api.Secrets.ContainsKey(podName));
         var secondAttempt = Environment();
         var second = secondAttempt.RunAsync(() => activities.RunAgentPodAsync(Input));
-        await WaitUntilAsync(() => api.CountOperations($"POST secret {podName}") == 2);
+        await WaitUntilAsync(() => reattachLog.Messages.Any(m => m.Contains("re-attaching", StringComparison.Ordinal)));
         firstAttempt.Cancel(ActivityCancelReason.Timeout);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
         held.Release.SetResult();

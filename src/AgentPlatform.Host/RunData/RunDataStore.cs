@@ -86,6 +86,14 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
         var name = NulStripping.Strip(input.Name);
         var stopReason = NulStripping.Strip(input.StopReason);
         var stepModel = Text(input.Model);
+        if (input.PromptBody is not null && string.IsNullOrWhiteSpace(input.PromptName))
+        {
+            throw new ArgumentException("A prompt needs a name.", nameof(input));
+        }
+
+        var promptBody = Text(input.PromptBody);
+        var promptName = Text(input.PromptName);
+        var promptHash = promptBody is null ? input.PromptHash : PromptHashing.Compute(promptBody);
 
         return ExecuteAsync(
             async db =>
@@ -100,7 +108,14 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
                     return true;
                 }
 
-                if (input.PromptHash is not null && !await db.Prompts.AnyAsync(p => p.Hash == input.PromptHash, cancellationToken).ConfigureAwait(false))
+                if (promptBody is not null)
+                {
+                    if (!await db.Prompts.AnyAsync(p => p.Hash == promptHash, cancellationToken).ConfigureAwait(false))
+                    {
+                        db.Prompts.Add(new Prompt { Hash = promptHash!, Name = promptName!, Body = promptBody, CreatedAt = DateTimeOffset.UtcNow });
+                    }
+                }
+                else if (promptHash is not null && !await db.Prompts.AnyAsync(p => p.Hash == promptHash, cancellationToken).ConfigureAwait(false))
                 {
                     throw new ArgumentException("The prompt hash does not match a stored prompt.", nameof(input));
                 }
@@ -117,7 +132,7 @@ public sealed class RunDataStore(IDbContextFactory<RunDataDbContext> factory)
                     Input = stepInput,
                     Output = stepOutput,
                     Confidence = input.Confidence,
-                    PromptHash = input.PromptHash,
+                    PromptHash = promptHash,
                     Model = stepModel,
                     InputTokens = input.InputTokens,
                     OutputTokens = input.OutputTokens,

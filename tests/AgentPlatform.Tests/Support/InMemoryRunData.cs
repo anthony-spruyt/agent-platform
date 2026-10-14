@@ -16,6 +16,7 @@ internal sealed class InMemoryRunData
         _interceptor = interceptor;
         Store = new RunDataStore(factory);
         Verdicts = new TriageVerdictStore(factory);
+        Pending = new TriagePendingStore(factory, TimeProvider.System);
     }
 
     public IDbContextFactory<RunDataDbContext> Factory { get; }
@@ -23,6 +24,8 @@ internal sealed class InMemoryRunData
     public RunDataStore Store { get; }
 
     public TriageVerdictStore Verdicts { get; }
+
+    public TriagePendingStore Pending { get; }
 
     public RunDataActivities Activities => new(Store);
 

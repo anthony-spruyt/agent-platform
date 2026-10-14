@@ -45,6 +45,18 @@ internal static class GitHubHttp
         }
     }
 
+    public static async Task SendIfPresentAsync(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
+    {
+        using (request)
+        {
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode != HttpStatusCode.NotFound)
+            {
+                EnsureSuccess(response, operation);
+            }
+        }
+    }
+
     public static async Task<T> SendAsync<T>(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
         where T : class
     {

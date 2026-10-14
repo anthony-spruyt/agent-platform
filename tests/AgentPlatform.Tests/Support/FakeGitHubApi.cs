@@ -27,6 +27,8 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public Action? OnDismiss { get; set; }
 
+    public Action? OnCreateComment { get; set; }
+
     public List<string> Writes { get; } = [];
 
     public List<(string CommitId, string Body)> Approvals { get; } = [];
@@ -161,8 +163,32 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         return Task.CompletedTask;
     }
 
+    public List<GitHubCommitStatus> Statuses { get; } = [new("renovate/stability-days", "success")];
+
+    public List<string> RemovedLabels { get; } = [];
+
+    public Task<IReadOnlyList<GitHubCommitStatus>> ListCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken)
+    {
+        Calls.Add($"statuses:{sha}");
+        return Result<IReadOnlyList<GitHubCommitStatus>>([.. Statuses]);
+    }
+
+    public Task RemoveLabelAsync(string repo, int number, string label, CancellationToken cancellationToken)
+    {
+        if (WriteFailure is not null)
+        {
+            return Task.FromException(WriteFailure);
+        }
+
+        Writes.Add($"label-remove:{label}");
+        RemovedLabels.Add(label);
+        PullRequest = PullRequest with { Labels = [.. PullRequest.Labels.Where(l => l != label)] };
+        return Task.CompletedTask;
+    }
+
     public Task<long> CreateIssueCommentAsync(string repo, int number, string body, CancellationToken cancellationToken)
     {
+        OnCreateComment?.Invoke();
         if (WriteFailure is not null)
         {
             return Task.FromException<long>(WriteFailure);
@@ -297,6 +323,8 @@ internal sealed class FakeJev : IJevClient
 
     public Func<Task>? OnClassifyCi { get; set; }
 
+    public Action? OnAsk { get; set; }
+
     public async Task<CiFailureKind> ClassifyCiAsync(string ciLogs, CancellationToken cancellationToken)
     {
         CiLogs.Add(ciLogs);
@@ -312,6 +340,7 @@ internal sealed class FakeJev : IJevClient
     {
         Bodies.Add(prBody);
         Diffs.Add(prDiff);
+        OnAsk?.Invoke();
         if (Failure is not null && FailuresBeforeAnswer is not <= 0)
         {
             FailuresBeforeAnswer--;

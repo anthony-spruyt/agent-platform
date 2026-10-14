@@ -7,6 +7,17 @@ public sealed class RenovateTriageOptions
     public TriageMode Mode { get; set; } = TriageMode.Shadow;
 
     public MigrationOptions? Migration { get; set; }
+
+    public ClaudeBudgetOptions Claude { get; set; } = new();
+}
+
+public sealed class ClaudeBudgetOptions
+{
+    public int MaxPerHour { get; set; } = 2;
+
+    public int MaxPerDay { get; set; } = 8;
+
+    public int MaxPerPrPerDay { get; set; } = 2;
 }
 
 public sealed class MigrationOptions

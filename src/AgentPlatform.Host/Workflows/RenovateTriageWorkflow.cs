@@ -20,7 +20,7 @@ public partial class RenovateTriageWorkflow
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
     // The scanner takes up to 10 minutes per text and texts go through it one at a time.
-    internal static readonly ActivityOptions ScanOptions = new()
+    private static readonly ActivityOptions _scanOptions = new()
     {
         StartToCloseTimeout = TimeSpan.FromHours(1),
         ScheduleToCloseTimeout = TimeSpan.FromHours(3),
@@ -61,7 +61,7 @@ public partial class RenovateTriageWorkflow
 
     private static readonly ActivityOptions _applyOptions = new()
     {
-        StartToCloseTimeout = TimeSpan.FromMinutes(2),
+        StartToCloseTimeout = TimeSpan.FromMinutes(7),
         ScheduleToCloseTimeout = TimeSpan.FromHours(2),
         RetryPolicy = new RetryPolicy
         {
@@ -109,6 +109,7 @@ public partial class RenovateTriageWorkflow
             RunRecorder.ToJson(new { repo = input.Repo, prNumber = input.PrNumber, trigger }),
             started));
         _step2 = Workflow.Patched(Step2Patch);
+        _claude = Workflow.Patched(ClaudePatch);
         try
         {
             return await JudgeAsync(input, run);
@@ -142,7 +143,7 @@ public partial class RenovateTriageWorkflow
             var seen = _signalCount;
             var stepStarted = Workflow.UtcNow;
             var assess = await Workflow.ExecuteActivityAsync(
-                (RenovateTriageActivities activities) => activities.AssessAsync(new AssessInput(input.Repo, input.PrNumber, _step2, precheckedSha)),
+                (RenovateTriageActivities activities) => activities.AssessAsync(new AssessInput(input.Repo, input.PrNumber, _step2, precheckedSha, _claude)),
                 _activityOptions);
             await RecordStepAsync(run, ++seq, "assess", LadderRung.Rule, assess.Status.ToString(), stepStarted, assess);
             _mode = assess.Mode;
@@ -156,8 +157,12 @@ public partial class RenovateTriageWorkflow
 
             judgedSha = assess.HeadSha;
             TriageDecision? decision = null;
+            string? climbReason = null;
             switch (assess.Status)
             {
+                case AssessStatus.Climb:
+                    climbReason = assess.Reason;
+                    break;
                 case AssessStatus.Skipped:
                     await FinishCheckAsync(input, assess.HeadSha, CheckRunConclusion.Skipped, $"Skipped: {assess.Reason}.");
                     await CompleteAsync(run);
@@ -266,6 +271,18 @@ public partial class RenovateTriageWorkflow
                     break;
             }
 
+            if (_claude && (climbReason is not null || WantsAgent(assess, decision)))
+            {
+                var climbed = await ClimbAsync(input, run, seq, assess.HeadSha, climbReason ?? decision!.Reason, body, assess.Mode);
+                seq = _seq;
+                if (climbed is null)
+                {
+                    continue;
+                }
+
+                return climbed;
+            }
+
             var verdict = decision!;
             if (_step2 && assess.Mode == TriageMode.Live)
             {
@@ -284,7 +301,12 @@ public partial class RenovateTriageWorkflow
                 }
             }
 
-            return await RecordVerdictAsync(input, run, ++seq, assess.HeadSha, verdict, assess.Mode, body);
+            if (_claude && assess.Mode == TriageMode.Live && !assess.Stored && verdict.Verdict == TriageVerdict.NeedsReview)
+            {
+                verdict = verdict with { Verdict = TriageVerdict.Owner };
+            }
+
+            return await RecordVerdictAsync(input, run, ++seq, assess.HeadSha, verdict, assess.Mode, body, null);
         }
     }
 
@@ -293,7 +315,7 @@ public partial class RenovateTriageWorkflow
         var stepStarted = Workflow.UtcNow;
         var result = await Workflow.ExecuteActivityAsync(
             (RenovateTriageCodeActivities activities) => activities.PrecheckAsync(new PrecheckInput(input.Repo, input.PrNumber, headSha)),
-            ScanOptions);
+            _scanOptions);
         await RecordStepAsync(
             run,
             seq,
@@ -358,7 +380,7 @@ public partial class RenovateTriageWorkflow
         var stepStarted = Workflow.UtcNow;
         var fetched = await Workflow.ExecuteActivityAsync(
             (RenovateTriageCodeActivities activities) => activities.FetchChangelogAsync(new FetchChangelogInput(input.Repo, input.PrNumber, headSha, body)),
-            ScanOptions);
+            _scanOptions);
         var held = fetched.Sections.Count(s => s.Outcome != ScanOutcome.Clean);
         await RecordStepAsync(
             run,
@@ -393,7 +415,7 @@ public partial class RenovateTriageWorkflow
         {
             var built = await Workflow.ExecuteActivityAsync(
                 (RenovateTriageCodeActivities activities) => activities.BuildContextAsync(new BuildContextInput(input.Repo, input.PrNumber, headSha, reason, body)),
-                ScanOptions);
+                _scanOptions);
             _context = built.Context;
             await RecordStepAsync(run, ++seq, "context", LadderRung.Rule, built.HeadMoved ? "head_moved" : "built", stepStarted, new { built.HeadMoved, sections = built.Context?.Sections.Count });
         }
@@ -435,13 +457,13 @@ public partial class RenovateTriageWorkflow
         _ => "answered",
     };
 
-    private async Task<RenovateTriageResult> RecordVerdictAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageDecision decision, TriageMode mode, ScannedText? body)
+    private async Task<RenovateTriageResult> RecordVerdictAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageDecision decision, TriageMode mode, ScannedText? body, LadderRung? rung)
     {
         var stepStarted = Workflow.UtcNow;
         var recorded = await Workflow.ExecuteActivityAsync(
-            (RenovateTriageActivities activities) => activities.RecordVerdictAsync(new RecordVerdictInput(input.Repo, input.PrNumber, headSha, decision, mode)),
+            (RenovateTriageActivities activities) => activities.RecordVerdictAsync(new RecordVerdictInput(input.Repo, input.PrNumber, headSha, decision, mode, rung)),
             _activityOptions);
-        await RecordStepAsync(run, seq, "verdict", LadderRung.Rule, decision.Reason, stepStarted, new { decision, recorded });
+        await RecordStepAsync(run, seq, "verdict", rung ?? LadderRung.Rule, decision.Reason, stepStarted, new { decision, recorded });
         ApplyResult? applied = null;
         if (mode == TriageMode.Live && Workflow.Patched(LivePatch))
         {
@@ -452,9 +474,10 @@ public partial class RenovateTriageWorkflow
             await RecordStepAsync(run, seq + 1, "apply", LadderRung.Rule, applied.Outcome.ToString(), stepStarted, applied);
         }
 
+        var effective = applied?.Effective ?? decision;
         if (applied is { Outcome: ApplyOutcome.Applied })
         {
-            await FinishCheckAsync(input, headSha, CheckRunConclusion.Success, $"Verdict applied: {decision.Reason}.");
+            await FinishCheckAsync(input, headSha, CheckRunConclusion.Success, $"Verdict applied: {effective.Reason}.");
         }
         else if (applied is not null)
         {
@@ -465,7 +488,13 @@ public partial class RenovateTriageWorkflow
             await FinishCheckAsync(input, headSha, CheckRunConclusion.Neutral, $"Verdict {decision.Reason} was recorded without writes.");
         }
 
-        if (_step2 && applied is { Outcome: ApplyOutcome.Applied } && TriageRules.Climbs(decision))
+        if (_claude && applied is { Outcome: ApplyOutcome.Aborted, Reason: RenovateTriageActivities.HeadMovedReason } && Workflow.Patched(HeadPatch))
+        {
+            await CompleteAsync(run);
+            throw Workflow.CreateContinueAsNewException((RenovateTriageWorkflow wf) => wf.RunAsync(input));
+        }
+
+        if (_step2 && !_claude && applied is { Outcome: ApplyOutcome.Applied } && TriageRules.Climbs(decision))
         {
             await BuildContextAsync(input, run, seq + 1, headSha, decision.Reason, body);
         }

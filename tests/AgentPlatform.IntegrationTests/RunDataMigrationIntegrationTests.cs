@@ -45,6 +45,10 @@ public class RunDataMigrationIntegrationTests(AppHostFixture fixture)
         Assert.Contains("runs", tables);
         Assert.Contains("run_steps", tables);
         Assert.Contains("renovate_triage_verdicts", tables);
+        Assert.Contains("claude_runs", tables);
+        Assert.Contains("renovate_triage_pending", tables);
+        Assert.Contains("claude_cooldowns", tables);
+        Assert.Contains("sweeper_state", tables);
         Assert.Contains("__EFMigrationsHistory", tables);
         Assert.Equal(db.Database.GetMigrations(), await db.Database.GetAppliedMigrationsAsync(ct));
         Assert.Empty(await db.Database.GetPendingMigrationsAsync(ct));

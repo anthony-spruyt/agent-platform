@@ -7,6 +7,10 @@ public sealed record DiffFile(string Path, string Status, string? Patch);
 
 public sealed record DiffCommit(string Sha, string Message);
 
+public sealed record StatedVersion(string Package, string From, string To);
+
+public sealed record StatedVersions(IReadOnlyList<StatedVersion>? Rows, string? SubjectVersion);
+
 public enum DiffShapeFailure
 {
     None,
@@ -62,8 +66,6 @@ public static partial class DiffShape
 
     private sealed record VersionPair(Kind Kind, string Old, string New, string Path);
 
-    private sealed record StatedRow(string From, string To);
-
     public static DiffShapeResult Classify(
         IReadOnlyList<DiffFile> files,
         int expectedFileCount,
@@ -89,9 +91,7 @@ public static partial class DiffShape
             return new DiffShapeResult(DiffShapeFailure.FileCountMismatch);
         }
 
-        var message = commits[^1].Message ?? string.Empty;
-        var lines = LineBreak().Split(message);
-        if (!TryReadTable(lines, out var rows))
+        if (ReadStatedVersions(commits[^1].Message ?? string.Empty) is not { } stated)
         {
             return new DiffShapeResult(DiffShapeFailure.MalformedTable);
         }
@@ -121,10 +121,9 @@ public static partial class DiffShape
             }
         }
 
-        var subject = lines.Length > 0 ? lines[0] : string.Empty;
         foreach (var pair in pairs)
         {
-            if (!IsStated(pair, rows, subject))
+            if (!IsStated(pair, stated))
             {
                 return new DiffShapeResult(DiffShapeFailure.VersionNotStated, pair.Path);
             }
@@ -334,23 +333,34 @@ public static partial class DiffShape
 
     private static bool IsMultiPart(string version) => version.Split('-')[0].Split('+')[0].Contains('.', StringComparison.Ordinal);
 
-    private static bool IsStated(VersionPair pair, List<StatedRow>? rows, string subject)
+    public static StatedVersions? ReadStatedVersions(string commitMessage)
     {
-        if (rows is not null)
+        ArgumentNullException.ThrowIfNull(commitMessage);
+        var lines = LineBreak().Split(commitMessage);
+        if (!TryReadTable(lines, out var rows))
         {
-            return pair.Kind == Kind.Multi
-                ? rows.Exists(r => StripV(r.From) == StripV(pair.Old) && StripV(r.To) == StripV(pair.New))
-                : rows.Exists(r => MajorOf(r.From) == StripV(pair.Old) && MajorOf(r.To) == StripV(pair.New));
+            return null;
         }
 
-        var match = SubjectVersion().Match(subject);
-        if (!match.Success)
+        var match = SubjectVersion().Match(lines[0]);
+        return new StatedVersions(rows, match.Success ? match.Groups["ver"].Value : null);
+    }
+
+    private static bool IsStated(VersionPair pair, StatedVersions stated)
+    {
+        if (stated.Rows is { } rows)
+        {
+            return pair.Kind == Kind.Multi
+                ? rows.Any(r => StripV(r.From) == StripV(pair.Old) && StripV(r.To) == StripV(pair.New))
+                : rows.Any(r => MajorOf(r.From) == StripV(pair.Old) && MajorOf(r.To) == StripV(pair.New));
+        }
+
+        if (stated.SubjectVersion is not { } version)
         {
             return false;
         }
 
-        var stated = match.Groups["ver"].Value;
-        return (IsMultiPart(stated) || pair.Kind == Kind.Single) && StripV(pair.New) == StripV(stated);
+        return (IsMultiPart(version) || pair.Kind == Kind.Single) && StripV(pair.New) == StripV(version);
     }
 
     private static string StripV(string version) => version.StartsWith('v') || version.StartsWith('V') ? version[1..] : version;
@@ -363,7 +373,7 @@ public static partial class DiffShape
 
     private static string FileName(string path) => path[(path.LastIndexOf('/') + 1)..];
 
-    private static bool TryReadTable(string[] lines, out List<StatedRow>? rows)
+    private static bool TryReadTable(string[] lines, out IReadOnlyList<StatedVersion>? rows)
     {
         rows = null;
         var tableLines = lines.Skip(1).Select(l => l.Trim()).Where(l => l.StartsWith('|')).ToList();
@@ -375,12 +385,13 @@ public static partial class DiffShape
         var header = Cells(tableLines[0]).Select(c => c.ToLowerInvariant()).ToList();
         var from = header.IndexOf("from");
         var to = header.IndexOf("to");
-        if (header.IndexOf("datasource") < 0 || header.IndexOf("package") < 0 || from < 0 || to < 0)
+        var package = header.IndexOf("package");
+        if (header.IndexOf("datasource") < 0 || package < 0 || from < 0 || to < 0)
         {
             return false;
         }
 
-        rows = [];
+        var read = new List<StatedVersion>();
         foreach (var line in tableLines.Skip(1))
         {
             var cells = Cells(line);
@@ -394,9 +405,10 @@ public static partial class DiffShape
                 return false;
             }
 
-            rows.Add(new StatedRow(cells[from], cells[to]));
+            read.Add(new StatedVersion(cells[package], cells[from], cells[to]));
         }
 
+        rows = read;
         return true;
     }
 
