@@ -45,8 +45,6 @@ public sealed record GitHubRelease(string TagName, string? Name, string? Body);
 
 public sealed record GitHubJob(long Id, long RunId, int RunAttempt, string Name, string? Conclusion);
 
-public sealed record GitHubCommitStatus(string Context, string State);
-
 public interface IGitHubApiClient
 {
     Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken);
@@ -93,8 +91,6 @@ public interface IGitHubApiClient
 
     Task RemoveLabelAsync(string repo, int number, string label, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<GitHubCommitStatus>> ListCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken);
-
     Task<IReadOnlyList<GitHubListedPullRequest>> ListOpenPullRequestsAsync(string repo, DateTimeOffset updatedSince, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<GitHubIssueEvent>> ListIssueEventsAsync(string repo, int number, CancellationToken cancellationToken);
@@ -117,7 +113,6 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private static readonly Dictionary<string, string> _contentsRead = new() { ["contents"] = "read" };
     private static readonly Dictionary<string, string> _actionsRead = new() { ["actions"] = "read" };
     private static readonly Dictionary<string, string> _actionsWrite = new() { ["actions"] = "write" };
-    private static readonly Dictionary<string, string> _statusesRead = new() { ["statuses"] = "read" };
 
     private sealed record PullRequestDto(
         int Number,
@@ -174,10 +169,6 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
 
     private sealed record JobDto(long Id, long RunId, int RunAttempt, string? Name, string? Conclusion);
 
-    private sealed record CombinedStatusPage(List<StatusDto>? Statuses);
-
-    private sealed record StatusDto(string? Context, string? State);
-
     public async Task<GitHubPullRequest> GetPullRequestAsync(string repo, int number, CancellationToken cancellationToken)
     {
         var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
@@ -212,11 +203,11 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
 
     public async Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
     {
-        var runs = await ReadCheckRunsAsync(repo, sha, cancellationToken).ConfigureAwait(false);
+        var runs = await ReadCheckRunsAsync(repo, sha, allRuns: false, cancellationToken).ConfigureAwait(false);
         return [.. runs.Where(r => !IsOwnTriageRun(r))];
     }
 
-    private async Task<List<GitHubCheckRun>> ReadCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
+    private async Task<List<GitHubCheckRun>> ReadCheckRunsAsync(string repo, string sha, bool allRuns, CancellationToken cancellationToken)
     {
         var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
         if (!IsSha(sha))
@@ -226,7 +217,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
 
         var runs = await GetPagesAsync<CheckRunsPage, CheckRunDto>(
             repo,
-            $"repos/{owner}/{name}/commits/{sha}/check-runs",
+            $"repos/{owner}/{name}/commits/{sha}/check-runs{(allRuns ? "?filter=all" : string.Empty)}",
             _checksRead,
             "check runs list",
             page => page.CheckRuns,
@@ -471,11 +462,11 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentException.ThrowIfNullOrEmpty(externalId);
 
-        var runs = await ReadCheckRunsAsync(repo, sha, cancellationToken).ConfigureAwait(false);
-        return runs.FirstOrDefault(r =>
-            r.Name == name
-            && r.ExternalId == externalId
-            && r.AppId == _ownAppId);
+        // The default list hides all but one run per name, chosen by completion time, so an older completed run can mask a newer open one.
+        var runs = await ReadCheckRunsAsync(repo, sha, allRuns: true, cancellationToken).ConfigureAwait(false);
+        return runs
+            .Where(r => r.Name == name && r.ExternalId == externalId && r.AppId == _ownAppId)
+            .MaxBy(r => r.Id);
     }
 
     private static JsonObject CheckRunPayload(GitHubCheckRunWrite run)
@@ -580,25 +571,6 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             GitHubHttp.Request(HttpMethod.Delete, $"repos/{owner}/{name}/issues/{number}/labels/{Uri.EscapeDataString(label)}", token),
             "label remove",
             cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<IReadOnlyList<GitHubCommitStatus>> ListCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken)
-    {
-        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
-        if (!IsSha(sha))
-        {
-            throw new ArgumentException("The commit must be given as a hexadecimal sha.", nameof(sha));
-        }
-
-        var statuses = await GetPagesAsync<CombinedStatusPage, StatusDto>(
-            repo,
-            $"repos/{owner}/{name}/commits/{sha}/status",
-            _statusesRead,
-            "commit statuses list",
-            page => page.Statuses,
-            cancellationToken).ConfigureAwait(false);
-
-        return [.. statuses.Select(s => new GitHubCommitStatus(s.Context ?? string.Empty, s.State ?? string.Empty))];
     }
 
     public async Task<IReadOnlyList<GitHubListedPullRequest>> ListOpenPullRequestsAsync(string repo, DateTimeOffset updatedSince, CancellationToken cancellationToken)

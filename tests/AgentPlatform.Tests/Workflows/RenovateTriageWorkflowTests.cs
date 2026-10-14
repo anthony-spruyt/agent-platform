@@ -763,6 +763,69 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
+    public async Task LiveMode_AJudgedCommit_StartsAFreshCheckOnce_AndOnlyTheFirstOpenReportAsksForIt()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+
+        await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.CheckRuns.Reports.Count > 1);
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            await SignalAsync(env, Signal(suite: 2));
+            return await RunToResultAsync(handle, "renovate-triage-fresh-check-pending-then-approve");
+        });
+
+        var open = rig.CheckRuns.Reports.Where(r => r.Status != CheckRunStatus.Completed).ToList();
+        Assert.True(open.Count > 1);
+        Assert.True(open[0].StartNew);
+        Assert.All(open.Skip(1), r => Assert.False(r.StartNew));
+        Assert.All(rig.CheckRuns.Reports.Where(r => r.Status == CheckRunStatus.Completed), r => Assert.False(r.StartNew));
+    }
+
+    [Fact]
+    public async Task LiveMode_ACommitDecidedWithoutWaiting_StillOpensAFreshCheckBeforeItsResult()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.PullRequest = FakeGitHubApi.Renovate("renovate/cilium-1.x");
+
+        await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal()), "renovate-triage-fresh-check-decided"));
+
+        var first = rig.CheckRuns.Reports[0];
+        Assert.Equal((CheckRunStatus.InProgress, true), (first.Status, first.StartNew));
+        Assert.Equal(CheckRunStatus.Completed, rig.CheckRuns.Reports[^1].Status);
+    }
+
+    [Fact]
+    public async Task LiveMode_ASkippedPr_NeverAsksForAFreshCheck()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.PullRequest = rig.Github.PullRequest with { AuthorId = 5 };
+
+        await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.All(rig.CheckRuns.Reports, r => Assert.False(r.StartNew));
+    }
+
+    [Fact]
+    public async Task LiveMode_ACommitJudgedBefore_NeverAsksForAFreshCheck()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        var decision = new TriageDecision(TriageVerdict.NeedsReview, TriageRules.CiFailed, null);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, decision, TriageMode.Live, null, Ct);
+        await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, decision.Verdict, VerdictAction.Comment, Ct);
+
+        await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.All(rig.CheckRuns.Reports, r => Assert.False(r.StartNew));
+    }
+
+    [Fact]
     public async Task ShadowMode_NeverReportsACheck()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();

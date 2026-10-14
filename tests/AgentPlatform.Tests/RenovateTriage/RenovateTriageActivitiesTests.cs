@@ -1616,8 +1616,8 @@ public class RenovateTriageActivitiesTests
 
         private static Rig Live() => Create(TriageMode.Live);
 
-        private static Task<ApplyResult> Apply(Rig rig, TriageDecision decision) =>
-            Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, Sha, decision, TriageMode.Live)));
+        private static Task<ApplyResult> Apply(Rig rig, TriageDecision decision, bool ciWaitOver = false) =>
+            Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, Sha, decision, TriageMode.Live, CiWaitOver: ciWaitOver)));
 
         private static async Task Record(Rig rig, TriageDecision decision) =>
             await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, decision, TriageMode.Live, null, Ct);
@@ -1963,15 +1963,44 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task Safe_WhileCiIsPending_GoesToTheOwnerNamingTheCheck()
+        public async Task Safe_WhileCiIsPending_AbortsWithNothingWrittenAndTheVerdictStillUnapplied()
         {
             var rig = Live();
+            Labelled(rig, TriageRules.NeedsTriageLabel);
             await Record(rig, _safe);
             rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
 
             var result = await Apply(rig, _safe);
 
-            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.CiNotPassed, "CI had not passed");
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason), result);
+            Assert.Empty(rig.Github.Writes);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task Safe_WhileCiIsStillPendingAfterTheWaitIsOver_GoesToTheOwnerAsCiTimeout()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
+
+            var result = await Apply(rig, _safe, ciWaitOver: true);
+
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.CiTimeout, "CI");
+            Assert.Equal(TriageRules.CiTimeoutComment, result.Effective?.Comment);
+        }
+
+        [Fact]
+        public async Task Safe_WhenCiPassedWhileTheWaitRanOut_StillApproves()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+
+            var result = await Apply(rig, _safe, ciWaitOver: true);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Single(rig.Github.Approvals);
         }
 
         [Fact]
@@ -1991,19 +2020,19 @@ public class RenovateTriageActivitiesTests
                 }
             };
 
-            await Assert.ThrowsAsync<GitHubApiException>(() => Apply(rig, _safe));
+            await Assert.ThrowsAsync<GitHubApiException>(() => Apply(rig, _safe, ciWaitOver: true));
             Assert.Contains(TriageRules.NeedsReviewLabel, rig.Github.PullRequest.Labels);
             Assert.Empty(rig.Github.Comments);
 
-            var result = await Apply(rig, _safe);
+            var result = await Apply(rig, _safe, ciWaitOver: true);
 
             Assert.Equal(ApplyOutcome.Applied, result.Outcome);
             Assert.Equal(TriageVerdict.NeedsReview, result.Effective?.Verdict);
-            Assert.Equal(TriageRules.CiNotPassed, result.Effective?.Reason);
+            Assert.Equal(TriageRules.CiTimeout, result.Effective?.Reason);
             Assert.Equal(Sticky(result.Effective!.Comment!), Assert.Single(rig.Github.Comments).Body);
             Assert.Equal([TriageRules.NeedsTriageLabel], rig.Github.RemovedLabels);
             Assert.Empty(rig.Github.Approvals);
-            await AssertStoredAsync(rig, TriageVerdict.NeedsReview, TriageRules.CiNotPassed, result.Effective.Comment);
+            await AssertStoredAsync(rig, TriageVerdict.NeedsReview, TriageRules.CiTimeout, result.Effective.Comment);
         }
 
         [Fact]
@@ -2018,32 +2047,6 @@ public class RenovateTriageActivitiesTests
             Assert.Equal(new ApplyResult(ApplyOutcome.Refused, TriageRules.BlockingLabel), result);
             Assert.Empty(rig.Github.Writes);
             Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
-        }
-
-        [Theory]
-        [InlineData("pending")]
-        [InlineData("failure")]
-        public async Task Safe_WhileStabilityDaysIsNotSuccess_GoesToTheOwnerNamingTheCheck(string state)
-        {
-            var rig = Live();
-            await Record(rig, _safe);
-            rig.Github.Statuses[0] = new GitHubCommitStatus(TriageRules.StabilityDays, state);
-
-            var result = await Apply(rig, _safe);
-
-            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.StabilityDays, "renovate/stability-days");
-        }
-
-        [Fact]
-        public async Task Safe_WithoutAStabilityDaysStatus_Approves()
-        {
-            var rig = Live();
-            rig.Github.Statuses.Clear();
-
-            var result = await Apply(rig, _safe);
-
-            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
-            Assert.Single(rig.Github.Approvals);
         }
 
         [Fact]
@@ -2094,7 +2097,6 @@ public class RenovateTriageActivitiesTests
 
             Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
             Assert.Single(rig.Github.Approvals);
-            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("statuses", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -2115,9 +2117,9 @@ public class RenovateTriageActivitiesTests
             var rig = Live();
             Labelled(rig, TriageRules.NeedsTriageLabel);
             rig.Github.Reviews.Add(new GitHubReview(9, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", "old", null));
-            rig.Github.Statuses[0] = new GitHubCommitStatus(TriageRules.StabilityDays, "pending");
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
 
-            await Apply(rig, _safe);
+            await Apply(rig, _safe, ciWaitOver: true);
 
             Assert.Equal([TriageRules.NeedsTriageLabel], rig.Github.RemovedLabels);
             Assert.Equal([9L], rig.Github.Dismissed);

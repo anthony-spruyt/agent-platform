@@ -584,6 +584,34 @@ public class SweeperActivitiesTests
     }
 
     [Fact]
+    public async Task WhenAReTriageStartedANewCheck_ThatNewestOpenCheckIsTheOneCompletedAsFailure()
+    {
+        var rig = ReconcileRig();
+        rig.Github.OpenPullRequests.Add(Listed(7));
+        rig.OpenCheck(7, "skipped", "completed");
+        rig.OpenCheck(7);
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(["skipped", "failure"], rig.Github.StoredCheckRuns.Select(c => c.Run.Conclusion));
+        Assert.Equal(1, result.Failed);
+    }
+
+    [Fact]
+    public async Task WhenTheNewestOfSeveralChecksIsCompleted_NothingIsSignalledOrWritten()
+    {
+        var rig = ReconcileRig();
+        rig.Github.OpenPullRequests.Add(Listed(7));
+        rig.OpenCheck(7, "skipped", "completed");
+        rig.OpenCheck(7, "success", "completed");
+
+        await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Empty(rig.Github.CheckRunWrites);
+    }
+
+    [Fact]
     public async Task AnOpenTriageCheckWithAPendingRow_OrARunningTriage_IsLeftOpen()
     {
         var rig = ReconcileRig();

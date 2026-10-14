@@ -14,8 +14,9 @@ public class CheckRunReporterTests
         CheckRunStatus status = CheckRunStatus.InProgress,
         CheckRunConclusion? conclusion = null,
         string summary = "Waiting for CI",
-        string externalId = ExternalId) =>
-        new("anthony-spruyt/widgets", FakeGitHubApi.Sha, "Agent triage", externalId, status, conclusion, "Agent triage", summary);
+        string externalId = ExternalId,
+        bool startNew = false) =>
+        new("anthony-spruyt/widgets", FakeGitHubApi.Sha, "Agent triage", externalId, status, conclusion, "Agent triage", summary, startNew);
 
     [Fact]
     public async Task AFirstReport_CreatesTheRunWithTheStatusAndText()
@@ -93,6 +94,91 @@ public class CheckRunReporterTests
         var (_, run) = Assert.Single(github.StoredCheckRuns);
         Assert.Equal("success", run.Conclusion);
         Assert.Equal("Verdict applied", run.Summary);
+    }
+
+    [Theory]
+    [InlineData(CheckRunStatus.InProgress)]
+    [InlineData(CheckRunStatus.Queued)]
+    public async Task AnOpenReportThatStartsANewRun_CreatesAnotherRunWhenTheNewestIsCompleted(CheckRunStatus status)
+    {
+        var github = new FakeGitHubApi();
+        var reporter = new CheckRunReporter(github);
+        await reporter.ReportAsync(Report(CheckRunStatus.Completed, CheckRunConclusion.Skipped, "Skipped: blocking-label"), Ct);
+        github.CheckRunWrites.Clear();
+
+        await reporter.ReportAsync(Report(status, summary: "Checking the diff", startNew: true), Ct);
+
+        Assert.Equal(2, github.StoredCheckRuns.Count);
+        Assert.Equal([$"check-create:701:{(status == CheckRunStatus.Queued ? "queued" : "in_progress")}"], github.CheckRunWrites);
+        Assert.Equal("skipped", github.StoredCheckRuns[0].Run.Conclusion);
+        Assert.Equal("Checking the diff", github.StoredCheckRuns[1].Run.Summary);
+    }
+
+    [Fact]
+    public async Task AnOpenReportThatStartsANewRun_ReusesTheNewestRunWhenItIsOpen()
+    {
+        var github = new FakeGitHubApi();
+        var reporter = new CheckRunReporter(github);
+        await reporter.ReportAsync(Report(), Ct);
+        github.CheckRunWrites.Clear();
+
+        await reporter.ReportAsync(Report(summary: "Checking the diff", startNew: true), Ct);
+
+        var (id, run) = Assert.Single(github.StoredCheckRuns);
+        Assert.Equal("Checking the diff", run.Summary);
+        Assert.Equal([$"check-update:{id}:in_progress"], github.CheckRunWrites);
+    }
+
+    [Fact]
+    public async Task ARetryOfTheReportThatStartedANewRun_UpdatesThatRunInsteadOfCreatingAThird()
+    {
+        var github = new FakeGitHubApi();
+        var reporter = new CheckRunReporter(github);
+        await reporter.ReportAsync(Report(CheckRunStatus.Completed, CheckRunConclusion.Skipped, "Skipped"), Ct);
+        await reporter.ReportAsync(Report(startNew: true), Ct);
+
+        await reporter.ReportAsync(Report(startNew: true), Ct);
+
+        Assert.Equal(2, github.StoredCheckRuns.Count);
+    }
+
+    [Fact]
+    public async Task AReportThatDoesNotStartANewRun_LeavesTheNewestCompletedRunAlone()
+    {
+        var github = new FakeGitHubApi();
+        var reporter = new CheckRunReporter(github);
+        await reporter.ReportAsync(Report(CheckRunStatus.Completed, CheckRunConclusion.Skipped, "Skipped"), Ct);
+        github.CheckRunWrites.Clear();
+
+        await reporter.ReportAsync(Report(summary: "Later", startNew: false), Ct);
+
+        Assert.Empty(github.CheckRunWrites);
+    }
+
+    [Fact]
+    public async Task ACompletedReportThatStartsANewRun_NeverWritesOverACompletedRun()
+    {
+        var github = new FakeGitHubApi();
+        var reporter = new CheckRunReporter(github);
+        await reporter.ReportAsync(Report(CheckRunStatus.Completed, CheckRunConclusion.Skipped, "Skipped"), Ct);
+        github.CheckRunWrites.Clear();
+
+        await reporter.ReportAsync(Report(CheckRunStatus.Completed, CheckRunConclusion.Success, "Again", startNew: true), Ct);
+
+        Assert.Empty(github.CheckRunWrites);
+    }
+
+    [Fact]
+    public async Task WhenSeveralRunsExist_ALaterReportUpdatesTheNewestOpenOne()
+    {
+        var github = new FakeGitHubApi();
+        var reporter = new CheckRunReporter(github);
+        await reporter.ReportAsync(Report(CheckRunStatus.Completed, CheckRunConclusion.Skipped, "Skipped"), Ct);
+        await reporter.ReportAsync(Report(startNew: true), Ct);
+
+        await reporter.ReportAsync(Report(CheckRunStatus.Completed, CheckRunConclusion.Success, "Verdict applied"), Ct);
+
+        Assert.Equal(["skipped", "success"], github.StoredCheckRuns.Select(c => c.Run.Conclusion));
     }
 
     [Fact]

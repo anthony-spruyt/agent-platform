@@ -120,6 +120,64 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal(AgentPrompts.RenovateTriage, prompt.Name);
     }
 
+    [Fact]
+    public async Task ASafeAnswer_WhoseChecksRestartBeforeTheApply_WaitsForCiAndThenApprovesInsteadOfHandingOff()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = Answers(env, during: () =>
+        {
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            return Task.CompletedTask;
+        });
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
+            Assert.Empty(rig.Github.Approvals);
+            Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            await SignalAsync(env, Signal(suite: 2));
+            return await RunToResultAsync(handle, "renovate-triage-ci-race-applied");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, "claude-safe", TriageVerdict.Safe), result);
+        Assert.Equal([ShaA], rig.Github.Approvals.Select(a => a.CommitId));
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+        Assert.Single(rig.Pods.Inputs);
+        var verdict = Assert.Single(await VerdictsAsync(rig));
+        Assert.Equal(TriageVerdict.Safe, verdict.Verdict);
+        Assert.NotNull(verdict.AppliedAt);
+        var last = rig.CheckRuns.Reports[^1];
+        Assert.Equal((CheckRunStatus.Completed, CheckRunConclusion.Success), (last.Status, last.Conclusion));
+        Assert.Equal(1, rig.CheckRuns.Reports.Count(r => r.Status == CheckRunStatus.Completed));
+    }
+
+    [Fact]
+    public async Task ASafeAnswer_WhoseChecksStayPendingForTheWholeTwoHours_IsHandedToTheOwnerAsACiTimeout()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = Answers(env, during: () =>
+        {
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "queued", null, "github-actions"));
+            return Task.CompletedTask;
+        });
+
+        var result = await InWorkerAsync(env, rig, async () =>
+            await RunToResultAsync(await StartAsync(env, Signal()), "renovate-triage-ci-race-timeout"));
+
+        Assert.Equal(TriageVerdict.Safe, result.Verdict);
+        Assert.Empty(rig.Github.Approvals);
+        Assert.Contains(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+        Assert.Single(rig.Pods.Inputs);
+        Assert.Contains(TriageRules.CiTimeoutComment, Assert.Single(rig.Github.Comments).Body, StringComparison.Ordinal);
+        var row = Assert.Single(await VerdictsAsync(rig));
+        Assert.Equal("[\"ci-timeout\"]", row.Reasons);
+        Assert.NotNull(row.AppliedAt);
+    }
+
     [Theory]
     [InlineData("FIXABLE", TriageVerdict.Fixable, "claude-fixable", TriageRules.FixableLabel)]
     [InlineData("BLOCKED", TriageVerdict.Blocked, "claude-blocked", TriageRules.BlockedLabel)]

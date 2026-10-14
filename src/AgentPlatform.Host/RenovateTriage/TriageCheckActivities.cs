@@ -6,7 +6,7 @@ using Temporalio.Exceptions;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public sealed record TriageCheckInput(string Repo, int PrNumber, string HeadSha, CheckRunStatus Status, CheckRunConclusion? Conclusion, string Summary);
+public sealed record TriageCheckInput(string Repo, int PrNumber, string HeadSha, CheckRunStatus Status, CheckRunConclusion? Conclusion, string Summary, bool StartNew = false);
 
 public sealed class TriageCheckActivities(ICheckRunReporter reporter)
 {
@@ -37,7 +37,8 @@ public sealed class TriageCheckActivities(ICheckRunReporter reporter)
             input.Status,
             input.Conclusion,
             CheckName,
-            input.Summary);
+            input.Summary,
+            input.StartNew);
         await reporter.ReportAsync(report, ActivityExecutionContext.Current.CancellationToken).ConfigureAwait(false);
     }
 

@@ -10,11 +10,12 @@ public sealed class CheckRunReporter(IGitHubApiClient github) : ICheckRunReporte
         var write = ToWrite(report);
 
         var existing = await github.FindCheckRunAsync(report.Repo, report.HeadSha, report.Name, report.ExternalId, cancellationToken).ConfigureAwait(false);
-        if (existing is null)
+        var completed = existing is { Status: "completed" };
+        if (existing is null || (completed && report.StartNew && report.Status != CheckRunStatus.Completed))
         {
             await github.CreateCheckRunAsync(report.Repo, write, cancellationToken).ConfigureAwait(false);
         }
-        else if (existing.Status != "completed")
+        else if (!completed)
         {
             await github.UpdateCheckRunAsync(report.Repo, existing.Id, write, cancellationToken).ConfigureAwait(false);
         }

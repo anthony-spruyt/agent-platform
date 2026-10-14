@@ -19,6 +19,7 @@ public enum CheckRunConclusion
     Skipped,
 }
 
+// GitHub never reopens a completed run: StartNew makes a queued or in-progress report create a new run when the newest one is completed.
 public sealed record CheckRunReport(
     string Repo,
     string HeadSha,
@@ -27,7 +28,8 @@ public sealed record CheckRunReport(
     CheckRunStatus Status,
     CheckRunConclusion? Conclusion,
     string Title,
-    string Summary);
+    string Summary,
+    bool StartNew = false);
 
 public interface ICheckRunReporter
 {
