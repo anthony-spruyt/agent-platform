@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.9.0...v1.9.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **triage:** read the triage context first and end CI log tails at the failure ([272097e](https://github.com/anthony-spruyt/agent-platform/commit/272097ebdae466813bdd4038addcc07020684bec))
+
 ## [1.9.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.8.0...v1.9.0) (2026-10-13)
 
 
