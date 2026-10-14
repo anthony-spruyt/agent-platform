@@ -119,25 +119,25 @@ internal static class GitHubHttp
 
     private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxChars, bool keepTail, CancellationToken cancellationToken)
     {
-        var text = new StringBuilder();
+        var head = new StringBuilder();
+        var tail = keepTail ? new JobLogTail(maxChars) : null;
         var buffer = new char[8192];
         int read;
         while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
         {
-            text.Append(buffer, 0, read);
-            if (!keepTail && text.Length >= maxChars)
+            if (tail is not null)
+            {
+                tail.Append(buffer.AsSpan(0, read));
+                continue;
+            }
+
+            head.Append(buffer, 0, read);
+            if (head.Length >= maxChars)
             {
                 break;
             }
-
-            if (keepTail && text.Length > 2 * maxChars)
-            {
-                text.Remove(0, text.Length - maxChars);
-            }
         }
 
-        return keepTail
-            ? text.ToString(Math.Max(0, text.Length - maxChars), Math.Min(text.Length, maxChars))
-            : text.ToString(0, Math.Min(text.Length, maxChars));
+        return tail is not null ? tail.Result() : head.ToString(0, Math.Min(head.Length, maxChars));
     }
 }
