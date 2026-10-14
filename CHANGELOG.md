@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.10.0...v1.11.0) (2026-10-14)
+
+
+### Features
+
+* **triage:** re-drive parked Renovate PRs with a sweeper ([#72](https://github.com/anthony-spruyt/agent-platform/issues/72)) ([c4da42a](https://github.com/anthony-spruyt/agent-platform/commit/c4da42a067c5abb6b0fe4890573593bf6914e1f0))
+
 ## [1.10.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.9.1...v1.10.0) (2026-10-14)
 
 
