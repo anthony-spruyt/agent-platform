@@ -93,7 +93,7 @@ public static partial class TriageRules
 
     private const int MaxListedFailedChecks = 10;
 
-    private const string NeedsReviewPrefix = "**Needs review:**";
+    public const string NeedsReviewPrefix = "**Needs review:**";
     private const string FixablePrefix = "**Fixable:**";
     private const string AutoApprovedPrefix = "**Auto-approved:**";
 

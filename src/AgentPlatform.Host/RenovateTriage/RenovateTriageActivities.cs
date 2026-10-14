@@ -21,9 +21,9 @@ public sealed partial class RenovateTriageActivities(
     public const string RecordVerdictName = "RenovateTriageRecordVerdict";
     public const string ApplyName = "RenovateTriageApply";
     public const string JevErrorFailureType = "JevError";
+    public const string HeadMovedReason = "head-moved";
 
     private const string NotLive = "not-live";
-    private const string HeadMoved = "head-moved";
     private const string DismissalMessage = "A newer commit needs review.";
 
     [Activity(AssessName)]
@@ -187,8 +187,8 @@ public sealed partial class RenovateTriageActivities(
 
             if (!string.Equals(pr.HeadSha, input.HeadSha, StringComparison.Ordinal))
             {
-                LogNotApplied(logger, input.Repo, input.PrNumber, HeadMoved);
-                return new ApplyResult(ApplyOutcome.Aborted, HeadMoved);
+                LogNotApplied(logger, input.Repo, input.PrNumber, HeadMovedReason);
+                return new ApplyResult(ApplyOutcome.Aborted, HeadMovedReason);
             }
 
             var gate = TriageRules.IsApproving(input.Decision.Verdict)
@@ -265,7 +265,7 @@ public sealed partial class RenovateTriageActivities(
         var precheck = await TriagePrecheck.RunAsync(github, scanner, input.Repo, input.PrNumber, pr, cancellationToken).ConfigureAwait(false);
         if (precheck.HeadMoved)
         {
-            return new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, HeadMoved));
+            return new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, HeadMovedReason));
         }
 
         if (precheck.Verdict != PrecheckVerdict.Passed)
