@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.11.1...v1.12.0) (2026-10-14)
+
+
+### Features
+
+* **triage:** fresh check on re-triage, no hand-off on Renovate's own gates ([#76](https://github.com/anthony-spruyt/agent-platform/issues/76)) ([e6b49f0](https://github.com/anthony-spruyt/agent-platform/commit/e6b49f03715fa0ee0f97f7c189399f997402782b))
+
 ## [1.11.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.11.0...v1.11.1) (2026-10-14)
 
 
