@@ -58,6 +58,10 @@ internal static class GitHubHttp
     }
 
     public static async Task<T> SendAsync<T>(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
+        where T : class =>
+        (await SendWithHeadersAsync<T>(client, request, operation, cancellationToken).ConfigureAwait(false)).Body;
+
+    public static async Task<(T Body, HttpResponseHeaders Headers)> SendWithHeadersAsync<T>(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
         where T : class
     {
         using (request)
@@ -67,8 +71,9 @@ internal static class GitHubHttp
 
             try
             {
-                return await response.Content.ReadFromJsonAsync<T>(GitHubJson.Options, cancellationToken).ConfigureAwait(false)
+                var body = await response.Content.ReadFromJsonAsync<T>(GitHubJson.Options, cancellationToken).ConfigureAwait(false)
                     ?? throw new GitHubApiException($"GitHub {operation} returned an empty body.", response.StatusCode);
+                return (body, response.Headers);
             }
             catch (JsonException ex)
             {
@@ -121,7 +126,7 @@ internal static class GitHubHttp
         }
     }
 
-    private static void EnsureSuccess(HttpResponseMessage response, string operation)
+    internal static void EnsureSuccess(HttpResponseMessage response, string operation)
     {
         if (!response.IsSuccessStatusCode)
         {

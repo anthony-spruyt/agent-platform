@@ -63,6 +63,17 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<TriagePending>> ListOpenAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.TriagePending
+            .AsNoTracking()
+            .Where(p => p.Status == TriagePendingStatus.Pending || p.Status == TriagePendingStatus.Redriven)
+            .OrderBy(p => p.CreatedAt)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<int> CountOpenAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

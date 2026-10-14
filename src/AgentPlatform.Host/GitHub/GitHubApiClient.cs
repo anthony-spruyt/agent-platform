@@ -35,6 +35,10 @@ public sealed record GitHubReview(long Id, string? AuthorLogin, string? AuthorAs
 
 public sealed record GitHubIssueComment(long Id, string? AuthorLogin, string Body);
 
+public sealed record GitHubListedPullRequest(int Number, long? AuthorId, string HeadRef, string HeadSha, string? HeadRepo, string? BaseRepo, DateTimeOffset UpdatedAt, IReadOnlyList<string> Labels);
+
+public sealed record GitHubIssueEvent(string Event, string? ActorLogin, string? Label, DateTimeOffset CreatedAt);
+
 public sealed record GitHubCheckRunWrite(string Name, string HeadSha, string ExternalId, string Status, string? Conclusion, string Title, string Summary);
 
 public sealed record GitHubRelease(string TagName, string? Name, string? Body);
@@ -90,6 +94,10 @@ public interface IGitHubApiClient
     Task RemoveLabelAsync(string repo, int number, string label, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<GitHubCommitStatus>> ListCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<GitHubListedPullRequest>> ListOpenPullRequestsAsync(string repo, DateTimeOffset updatedSince, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<GitHubIssueEvent>> ListIssueEventsAsync(string repo, int number, CancellationToken cancellationToken);
 }
 
 public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenProvider tokens, IOptions<GitHubAppOptions> appOptions) : IGitHubApiClient
@@ -127,6 +135,10 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         int ChangedFiles);
 
     private sealed record UserDto(string? Login, long? Id);
+
+    private sealed record ListedPullRequestDto(int Number, UserDto? User, RefDto? Head, RefDto? Base, List<LabelDto>? Labels, DateTimeOffset UpdatedAt);
+
+    private sealed record IssueEventDto(string? Event, UserDto? Actor, LabelDto? Label, DateTimeOffset CreatedAt);
 
     private sealed record RefDto(string? Ref, string? Sha, RepoDto? Repo);
 
@@ -589,6 +601,48 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         return [.. statuses.Select(s => new GitHubCommitStatus(s.Context ?? string.Empty, s.State ?? string.Empty))];
     }
 
+    public async Task<IReadOnlyList<GitHubListedPullRequest>> ListOpenPullRequestsAsync(string repo, DateTimeOffset updatedSince, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+
+        var prs = await GetPagesAsync<List<ListedPullRequestDto>, ListedPullRequestDto>(
+            repo,
+            $"repos/{owner}/{name}/pulls?state=open&sort=updated&direction=desc",
+            _pullRequestsRead,
+            "open pull requests list",
+            page => page,
+            cancellationToken,
+            stopAfter: page => page.Any(p => p.UpdatedAt < updatedSince)).ConfigureAwait(false);
+
+        return [.. prs
+            .Where(p => p.UpdatedAt >= updatedSince)
+            .Select(p => new GitHubListedPullRequest(
+                p.Number,
+                p.User?.Id,
+                p.Head?.Ref ?? string.Empty,
+                p.Head?.Sha ?? string.Empty,
+                p.Head?.Repo?.FullName,
+                p.Base?.Repo?.FullName,
+                p.UpdatedAt,
+                [.. (p.Labels ?? []).Select(l => l.Name).OfType<string>()]))];
+    }
+
+    public async Task<IReadOnlyList<GitHubIssueEvent>> ListIssueEventsAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+
+        var events = await GetPagesAsync<List<IssueEventDto>, IssueEventDto>(
+            repo,
+            $"repos/{owner}/{name}/issues/{number}/events",
+            _pullRequestsRead,
+            "issue events list",
+            page => page,
+            cancellationToken).ConfigureAwait(false);
+
+        return [.. events.Select(e => new GitHubIssueEvent(e.Event ?? string.Empty, e.Actor?.Login, e.Label?.Name, e.CreatedAt))];
+    }
+
     private static string PlainPath(string value, string paramName)
     {
         var segments = value?.Split('/');
@@ -611,7 +665,8 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         IReadOnlyDictionary<string, string> permissions,
         string operation,
         Func<TPage, List<TItem>?> items,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<List<TItem>, bool>? stopAfter = null)
         where TPage : class
     {
         var token = await tokens.GetTokenAsync(repo, permissions, cancellationToken).ConfigureAwait(false);
@@ -620,12 +675,12 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         {
             var response = await GitHubHttp.SendAsync<TPage>(
                 http,
-                GitHubHttp.Request(HttpMethod.Get, $"{path}?per_page={PageSize}&page={page}", token),
+                GitHubHttp.Request(HttpMethod.Get, $"{path}{(path.Contains('?', StringComparison.Ordinal) ? '&' : '?')}per_page={PageSize}&page={page}", token),
                 operation,
                 cancellationToken).ConfigureAwait(false);
             var batch = items(response) ?? [];
             all.AddRange(batch);
-            if (batch.Count < PageSize)
+            if (batch.Count < PageSize || stopAfter?.Invoke(batch) == true)
             {
                 return all;
             }

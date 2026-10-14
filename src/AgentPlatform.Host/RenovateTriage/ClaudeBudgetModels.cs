@@ -50,6 +50,8 @@ public sealed record ClaudeReservation(ClaudeReservationKind Kind, Guid? RunId, 
     public static ClaudeReservation Owner(string cause) => new(ClaudeReservationKind.Owner, null, 0, cause, null);
 }
 
+public sealed record RedriveCandidate(string Repo, int PrNumber);
+
 public sealed record ReserveClaudeRunInput(Guid RunId, string Repo, int PrNumber, string HeadSha, string Model);
 
 public sealed record FinishClaudeRunInput(Guid RunId, ClaudeRunOutcome Outcome, string? Model = null, long? InputTokens = null, long? OutputTokens = null, decimal? CostUsd = null);

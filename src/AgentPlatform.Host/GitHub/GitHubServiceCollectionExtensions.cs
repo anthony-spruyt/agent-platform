@@ -40,8 +40,11 @@ public static class GitHubServiceCollectionExtensions
         services.Configure<GitHubAppOptions>(section);
         services.TryAddSingleton(TimeProvider.System);
         AddGitHubHttpClient(services);
-        services.AddSingleton<IGitHubInstallationTokenProvider, GitHubInstallationTokenProvider>();
+        services.AddSingleton<GitHubInstallationTokenProvider>();
+        services.AddSingleton<IGitHubInstallationTokenProvider>(provider => provider.GetRequiredService<GitHubInstallationTokenProvider>());
+        services.AddSingleton<IGitHubAppJwtSource>(provider => provider.GetRequiredService<GitHubInstallationTokenProvider>());
         services.AddHttpClient<IGitHubApiClient, GitHubApiClient>(GitHubHttp.Configure);
+        services.AddHttpClient<IGitHubAppClient, GitHubAppClient>(GitHubHttp.Configure);
         return services;
     }
 

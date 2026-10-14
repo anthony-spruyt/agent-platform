@@ -59,8 +59,10 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     {
         Calls.Add("pr");
         OnPullRequestRead?.Invoke();
-        return Result(PullRequest);
+        return Result(PullRequestsByNumber.GetValueOrDefault(number, PullRequest));
     }
+
+    public Dictionary<int, GitHubPullRequest> PullRequestsByNumber { get; } = [];
 
     public async Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
     {
@@ -300,6 +302,22 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         Writes.Add($"rerun:{runId}");
         Reruns.Add(runId);
         return Task.CompletedTask;
+    }
+
+    public List<GitHubListedPullRequest> OpenPullRequests { get; } = [];
+
+    public List<GitHubIssueEvent> IssueEvents { get; } = [];
+
+    public Task<IReadOnlyList<GitHubListedPullRequest>> ListOpenPullRequestsAsync(string repo, DateTimeOffset updatedSince, CancellationToken cancellationToken)
+    {
+        Calls.Add($"open-prs:{repo}");
+        return Result<IReadOnlyList<GitHubListedPullRequest>>([.. OpenPullRequests.Where(p => p.UpdatedAt >= updatedSince)]);
+    }
+
+    public Task<IReadOnlyList<GitHubIssueEvent>> ListIssueEventsAsync(string repo, int number, CancellationToken cancellationToken)
+    {
+        Calls.Add("issue-events");
+        return Result<IReadOnlyList<GitHubIssueEvent>>([.. IssueEvents]);
     }
 
     private Task<T> Result<T>(T value) => Failure is null ? Task.FromResult(value) : Task.FromException<T>(Failure);

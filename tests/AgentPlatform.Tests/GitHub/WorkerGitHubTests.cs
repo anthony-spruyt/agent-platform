@@ -54,7 +54,6 @@ public class WorkerGitHubTests
     {
         using var provider = Build(Valid());
 
-        Assert.Null(provider.GetService<IRenovateTriageSignaler>());
         Assert.Empty(provider.GetRequiredService<IOptions<GitHubWebhookOptions>>().Value.WebhookSecret);
     }
 
@@ -66,6 +65,7 @@ public class WorkerGitHubTests
         var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
 
         Assert.Contains(typeof(RenovateTriageWorkflow), options.Workflows.Select(w => w.Type));
+        Assert.Contains(typeof(RenovateTriageSweeperWorkflow), options.Workflows.Select(w => w.Type));
     }
 
     [Theory]
