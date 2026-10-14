@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.9.1...v1.10.0) (2026-10-14)
+
+
+### Features
+
+* **triage:** ask Claude about Renovate PRs the rules can't decide ([2cfb36e](https://github.com/anthony-spruyt/agent-platform/commit/2cfb36ef9a1b0ff6982a6df231b14e8598bfba67))
+
 ## [1.9.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.9.0...v1.9.1) (2026-10-14)
 
 
