@@ -132,7 +132,33 @@ public class GitHubCheckRunTests
         Assert.Equal(3, found?.Id);
         Assert.Equal("in_progress", found?.Status);
         Assert.All(handler.Requests, r => Assert.Equal($"/repos/octo/widgets/commits/{Sha}/check-runs", r.Uri.AbsolutePath));
+        Assert.All(handler.Requests, r => Assert.Contains("filter=all", r.Uri.Query, StringComparison.Ordinal));
         Assert.Equal(new Dictionary<string, string> { ["checks"] = "read" }, tokens.Requests[0]);
+    }
+
+    [Fact]
+    public async Task FindCheckRun_WithAnOlderCompletedRunAndANewerOpenOne_ReturnsTheOpenOne()
+    {
+        var (client, _, _) = Create(request => StubHttpHandler.Json(request.Uri.Query.Contains("filter=all", StringComparison.Ordinal)
+            ? Runs(
+                Run(5, "Agent triage", OwnAppId, TriageId, "completed", "skipped"),
+                Run(9, "Agent triage", OwnAppId, TriageId, "in_progress", null))
+            : Runs(Run(5, "Agent triage", OwnAppId, TriageId, "completed", "skipped"))));
+
+        var found = await client.FindCheckRunAsync("octo/widgets", Sha, "Agent triage", TriageId, Ct);
+
+        Assert.Equal(9, found?.Id);
+        Assert.Equal("in_progress", found?.Status);
+    }
+
+    [Fact]
+    public async Task ListCheckRuns_KeepsTheLatestPerNameFilter()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json(Runs()));
+
+        await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
+
+        Assert.All(handler.Requests, r => Assert.DoesNotContain("filter=", r.Uri.Query, StringComparison.Ordinal));
     }
 
     [Fact]
