@@ -30,6 +30,7 @@ public enum RenovateTriageOutcome
     Skipped,
     AlreadyJudged,
     Judged,
+    Parked,
 }
 
 public sealed record RenovateTriageInput(string Repo, int PrNumber);
