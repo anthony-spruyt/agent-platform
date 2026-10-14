@@ -76,8 +76,6 @@ public static partial class TriageRules
     public const string PrecheckDiff = "precheck-diff";
     public const string PrecheckFlagged = "precheck-flagged";
     public const string PrecheckUnchecked = "precheck-unchecked";
-    public const string CiNotPassed = "ci-not-passed";
-    public const string StabilityDays = "renovate/stability-days";
 
     public const string NonRenovateCommitComment = "**Needs review:** this PR has commits that Renovate didn't make.";
     public const string CiTimeoutComment = "**Needs review:** CI didn't finish within 2 hours.";
@@ -108,7 +106,7 @@ public static partial class TriageRules
 
     private static readonly string[] _blockingLabels = [NeedsReviewLabel, NeedsTriageLabel, RevertLabel, BlockedLabel];
 
-    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason, CiNotPassed, StabilityDays];
+    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason];
 
     private static readonly string[] _livePathLabels = [NeedsReviewLabel, NeedsTriageLabel, AutoApprovedLabel];
 
@@ -150,26 +148,15 @@ public static partial class TriageRules
 
     public static bool IsApproving(TriageVerdict verdict) => verdict is TriageVerdict.Approve or TriageVerdict.Safe;
 
-    public static SafeAssessment AssessSafe(CiState ci, IReadOnlyList<GitHubCommitStatus> statuses, string branch)
+    public static SafeAction AssessSafe(CiState ci, string branch)
     {
-        ArgumentNullException.ThrowIfNull(statuses);
         ArgumentNullException.ThrowIfNull(branch);
-        if (ci == CiState.Failed)
+        return ci switch
         {
-            return new SafeAssessment(SafeAction.Fixable, CiFailed);
-        }
-
-        if (ci == CiState.Pending)
-        {
-            return new SafeAssessment(SafeAction.Owner, CiNotPassed);
-        }
-
-        if (statuses.Any(s => string.Equals(s.Context, StabilityDays, StringComparison.Ordinal) && !string.Equals(s.State, "success", StringComparison.Ordinal)))
-        {
-            return new SafeAssessment(SafeAction.Owner, StabilityDays);
-        }
-
-        return new SafeAssessment(IsRiskyBranch(branch) ? SafeAction.CommentOnly : SafeAction.Approve);
+            CiState.Failed => SafeAction.Fixable,
+            CiState.Pending => SafeAction.WaitForCi,
+            _ => IsRiskyBranch(branch) ? SafeAction.CommentOnly : SafeAction.Approve,
+        };
     }
 
     public static bool IsNotOpen(string state, bool merged, bool shadow)
@@ -323,16 +310,6 @@ public static partial class TriageRules
     {
         ArgumentNullException.ThrowIfNull(decision);
         return decision.Verdict == TriageVerdict.NeedsReview && !_neverClimb.Contains(decision.Reason, StringComparer.Ordinal);
-    }
-
-    public static TriageDecision SafeHandoffDecision(string failedCheck, string headSha)
-    {
-        ArgumentNullException.ThrowIfNull(failedCheck);
-        ArgumentNullException.ThrowIfNull(headSha);
-        var cause = failedCheck == StabilityDays
-            ? $"the `{StabilityDays}` check was not successful on `{ShortSha(headSha)}`"
-            : $"CI had not passed on `{ShortSha(headSha)}`";
-        return new TriageDecision(TriageVerdict.NeedsReview, failedCheck, $"{NeedsReviewPrefix} the agent judged this PR safe, but {cause}.");
     }
 
     public static TriageDecision CiTimeoutDecision() => new(TriageVerdict.NeedsReview, CiTimeout, CiTimeoutComment);

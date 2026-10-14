@@ -109,7 +109,7 @@ A check suite from any app except this one (`GitHub:AppId`) is forwarded, so the
 Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`, ID `renovate-triage/{owner}/{repo}/{pr}`, task queue `agent-platform`, signal `CheckSuiteCompleted` with the repository, pull request number, head sha, check suite id, app slug, conclusion and `X-GitHub-Delivery` id.
 `RenovateTriageWorkflow` receives these signals; see Renovate triage below.
 
-The Worker role talks to GitHub through `IGitHubApiClient`. Reads: pull request, all check runs and suites of a sha, the combined commit status of a sha (the `Live` triage path, for the `renovate/stability-days` status), commits, files, reviews, labels, issue comments, releases and file contents of a changelog source repository, and job logs, all paged where listed.
+The Worker role talks to GitHub through `IGitHubApiClient`. Reads: pull request, all check runs and suites of a sha, commits, files, reviews, labels, issue comments, releases and file contents of a changelog source repository, and job logs, all paged where listed.
 Writes: an approving review pinned to a commit, dismissing a review, adding and removing labels, creating or editing an issue comment (the `Live` triage path), creating or updating check runs, and rerunning failed jobs. Each call mints an installation token for one repository
 with only the permission that call needs (`pull_requests: read` or `write`, `checks: read` or `write`, `statuses: read` for the commit status, `contents: read` for changelogs and release notes of a source repository, or `actions: read` or `write` to read workflow runs and rerun failed jobs), authenticated by a short-lived App JWT signed with `GitHub:PrivateKey`.
 The App installation must therefore grant the repository permission Commit statuses: Read-only, besides Pull requests, Checks, Contents and Actions.
@@ -168,7 +168,7 @@ The check run is written in a `finally`, so it never stays open, and a failure t
 ### Claude rung
 
 A run started after the `renovate-triage-claude-v1` patch climbs to Claude in `Live` mode when a pull request would be handed to the owner for a reason the code cannot settle by itself.
-These reasons never climb: `non-renovate-commit`, the precheck reasons, `hands-on-migration`, `ci-not-passed` and `renovate/stability-days`. Each of them is handed to the owner as before. `ci-failed`, `ci-timeout` and `breaking` do climb.
+These reasons never climb: `non-renovate-commit`, the precheck reasons and `hands-on-migration`. Each of them is handed to the owner as before. `ci-failed`, `ci-timeout` and `breaking` do climb.
 A verdict already stored for the head is never climbed again. `Shadow` mode never climbs.
 
 1. `QueueAsync` writes a pending row in `renovate_triage_pending`, adds the `agent/needs-triage` label and a sticky "Queued" comment, and no verdict row. A head that moved meanwhile reassesses.
@@ -239,7 +239,7 @@ Before it writes anything, `Apply` checks the pull request on fresh data at the 
   `agent/needs-human-review` refuses every outcome except the needs-review hand-off, which writes that label itself, so its retry completes.
   Every commit must be one Renovate made (the gate of rule 5, so commits added after the judgement count); a failure is handed to the owner as needs review, `non-renovate-commit`.
   Then the apply-precheck runs again (diff only version and digest updates, body through the scanner), whether or not `Assess` prechecked this head, because the diff and body can change after the verdict: a failure is handed to the owner as needs review with the precheck reason, and a head that moves while it reads aborts with nothing written.
-- `SAFE` is then checked against CI and status: failed checks make it `FIXABLE`; checks still pending, or a `renovate/stability-days` status that is not `success`, hand it to the owner as needs review (`ci-not-passed` or `renovate/stability-days`). A branch on the high-risk list is never approved: the label and the comment are written, the review is not.
+- `SAFE` is then checked against CI: failed checks make it `FIXABLE`; checks still pending (restarted since the verdict) send the run back to waiting for CI on the same 2h clock, then it applies or hands off as `ci-timeout`. The `renovate/stability-days` status is ignored. A branch on the high-risk list is never approved: the label and the comment are written, the review is not.
 - A flagging verdict (`FIXABLE`, `BLOCKED`, `Owner` or needs review) skips those gates but is refused (`blocking-label`) when the owner has put `blocked` (for every flag but `BLOCKED`), `agent/needs-human-review` (for `FIXABLE` and `BLOCKED`) or `agent/revert` on the pull request meanwhile, or the author is not Renovate. The label a verdict writes itself does not refuse its own retry.
 
 What each verdict writes, after the gates:

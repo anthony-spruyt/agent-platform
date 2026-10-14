@@ -17,6 +17,7 @@ public partial class RenovateTriageWorkflow
     private const string LivePatch = "renovate-triage-live-v1";
     private const string Step2Patch = "renovate-triage-step2-v1";
     private const string FreshCheckPatch = "renovate-triage-fresh-check-v1";
+    private const string CiRacePatch = "renovate-triage-ci-race-v1";
 
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
@@ -80,6 +81,9 @@ public partial class RenovateTriageWorkflow
     private TriageContext? _context;
     private string? _checkSha;
     private string? _checkSummary;
+    private bool _ciRace;
+    private bool _ciWaitOver;
+    private int _applySignals;
 
     public static string WorkflowId(string repo, int prNumber) => $"renovate-triage/{repo}/{prNumber}";
 
@@ -283,6 +287,7 @@ public partial class RenovateTriageWorkflow
                 seq = _seq;
                 if (climbed is null)
                 {
+                    ciWait = await WaitOutCiRaceAsync(ciWait);
                     continue;
                 }
 
@@ -312,8 +317,32 @@ public partial class RenovateTriageWorkflow
                 verdict = verdict with { Verdict = TriageVerdict.Owner };
             }
 
-            return await RecordVerdictAsync(input, run, ++seq, assess.HeadSha, verdict, assess.Mode, body, null);
+            var recorded = await RecordVerdictAsync(input, run, ++seq, assess.HeadSha, verdict, assess.Mode, body, null);
+            if (recorded is not null)
+            {
+                return recorded;
+            }
+
+            ciWait = await WaitOutCiRaceAsync(ciWait);
         }
+    }
+
+    private async Task<CiWait> WaitOutCiRaceAsync(CiWait ciWait)
+    {
+        if (!_ciRace)
+        {
+            return ciWait;
+        }
+
+        _ciRace = false;
+        ciWait = ciWait.Pending(Workflow.UtcNow);
+        if (!ciWait.TimedOut)
+        {
+            ciWait = await WaitForCiSignalAsync(ciWait, _applySignals);
+        }
+
+        _ciWaitOver = ciWait.TimedOut;
+        return ciWait;
     }
 
     private static async Task<PrecheckResult> PrecheckAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, string stepName)
@@ -463,7 +492,8 @@ public partial class RenovateTriageWorkflow
         _ => "answered",
     };
 
-    private async Task<RenovateTriageResult> RecordVerdictAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageDecision decision, TriageMode mode, ScannedText? body, LadderRung? rung)
+    // Null means CI restarted between the judgement and the apply: the caller waits for CI on the same clock and applies again.
+    private async Task<RenovateTriageResult?> RecordVerdictAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageDecision decision, TriageMode mode, ScannedText? body, LadderRung? rung)
     {
         var stepStarted = Workflow.UtcNow;
         var recorded = await Workflow.ExecuteActivityAsync(
@@ -474,10 +504,17 @@ public partial class RenovateTriageWorkflow
         if (mode == TriageMode.Live && Workflow.Patched(LivePatch))
         {
             stepStarted = Workflow.UtcNow;
+            _applySignals = _signalCount;
             applied = await Workflow.ExecuteActivityAsync(
-                (RenovateTriageActivities activities) => activities.ApplyAsync(new ApplyInput(input.Repo, input.PrNumber, headSha, decision, mode)),
+                (RenovateTriageActivities activities) => activities.ApplyAsync(new ApplyInput(input.Repo, input.PrNumber, headSha, decision, mode, _ciWaitOver)),
                 _applyOptions);
             await RecordStepAsync(run, seq + 1, "apply", LadderRung.Rule, applied.Outcome.ToString(), stepStarted, applied);
+            if (applied is { Outcome: ApplyOutcome.Aborted, Reason: RenovateTriageActivities.CiPendingReason } && Workflow.Patched(CiRacePatch))
+            {
+                _ciRace = true;
+                await ProgressAsync(input, headSha, "Waiting for CI.");
+                return null;
+            }
         }
 
         var effective = applied?.Effective ?? decision;

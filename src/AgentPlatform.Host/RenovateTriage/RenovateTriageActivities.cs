@@ -22,6 +22,7 @@ public sealed partial class RenovateTriageActivities(
     public const string ApplyName = "RenovateTriageApply";
     public const string JevErrorFailureType = "JevError";
     public const string HeadMovedReason = "head-moved";
+    public const string CiPendingReason = "ci-pending";
 
     private const string NotLive = "not-live";
     private const string DismissalMessage = "A newer commit needs review.";
@@ -284,14 +285,11 @@ public sealed partial class RenovateTriageActivities(
         var checks = await github.ListCheckRunsAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
         var suites = await github.ListCheckSuitesAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
         var ci = TriageRules.AssessChecks(checks, suites);
-        var statuses = ci == CiState.Passed
-            ? await github.ListCommitStatusesAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false)
-            : [];
-        var safe = TriageRules.AssessSafe(ci, statuses, pr.HeadRef);
-        return safe.Action switch
+        return TriageRules.AssessSafe(ci, pr.HeadRef) switch
         {
             SafeAction.Fixable => new Gate(TriageRules.SafeOnRedHeadDecision(input.Repo, input.HeadSha, TriageRules.FailedChecks(checks))),
-            SafeAction.Owner => new Gate(TriageRules.SafeHandoffDecision(safe.FailedCheck!, input.HeadSha)),
+            SafeAction.WaitForCi when input.CiWaitOver => new Gate(TriageRules.CiTimeoutDecision()),
+            SafeAction.WaitForCi => new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason)),
             SafeAction.CommentOnly => new Gate(input.Decision, CommentOnly: true),
             _ => new Gate(input.Decision),
         };

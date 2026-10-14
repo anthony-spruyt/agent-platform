@@ -66,7 +66,7 @@ public sealed record RecordVerdictInput(string Repo, int PrNumber, string HeadSh
 
 public sealed record RecordVerdictResult(bool Inserted, TriageMode Mode);
 
-public sealed record ApplyInput(string Repo, int PrNumber, string HeadSha, TriageDecision Decision, TriageMode Mode);
+public sealed record ApplyInput(string Repo, int PrNumber, string HeadSha, TriageDecision Decision, TriageMode Mode, bool CiWaitOver = false);
 
 [JsonConverter(typeof(JsonStringEnumConverter<ApplyOutcome>))]
 public enum ApplyOutcome

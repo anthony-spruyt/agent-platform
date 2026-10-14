@@ -997,84 +997,40 @@ public class TriageRulesTests
 
     public class SafeChecks
     {
-        private static readonly GitHubCommitStatus[] _stabilityOk = [new("renovate/stability-days", "success")];
-
         [Fact]
-        public void APassedHeadWithAnOldEnoughRelease_ApprovesOnAnOrdinaryBranch()
+        public void APassedHead_ApprovesOnAnOrdinaryBranch()
         {
-            Assert.Equal(new SafeAssessment(SafeAction.Approve), TriageRules.AssessSafe(CiState.Passed, _stabilityOk, "renovate/czkawka"));
+            Assert.Equal(SafeAction.Approve, TriageRules.AssessSafe(CiState.Passed, "renovate/czkawka"));
         }
 
         [Fact]
         public void ARedHead_IsFixable_NotSafe()
         {
-            Assert.Equal(new SafeAssessment(SafeAction.Fixable, TriageRules.CiFailed), TriageRules.AssessSafe(CiState.Failed, _stabilityOk, "renovate/czkawka"));
+            Assert.Equal(SafeAction.Fixable, TriageRules.AssessSafe(CiState.Failed, "renovate/czkawka"));
         }
 
         [Fact]
-        public void APendingHead_NeverGetsSafe_AndGoesToTheOwnerNamingTheCheck()
+        public void APendingHead_NeverGetsSafe_AndWaitsForCi()
         {
-            Assert.Equal(new SafeAssessment(SafeAction.Owner, TriageRules.CiNotPassed), TriageRules.AssessSafe(CiState.Pending, _stabilityOk, "renovate/czkawka"));
-        }
-
-        [Theory]
-        [InlineData("pending")]
-        [InlineData("failure")]
-        [InlineData("error")]
-        public void AStabilityDaysStatusThatIsNotSuccess_GoesToTheOwnerNamingTheCheck(string state)
-        {
-            var result = TriageRules.AssessSafe(CiState.Passed, [new("renovate/stability-days", state)], "renovate/czkawka");
-
-            Assert.Equal(new SafeAssessment(SafeAction.Owner, TriageRules.StabilityDays), result);
-        }
-
-        [Fact]
-        public void NoStabilityDaysStatus_IsFine()
-        {
-            Assert.Equal(SafeAction.Approve, TriageRules.AssessSafe(CiState.Passed, [new("Terraform Cloud/x", "pending")], "renovate/czkawka").Action);
-        }
-
-        [Fact]
-        public void OtherStatusesNamedLikeItDoNotCount()
-        {
-            Assert.Equal(SafeAction.Approve, TriageRules.AssessSafe(CiState.Passed, [new("renovate/stability-days-other", "pending")], "renovate/czkawka").Action);
+            Assert.Equal(SafeAction.WaitForCi, TriageRules.AssessSafe(CiState.Pending, "renovate/czkawka"));
         }
 
         [Fact]
         public void AHighRiskBranch_IsCommentOnly()
         {
-            Assert.Equal(new SafeAssessment(SafeAction.CommentOnly), TriageRules.AssessSafe(CiState.Passed, _stabilityOk, "renovate/cilium-1.x"));
+            Assert.Equal(SafeAction.CommentOnly, TriageRules.AssessSafe(CiState.Passed, "renovate/cilium-1.x"));
         }
 
         [Fact]
         public void ARedHighRiskBranch_IsStillFixable()
         {
-            Assert.Equal(SafeAction.Fixable, TriageRules.AssessSafe(CiState.Failed, _stabilityOk, "renovate/cilium-1.x").Action);
+            Assert.Equal(SafeAction.Fixable, TriageRules.AssessSafe(CiState.Failed, "renovate/cilium-1.x"));
         }
 
         [Fact]
-        public void AFailedCheckOnAHighRiskBranch_GoesToTheOwner()
+        public void APendingHighRiskBranch_WaitsForCi()
         {
-            Assert.Equal(SafeAction.Owner, TriageRules.AssessSafe(CiState.Passed, [new("renovate/stability-days", "pending")], "renovate/cilium-1.x").Action);
-        }
-
-        [Theory]
-        [InlineData(TriageRules.CiNotPassed, "CI had not passed")]
-        [InlineData(TriageRules.StabilityDays, "`renovate/stability-days`")]
-        public void TheHandoffDecision_NamesTheFailedCheck(string check, string text)
-        {
-            var decision = TriageRules.SafeHandoffDecision(check, Head);
-
-            Assert.Equal(TriageVerdict.NeedsReview, decision.Verdict);
-            Assert.Equal(check, decision.Reason);
-            Assert.Contains(text, decision.Comment, StringComparison.Ordinal);
-            Assert.Contains(TriageRules.ShortSha(Head), decision.Comment, StringComparison.Ordinal);
-        }
-
-        [Fact]
-        public void TheHandoffDecision_NeverClimbs()
-        {
-            Assert.False(TriageRules.Climbs(TriageRules.SafeHandoffDecision(TriageRules.CiNotPassed, Head)));
+            Assert.Equal(SafeAction.WaitForCi, TriageRules.AssessSafe(CiState.Pending, "renovate/cilium-1.x"));
         }
     }
 }

@@ -5,7 +5,5 @@ public enum SafeAction
     Approve,
     CommentOnly,
     Fixable,
-    Owner,
+    WaitForCi,
 }
-
-public sealed record SafeAssessment(SafeAction Action, string? FailedCheck = null);

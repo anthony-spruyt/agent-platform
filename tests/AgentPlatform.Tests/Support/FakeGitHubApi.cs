@@ -167,15 +167,7 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         return Task.CompletedTask;
     }
 
-    public List<GitHubCommitStatus> Statuses { get; } = [new("renovate/stability-days", "success")];
-
     public List<string> RemovedLabels { get; } = [];
-
-    public Task<IReadOnlyList<GitHubCommitStatus>> ListCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken)
-    {
-        Calls.Add($"statuses:{sha}");
-        return Result<IReadOnlyList<GitHubCommitStatus>>([.. Statuses]);
-    }
 
     public Task RemoveLabelAsync(string repo, int number, string label, CancellationToken cancellationToken)
     {

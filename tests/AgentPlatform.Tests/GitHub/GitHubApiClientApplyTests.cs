@@ -77,48 +77,4 @@ public class GitHubApiClientApplyTests
         Assert.Empty(handler.Requests);
         Assert.Empty(tokens.Requests);
     }
-
-    [Fact]
-    public async Task ListCommitStatusesAsync_ReadsTheLatestStatusPerContextWithAStatusesReadToken()
-    {
-        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""
-            {"state":"success","statuses":[
-              {"context":"renovate/stability-days","state":"success"},
-              {"context":"Terraform Cloud/x","state":"pending"}]}
-            """));
-
-        var statuses = await client.ListCommitStatusesAsync("octo/widgets", Sha, Ct);
-
-        Assert.Equal([new GitHubCommitStatus("renovate/stability-days", "success"), new GitHubCommitStatus("Terraform Cloud/x", "pending")], statuses);
-        var request = Assert.Single(handler.Requests);
-        Assert.Equal($"/repos/octo/widgets/commits/{Sha}/status", request.Uri.AbsolutePath);
-        Assert.Equal(new Dictionary<string, string> { ["statuses"] = "read" }, Assert.Single(tokens.Requests).Permissions);
-    }
-
-    [Fact]
-    public async Task ListCommitStatusesAsync_ReadsEveryPage()
-    {
-        var (client, handler, _) = Create(request =>
-        {
-            var page = int.Parse(System.Web.HttpUtility.ParseQueryString(request.Uri.Query)["page"]!, System.Globalization.CultureInfo.InvariantCulture);
-            var count = page == 1 ? 100 : 3;
-            var items = string.Join(',', Enumerable.Range(0, count).Select(i => $$"""{"context":"c{{page}}-{{i}}","state":"success"}"""));
-            return StubHttpHandler.Json($$"""{"state":"success","statuses":[{{items}}]}""");
-        });
-
-        var statuses = await client.ListCommitStatusesAsync("octo/widgets", Sha, Ct);
-
-        Assert.Equal(103, statuses.Count);
-        Assert.Equal(2, handler.Requests.Count);
-    }
-
-    [Fact]
-    public async Task ListCommitStatusesAsync_RejectsANonShaBeforeAnyRequest()
-    {
-        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
-
-        await Assert.ThrowsAsync<ArgumentException>(() => client.ListCommitStatusesAsync("octo/widgets", "../x", Ct));
-
-        Assert.Empty(handler.Requests);
-    }
 }
