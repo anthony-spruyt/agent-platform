@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using AgentPlatform.Host.PullRequests;
+using AgentPlatform.Host.RunData;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
@@ -20,6 +21,7 @@ public enum AssessStatus
     NeedsJev,
     NeedsPrecheck,
     CiFailed,
+    Climb,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<RenovateTriageOutcome>))]
@@ -32,9 +34,9 @@ public enum RenovateTriageOutcome
 
 public sealed record RenovateTriageInput(string Repo, int PrNumber);
 
-public sealed record AssessInput(string Repo, int PrNumber, bool Step2 = false, string? PrecheckedSha = null);
+public sealed record AssessInput(string Repo, int PrNumber, bool Step2 = false, string? PrecheckedSha = null, bool Claude = false);
 
-public sealed record AssessResult(AssessStatus Status, string HeadSha, string? Reason = null, TriageDecision? Decision = null, TriageMode Mode = TriageMode.Shadow);
+public sealed record AssessResult(AssessStatus Status, string HeadSha, string? Reason = null, TriageDecision? Decision = null, TriageMode Mode = TriageMode.Shadow, bool Stored = false);
 
 [JsonConverter(typeof(JsonStringEnumConverter<PrecheckVerdict>))]
 public enum PrecheckVerdict
@@ -59,7 +61,7 @@ public sealed record JudgeInput(
 
 public sealed record JudgeResult(bool HeadMoved, TriageDecision? Decision = null, JevAnswers? Jev = null, string? JevError = null);
 
-public sealed record RecordVerdictInput(string Repo, int PrNumber, string HeadSha, TriageDecision Decision, TriageMode Mode = TriageMode.Shadow);
+public sealed record RecordVerdictInput(string Repo, int PrNumber, string HeadSha, TriageDecision Decision, TriageMode Mode = TriageMode.Shadow, LadderRung? Rung = null);
 
 public sealed record RecordVerdictResult(bool Inserted, TriageMode Mode);
 

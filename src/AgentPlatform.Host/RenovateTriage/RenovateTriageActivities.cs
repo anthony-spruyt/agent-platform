@@ -12,6 +12,7 @@ public sealed partial class RenovateTriageActivities(
     IGitHubApiClient github,
     IJevClient jev,
     TriageVerdictStore verdicts,
+    TriagePendingStore pendings,
     IOptions<RenovateTriageOptions> options,
     IUntrustedTextScanner scanner)
 {
@@ -41,12 +42,16 @@ public sealed partial class RenovateTriageActivities(
             var sha = pr.HeadSha;
 
             var shadow = mode == TriageMode.Shadow;
+            var pending = input.Claude && !shadow
+                ? await pendings.FindAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false)
+                : null;
+            var hasOpenRow = pending is { Status: TriagePendingStatus.Pending or TriagePendingStatus.Redriven };
             var unapplied = mode == TriageMode.Live
                 ? await verdicts.FindUnappliedAsync(input.Repo, input.PrNumber, sha, cancellationToken).ConfigureAwait(false)
                 : null;
             var ignoreTriageSignals = shadow || unapplied is not null;
             var honourNeedsReviewLabel = unapplied is not null && TriageRules.IsApproving(unapplied.Verdict);
-            var skip = SkipReason(input.Repo, pr, shadow, ignoreTriageSignals, honourNeedsReviewLabel);
+            var skip = SkipReason(input.Repo, pr, shadow, ignoreTriageSignals, honourNeedsReviewLabel, hasOpenRow);
             if (skip is not null)
             {
                 return new AssessResult(AssessStatus.Skipped, sha, skip, Mode: mode);
@@ -60,10 +65,11 @@ public sealed partial class RenovateTriageActivities(
 
             if (unapplied is not null)
             {
-                return new AssessResult(AssessStatus.Decided, sha, Decision: unapplied, Mode: mode);
+                return new AssessResult(AssessStatus.Decided, sha, Decision: unapplied, Mode: mode, Stored: true);
             }
 
-            if (await verdicts.ExistsAsync(input.Repo, input.PrNumber, sha, mode, cancellationToken).ConfigureAwait(false))
+            var rowIsForThisHead = hasOpenRow && string.Equals(pending!.HeadSha, sha, StringComparison.Ordinal);
+            if (!rowIsForThisHead && await verdicts.ExistsAsync(input.Repo, input.PrNumber, sha, mode, cancellationToken).ConfigureAwait(false))
             {
                 return new AssessResult(AssessStatus.AlreadyJudged, sha, Mode: mode);
             }
@@ -77,6 +83,11 @@ public sealed partial class RenovateTriageActivities(
             if (input.Step2 && !string.Equals(input.PrecheckedSha, sha, StringComparison.Ordinal))
             {
                 return new AssessResult(AssessStatus.NeedsPrecheck, sha, Mode: mode);
+            }
+
+            if (rowIsForThisHead)
+            {
+                return new AssessResult(AssessStatus.Climb, sha, pending!.Reason, Mode: mode);
             }
 
             var checks = await github.ListCheckRunsAsync(input.Repo, sha, cancellationToken).ConfigureAwait(false);
@@ -143,7 +154,7 @@ public sealed partial class RenovateTriageActivities(
         {
             Validate(input.Repo, input.PrNumber);
             var inserted = await verdicts
-                .RecordAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision, input.Mode, ActivityExecutionContext.Current.CancellationToken)
+                .RecordAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision, input.Mode, input.Rung, ActivityExecutionContext.Current.CancellationToken)
                 .ConfigureAwait(false);
             return new RecordVerdictResult(inserted, input.Mode);
         });
@@ -195,9 +206,11 @@ public sealed partial class RenovateTriageActivities(
                 await github.RemoveLabelAsync(input.Repo, input.PrNumber, TriageRules.NeedsTriageLabel, cancellationToken).ConfigureAwait(false);
             }
 
+            var handedToOwner = gate.Decision.Verdict is TriageVerdict.Owner or TriageVerdict.NeedsReview;
+            await pendings.SetStatusAsync(input.Repo, input.PrNumber, input.HeadSha, handedToOwner ? TriagePendingStatus.Owner : TriagePendingStatus.Settled, cancellationToken).ConfigureAwait(false);
             if (gate.Decision == input.Decision)
             {
-                await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, cancellationToken).ConfigureAwait(false);
+                await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, null, cancellationToken).ConfigureAwait(false);
                 return new ApplyResult(ApplyOutcome.Applied);
             }
 
@@ -393,14 +406,14 @@ public sealed partial class RenovateTriageActivities(
         string.Equals(review.AuthorLogin, TriageRules.TriageBotLogin, StringComparison.Ordinal)
         && string.Equals(review.State, "APPROVED", StringComparison.OrdinalIgnoreCase);
 
-    private static string? SkipReason(string repo, GitHubPullRequest pr, bool shadow, bool ignoreTriageSignals, bool honourNeedsReviewLabel)
+    private static string? SkipReason(string repo, GitHubPullRequest pr, bool shadow, bool ignoreTriageSignals, bool honourNeedsReviewLabel, bool hasOpenRow = false)
     {
         if (TriageRules.IsNotOpen(pr.State, pr.Merged, shadow))
         {
             return TriageRules.NotOpen;
         }
 
-        return TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals, honourNeedsReviewLabel)
+        return TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals, honourNeedsReviewLabel, hasOpenRow)
             ?? (TriageRules.IsSameRepo(repo, pr.HeadRepo, pr.BaseRepo) ? null : TriageRules.ForeignRepo);
     }
 

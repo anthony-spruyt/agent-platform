@@ -28,7 +28,7 @@ public class TriageVerdictStoreTests
     {
         var data = InMemoryRunData.Create();
 
-        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
+        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
 
         Assert.True(inserted);
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
@@ -47,7 +47,7 @@ public class TriageVerdictStoreTests
     {
         var data = InMemoryRunData.Create();
 
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Shadow, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Shadow, null, Ct);
 
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         Assert.Null((await db.TriageVerdicts.SingleAsync(Ct)).Comment);
@@ -57,9 +57,9 @@ public class TriageVerdictStoreTests
     public async Task Record_TheSameCommitTwice_KeepsTheFirstVerdict()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
 
-        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Shadow, Ct);
+        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Shadow, null, Ct);
 
         Assert.False(inserted);
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
@@ -70,18 +70,18 @@ public class TriageVerdictStoreTests
     public async Task Record_ANewCommitOrAnotherPr_IsANewVerdict()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
 
-        Assert.True(await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, new string('a', 40), NeedsReview(), TriageMode.Shadow, Ct));
-        Assert.True(await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 8, Sha, NeedsReview(), TriageMode.Shadow, Ct));
-        Assert.True(await data.Verdicts.RecordAsync("anthony-spruyt/other", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct));
+        Assert.True(await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, new string('a', 40), NeedsReview(), TriageMode.Shadow, null, Ct));
+        Assert.True(await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 8, Sha, NeedsReview(), TriageMode.Shadow, null, Ct));
+        Assert.True(await data.Verdicts.RecordAsync("anthony-spruyt/other", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct));
     }
 
     [Fact]
     public async Task Exists_SeesARecordedCommitOnly()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
 
         Assert.True(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Shadow, Ct));
         Assert.False(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, new string('b', 40), TriageMode.Shadow, Ct));
@@ -92,9 +92,9 @@ public class TriageVerdictStoreTests
     public async Task Record_TheSameCommitInAnotherMode_IsANewVerdict()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
 
-        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, Ct);
+        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, null, Ct);
 
         Assert.True(inserted);
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
@@ -105,7 +105,7 @@ public class TriageVerdictStoreTests
     public async Task Exists_FiltersOnTheMode()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
 
         Assert.True(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Shadow, Ct));
         Assert.False(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
@@ -115,11 +115,11 @@ public class TriageVerdictStoreTests
     public async Task Exists_InLive_CountsOnlyAppliedRows()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, null, Ct);
 
         Assert.False(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
 
-        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, null, Ct);
 
         Assert.True(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
     }
@@ -128,7 +128,7 @@ public class TriageVerdictStoreTests
     public async Task FindUnapplied_ReturnsTheStoredDecisionOfAnUnappliedLiveRow()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, null, Ct);
 
         var decision = await data.Verdicts.FindUnappliedAsync("anthony-spruyt/widgets", 7, Sha, Ct);
 
@@ -139,9 +139,9 @@ public class TriageVerdictStoreTests
     public async Task FindUnapplied_IgnoresShadowRowsAppliedRowsAndOtherCommits()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 8, Sha, NeedsReview(), TriageMode.Live, Ct);
-        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 8, Sha, TriageVerdict.NeedsReview, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 8, Sha, NeedsReview(), TriageMode.Live, null, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 8, Sha, TriageVerdict.NeedsReview, null, Ct);
 
         Assert.Null(await data.Verdicts.FindUnappliedAsync("anthony-spruyt/widgets", 7, Sha, Ct));
         Assert.Null(await data.Verdicts.FindUnappliedAsync("anthony-spruyt/widgets", 8, Sha, Ct));
@@ -152,13 +152,13 @@ public class TriageVerdictStoreTests
     public async Task MarkApplied_StampsOnlyTheLiveRowAndKeepsTheFirstStamp()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Live, null, Ct);
 
-        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, null, Ct);
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         var stamp = (await db.TriageVerdicts.SingleAsync(v => v.Mode == TriageMode.Live, Ct)).AppliedAt;
-        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, null, Ct);
 
         Assert.NotNull(stamp);
         await using var after = await data.Factory.CreateDbContextAsync(Ct);
@@ -170,9 +170,9 @@ public class TriageVerdictStoreTests
     public async Task MarkApplied_LeavesARowOfAnotherVerdictUnapplied()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), TriageMode.Live, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), TriageMode.Live, null, Ct);
 
-        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, null, Ct);
 
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         Assert.Null((await db.TriageVerdicts.SingleAsync(Ct)).AppliedAt);
@@ -183,7 +183,7 @@ public class TriageVerdictStoreTests
     {
         var data = InMemoryRunData.Create();
 
-        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.NeedsReview, null, Ct);
 
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         Assert.Empty(await db.TriageVerdicts.ToListAsync(Ct));
@@ -193,7 +193,7 @@ public class TriageVerdictStoreTests
     public async Task MarkAppliedAs_StoresTheEffectiveVerdictReasonAndCommentOnTheRowOfTheOriginalVerdict()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Safe, "agent", "agent text"), TriageMode.Live, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Safe, "agent", "agent text"), TriageMode.Live, null, Ct);
         var effective = NeedsReview();
 
         await data.Verdicts.MarkAppliedAsAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Safe, effective, Ct);
@@ -211,7 +211,7 @@ public class TriageVerdictStoreTests
     public async Task MarkAppliedAs_LeavesARowOfAnotherVerdictAndAnAppliedRowAlone()
     {
         var data = InMemoryRunData.Create();
-        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), TriageMode.Live, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, null), TriageMode.Live, null, Ct);
 
         await data.Verdicts.MarkAppliedAsAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Safe, NeedsReview(), Ct);
 
@@ -220,7 +220,7 @@ public class TriageVerdictStoreTests
         Assert.Equal(TriageVerdict.Approve, row.Verdict);
         Assert.Null(row.AppliedAt);
 
-        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Approve, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Approve, null, Ct);
         await data.Verdicts.MarkAppliedAsAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Approve, NeedsReview(), Ct);
         await using var after = await data.Factory.CreateDbContextAsync(Ct);
         Assert.Equal(TriageVerdict.Approve, (await after.TriageVerdicts.SingleAsync(Ct)).Verdict);
@@ -232,7 +232,7 @@ public class TriageVerdictStoreTests
         var data = InMemoryRunData.Create();
         data.FailNextSaveWith(new DbUpdateException("conflict"));
 
-        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct);
+        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
 
         Assert.True(inserted);
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
@@ -245,7 +245,7 @@ public class TriageVerdictStoreTests
         var data = InMemoryRunData.Create();
         data.FailSavesWith(new DbUpdateException("down"));
 
-        await Assert.ThrowsAsync<DbUpdateException>(() => data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, Ct));
+        await Assert.ThrowsAsync<DbUpdateException>(() => data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct));
     }
 
     [Fact]

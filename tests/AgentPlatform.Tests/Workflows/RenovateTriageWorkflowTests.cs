@@ -50,7 +50,7 @@ public class RenovateTriageWorkflowTests
 
     private static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, Rig rig, RenovateTriageOptions options, Func<Task<T>> body)
     {
-        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, Options.Create(options), rig.Scanner);
+        var triage = new RenovateTriageActivities(rig.Github, rig.Jev, rig.Data.Verdicts, rig.Data.Pending, Options.Create(options), rig.Scanner);
         var code = new RenovateTriageCodeActivities(rig.Github, rig.Jev, rig.Scanner, Options.Create(options));
         var checks = new TriageCheckActivities(rig.CheckRuns);
         using var worker = new TemporalWorker(
@@ -225,7 +225,7 @@ public class RenovateTriageWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
-        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, TriageRules.CiFailedDecision(Repo, ShaA, []), TriageMode.Shadow, Ct);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, TriageRules.CiFailedDecision(Repo, ShaA, []), TriageMode.Shadow, null, Ct);
 
         var result = await InWorkerAsync(env, rig, async () =>
         {
@@ -1261,7 +1261,7 @@ public class RenovateTriageWorkflowTests
     }
 
     private static async Task SeedUnappliedApproveAsync(Rig rig) =>
-        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), TriageMode.Live, Ct);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), TriageMode.Live, null, Ct);
 
     [Fact]
     public async Task AnUnappliedApprove_ThatPassesTheApplyTimePrecheck_IsApplied()
@@ -1346,8 +1346,8 @@ public class RenovateTriageWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
         var decision = new TriageDecision(TriageVerdict.NeedsReview, TriageRules.CiFailed, null);
-        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, decision, TriageMode.Live, Ct);
-        await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, decision.Verdict, Ct);
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, decision, TriageMode.Live, null, Ct);
+        await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, decision.Verdict, null, Ct);
 
         var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 

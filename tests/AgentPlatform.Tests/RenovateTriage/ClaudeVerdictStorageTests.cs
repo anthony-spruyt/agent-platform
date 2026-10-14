@@ -38,7 +38,7 @@ public class ClaudeVerdictStorageTests
     {
         var data = InMemoryRunData.Create();
 
-        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Live, Ct);
+        await data.Verdicts.RecordAsync(Repo, 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Live, null, Ct);
 
         await using var db = await data.Factory.CreateDbContextAsync(Ct);
         Assert.Null((await db.TriageVerdicts.SingleAsync(Ct)).Rung);
