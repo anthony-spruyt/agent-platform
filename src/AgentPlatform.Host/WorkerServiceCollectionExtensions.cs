@@ -37,6 +37,7 @@ public static class WorkerServiceCollectionExtensions
             .AddSingletonActivities<ClaudeBudgetActivities>()
             .AddScopedActivities<RenovateTriageActivities>()
             .AddScopedActivities<RenovateTriageCodeActivities>()
+            .AddScopedActivities<ClaudeRungActivities>()
             .AddScopedActivities<TriageCheckActivities>()
             .AddScopedActivities<AgentPodActivities>();
 

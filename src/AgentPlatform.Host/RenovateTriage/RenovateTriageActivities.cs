@@ -376,25 +376,11 @@ public sealed partial class RenovateTriageActivities(
         }
     }
 
-    private async Task<GitHubIssueComment?> FindStickyAsync(ApplyInput input, CancellationToken cancellationToken)
-    {
-        var comments = await github.ListIssueCommentsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-        return comments.FirstOrDefault(c => string.Equals(c.AuthorLogin, TriageRules.TriageBotLogin, StringComparison.Ordinal)
-            && c.Body.Contains(TriageRules.StickyMarker, StringComparison.Ordinal));
-    }
+    private Task<GitHubIssueComment?> FindStickyAsync(ApplyInput input, CancellationToken cancellationToken) =>
+        TriageSticky.FindAsync(github, input.Repo, input.PrNumber, cancellationToken);
 
-    private async Task UpsertStickyAsync(ApplyInput input, GitHubIssueComment? sticky, string text, CancellationToken cancellationToken)
-    {
-        var body = $"{TriageRules.StickyMarker}\n{text}";
-        if (sticky is null)
-        {
-            await github.CreateIssueCommentAsync(input.Repo, input.PrNumber, body, cancellationToken).ConfigureAwait(false);
-        }
-        else if (!string.Equals(sticky.Body, body, StringComparison.Ordinal))
-        {
-            await github.UpdateIssueCommentAsync(input.Repo, sticky.Id, body, cancellationToken).ConfigureAwait(false);
-        }
-    }
+    private Task UpsertStickyAsync(ApplyInput input, GitHubIssueComment? sticky, string text, CancellationToken cancellationToken) =>
+        TriageSticky.UpsertAsync(github, input.Repo, input.PrNumber, sticky, text, cancellationToken);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Not applying the verdict for {Repo}#{Number}: {Reason}.")]
     private static partial void LogNotApplied(ILogger logger, string repo, int number, string? reason);

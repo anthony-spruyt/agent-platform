@@ -235,6 +235,18 @@ public class WorkerConfigurationTests
     }
 
     [Fact]
+    public void AgentPlatformWorker_RunsTheClaudeRungActivities()
+    {
+        using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(options.Activities, a => a.Name == ClaudeRungActivities.QueueName);
+        Assert.Contains(options.Activities, a => a.Name == ClaudeRungActivities.ReadHeadName);
+        Assert.Contains(options.Activities, a => a.Name == ClaudeBudgetActivities.ReserveName);
+    }
+
+    [Fact]
     public void AgentPlatformWorker_RunsTheLoadPromptActivity()
     {
         using var provider = Build(new() { ["AgentGateway:SessionTokenKey"] = Key });
