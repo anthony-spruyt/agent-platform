@@ -166,6 +166,30 @@ public class ClaudeOutputAnalyzerTests
     }
 
     [Fact]
+    public async Task ARejectedEventAfterAnEarlierTextSignal_StillSuppliesTheResetTime()
+    {
+        const string rejected = """{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1760000000,"rateLimitType":"five_hour"}}""";
+        const string limitText = """{"type":"assistant","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"You've hit your limit"}]}}""";
+
+        var summary = await Analyze(Init, limitText, rejected, Result(isError: true, result: "You've hit your limit", outputTokens: 0));
+
+        Assert.True(summary.UsageLimitReached);
+        Assert.Equal("You've hit your limit", summary.UsageLimitMessage);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1760000000), summary.UsageLimitResetsAt);
+    }
+
+    [Fact]
+    public async Task ALaterRejectedEventWithoutAResetTime_KeepsTheEarlierOne()
+    {
+        const string withReset = """{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1760000000}}""";
+        const string without = """{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}""";
+
+        var summary = await Analyze(Init, withReset, without);
+
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1760000000), summary.UsageLimitResetsAt);
+    }
+
+    [Fact]
     public async Task UsageLimitFromAnotherSignal_HasNoResetTime()
     {
         var summary = await Analyze(Init, Result(subtype: "success", isError: true, result: "You've hit your limit", outputTokens: 0));

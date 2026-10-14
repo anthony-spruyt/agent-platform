@@ -51,6 +51,25 @@ public class AgentPodStepTests
     }
 
     [Fact]
+    public void Validate_RejectsAResultOnceTheStepIsClosed()
+    {
+        var step = Step();
+        step.Close();
+
+        Assert.Equal(AgentResultUpdates.StaleRunErrorType, ErrorType(() => AgentPodStep.Validate(step, Payload())));
+    }
+
+    [Fact]
+    public async Task Validate_ReportsStaleRatherThanAlreadySubmittedForAClosedStep()
+    {
+        var step = Step();
+        await step.AcceptAsync(Payload());
+        step.Close();
+
+        Assert.Equal(AgentResultUpdates.StaleRunErrorType, ErrorType(() => AgentPodStep.Validate(step, Payload())));
+    }
+
+    [Fact]
     public async Task AnInvalidResult_IsRejectedWithTheParserErrorAndMayBeResubmittedOnce()
     {
         var step = Step(parse: _ => "bad shape");

@@ -224,6 +224,36 @@ public class SpikeWorkflowTests
     }
 
     [Fact]
+    public async Task AResultSubmittedByAnAgentThatThenFails_IsNotReturnedNextToTheFailure()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var running = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var activities = new ScriptedActivities
+        {
+            OnRun = async _ =>
+            {
+                running.SetResult();
+                await release.Task;
+                return new AgentRunResult(AgentRunOutcome.Truncated, "pod-1", 1, null, "cut off", null);
+            },
+        };
+
+        var result = await InWorkersAsync(env, activities, new RecordingCleanup(), async () =>
+        {
+            var handle = await StartAsync(env);
+            await running.Task;
+            await handle.ExecuteUpdateAsync(wf => wf.SubmitResultAsync(Payload));
+            release.SetResult();
+            return await handle.GetResultAsync();
+        });
+
+        Assert.Equal(SpikeStatus.AgentFailed, result.Status);
+        Assert.Null(result.Result);
+        Assert.Null(result.Triage);
+    }
+
+    [Fact]
     public async Task WhenNoResultArrives_TimesOutWithTheRunMetadata()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();

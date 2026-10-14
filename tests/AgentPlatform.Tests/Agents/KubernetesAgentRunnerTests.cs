@@ -254,6 +254,24 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
+    public async Task Run_ReattachToAPodWhoseInitContainerFinished_DoesNotMintAgain()
+    {
+        var api = ApiWith(Success);
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo };
+        api.Seed(new AgentPodSpecBuilder(new AgentPodsOptions()).Build(request));
+        api.Pods[PodName].Status.InitContainerStatuses =
+        [
+            new V1ContainerStatus { Name = "git-clone", State = new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = 0 } } },
+        ];
+
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
+
+        Assert.Equal(0, contributor.Calls);
+        Assert.Empty(api.Secrets);
+    }
+
+    [Fact]
     public async Task Run_CapsThePodDeadlineSoThePodNeverOutlivesTheToken()
     {
         var api = ApiWith(Success);

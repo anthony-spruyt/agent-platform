@@ -69,8 +69,6 @@ public sealed partial class FakeKubeApi : DelegatingHandler
 
     public int PodsCreated { get; private set; }
 
-    public int PodReads { get; private set; }
-
     public Func<HttpRequestMessage, HttpResponseMessage?>? Interceptor { get; set; }
 
     public IReadOnlyDictionary<string, V1Pod> Pods
@@ -229,7 +227,6 @@ public sealed partial class FakeKubeApi : DelegatingHandler
     {
         lock (_gate)
         {
-            PodReads++;
             return _pods.TryGetValue(name, out var pod)
                 ? Json(HttpStatusCode.OK, KubernetesJson.Serialize(Snapshot(pod)))
                 : Json(HttpStatusCode.NotFound, Status(404, "NotFound", $"pods \"{name}\" not found"));

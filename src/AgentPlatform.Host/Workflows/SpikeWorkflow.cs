@@ -103,18 +103,19 @@ public partial class SpikeWorkflow
             var outcome = await _podStep.RunAsync(prompt, input.Tier, repo, AgentRunTimeouts.DefaultPodDeadlineSeconds, Workflow.CancellationToken);
             var agent = outcome.Agent;
             var status = ToSpikeStatus(outcome.Status);
+            var succeeded = status == SpikeStatus.Succeeded;
 
             if (run is not null)
             {
-                await _podStep.RecordAsync(run, 1, outcome, agentStarted, RunRecorder.ToJson(new { tier = input.Tier }), (object?)_triage ?? _result);
+                await _podStep.RecordAsync(run, 1, outcome, agentStarted, RunRecorder.ToJson(new { tier = input.Tier }), succeeded ? (object?)_triage ?? _result : null);
                 await RunRecorder.CompleteAsync(new CompleteRunInput(
                     run.RunId,
-                    status == SpikeStatus.Succeeded ? RunStatus.Succeeded : RunStatus.Failed,
+                    succeeded ? RunStatus.Succeeded : RunStatus.Failed,
                     Workflow.UtcNow,
                     agent.Model));
             }
 
-            return new SpikeResult(status, _result, agent, input.Tier, info.WorkflowId, info.RunId, _triage);
+            return new SpikeResult(status, succeeded ? _result : null, agent, input.Tier, info.WorkflowId, info.RunId, succeeded ? _triage : null);
         }
         catch (Exception ex) when (ex is ActivityFailureException or OperationCanceledException)
         {

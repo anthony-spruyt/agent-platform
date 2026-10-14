@@ -35,7 +35,6 @@ public static partial class ClaudeOutputAnalyzer
 
     private const string RateLimitErrorValue = "rate_limit";
     private const string RateLimitFallbackMessage = "Claude rate limit reached";
-    private const long MaxResetsAtSeconds = 253_402_300_799;
 
     private sealed record UsageLimit(string Message, DateTimeOffset? ResetsAt);
 
@@ -65,7 +64,7 @@ public static partial class ClaudeOutputAnalyzer
                 using (document)
                 {
                     var root = document.RootElement;
-                    limit ??= FindUsageLimit(root);
+                    limit = MergeUsageLimit(limit, FindUsageLimit(root));
                     if (GetString(root, "type") == "result")
                     {
                         result = ReadResult(root);
@@ -161,10 +160,15 @@ public static partial class ClaudeOutputAnalyzer
         return text is not null && UsageLimitText().IsMatch(text) ? new UsageLimit(text, null) : null;
     }
 
+    private static UsageLimit? MergeUsageLimit(UsageLimit? kept, UsageLimit? seen) =>
+        kept is null ? seen
+        : kept.ResetsAt is null && seen?.ResetsAt is { } resetsAt ? kept with { ResetsAt = resetsAt }
+        : kept;
+
     private static DateTimeOffset? ReadResetsAt(JsonElement info)
     {
         var seconds = GetLong(info, "resetsAt");
-        if (seconds is not > 0 or > MaxResetsAtSeconds)
+        if (seconds is not > 0 || seconds > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
         {
             return null;
         }

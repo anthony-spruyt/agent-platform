@@ -19,11 +19,12 @@ public sealed record AgentPodStepOutcome(AgentPodStepStatus Status, AgentRunResu
 
 public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitResultPayload, string?> parse)
 {
-    public const int MaxInvalidSubmits = 2;
+    private const int MaxInvalidSubmits = 2;
 
     public static readonly TimeSpan ResultTimeout = TimeSpan.FromMinutes(2);
 
     private bool _submitted;
+    private bool _closed;
     private int _invalidSubmits;
 
     public string Step { get; } = step;
@@ -33,7 +34,7 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
     public static void Validate(AgentPodStep? current, SubmitResultPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
-        if (current is null || payload.Step != current.Step || payload.Attempt != current.Attempt)
+        if (current is null || current._closed || payload.Step != current.Step || payload.Attempt != current.Attempt)
         {
             throw new ApplicationFailureException(
                 "The result does not belong to the current run step.",
@@ -58,6 +59,8 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
         }
     }
 
+    public void Close() => _closed = true;
+
     public Task AcceptAsync(SubmitResultPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
@@ -71,7 +74,7 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
         return Task.CompletedTask;
     }
 
-    public static string StopReason(AgentPodStepOutcome outcome) => outcome.Status switch
+    private static string StopReason(AgentPodStepOutcome outcome) => outcome.Status switch
     {
         AgentPodStepStatus.Succeeded => "submitted",
         AgentPodStepStatus.ResultTimeout => "result_timeout",
@@ -96,6 +99,7 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
             status = !arrived ? AgentPodStepStatus.ResultTimeout : _submitted ? AgentPodStepStatus.Succeeded : AgentPodStepStatus.InvalidResult;
         }
 
+        Close();
         return new AgentPodStepOutcome(status, agent);
     }
 

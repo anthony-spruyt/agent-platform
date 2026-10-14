@@ -160,14 +160,6 @@ public class TriageResultTests
         Assert.Contains("data.versions", VersionsError(versions, stated), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void TryParse_DoesNotRequireALockfileOnlyPairTheTableDoesNotList()
-    {
-        var stated = Table(("a", "1.0.0", "1.1.0"));
-
-        Assert.Null(VersionsError("""[{"dep":"a","from":"1.0.0","to":"1.1.0"}]""", stated));
-    }
-
     [Theory]
     [InlineData("[]", "8.22.0")]
     [InlineData("[]", null)]
@@ -194,6 +186,27 @@ public class TriageResultTests
         var error = VersionsError("[]", Table(("a", "1.0.0", "1.1.0")));
 
         Assert.Contains("a 1.0.0 -> 1.1.0", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryParse_WhenTheTableIsLonger_SaysHowManyUpdatesTheMessageLeavesOut()
+    {
+        var rows = Enumerable.Range(1, TriageResult.MaxListItems + 5).Select(i => ($"dep{i}", "1.0.0", "1.1.0")).ToArray();
+
+        var error = VersionsError("[]", Table(rows));
+
+        Assert.Contains("dep1 1.0.0", error, StringComparison.Ordinal);
+        Assert.DoesNotContain($"dep{TriageResult.MaxListItems + 1} ", error, StringComparison.Ordinal);
+        Assert.Contains("and 5 more", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryParse_WhenTheTableListsNoUpdates_SaysSoInsteadOfEndingOnAnEmptyList()
+    {
+        var error = VersionsError("""[{"dep":"a","from":"1.0.0","to":"1.1.0"}]""", Table());
+
+        Assert.Contains("lists no updates", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("table: .", error, StringComparison.Ordinal);
     }
 
     [Fact]

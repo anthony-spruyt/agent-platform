@@ -102,10 +102,7 @@ public sealed record TriageResult(
         {
             var expected = rows.Select(r => Key(r.Package, r.From, r.To)).Order(StringComparer.Ordinal);
             var actual = versions.Select(v => Key(v.Dep, v.From, v.To)).Order(StringComparer.Ordinal);
-            return expected.SequenceEqual(actual, StringComparer.Ordinal)
-                ? null
-                : "data.versions must list exactly the updates in the head commit's table: "
-                    + string.Join("; ", rows.Take(MaxListItems).Select(r => $"{r.Package} {r.From} -> {r.To}")) + ".";
+            return expected.SequenceEqual(actual, StringComparer.Ordinal) ? null : TableMismatch(rows);
         }
 
         var allowed = versions.Count switch
@@ -118,6 +115,18 @@ public sealed record TriageResult(
             ? null
             : "data.versions must be empty or hold one entry whose \"to\" is the version the commit subject states"
                 + (stated.SubjectVersion is { } version ? $" ({version})." : ", and it states none.");
+    }
+
+    private static string TableMismatch(IReadOnlyList<StatedVersion> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return "data.versions must be empty: the head commit's table lists no updates.";
+        }
+
+        var listed = string.Join("; ", rows.Take(MaxListItems).Select(r => $"{r.Package} {r.From} -> {r.To}"));
+        var more = rows.Count > MaxListItems ? $" (and {rows.Count - MaxListItems} more)" : string.Empty;
+        return $"data.versions must list exactly the updates in the head commit's table: {listed}{more}.";
     }
 
     private static string Key(string dep, string from, string to) =>
