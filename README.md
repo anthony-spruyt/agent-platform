@@ -321,7 +321,7 @@ The workflow tests run against Temporal's time-skipping test server, which the S
 
 The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
 time-skipping tests. The `renovate-triage-v141-*` histories were captured from release 1.4.1 while a run waited for CI or for Jev; no test records them, so they stay as committed and prove that runs started by 1.4.1 replay on the current code.
-The `renovate-triage-v150-*` histories were exported read-only from the cluster's Temporal namespace (worker identities and pod names scrubbed) and prove that runs started before the code rungs replay on the current code.
+The `renovate-triage-v150-*` and `renovate-triage-v19x-*` histories were exported read-only from the cluster's Temporal namespace (worker identities and pod names scrubbed) and prove that runs started before the code rungs (v150) and before the Claude rung (v19x) replay on the current code.
 The other `renovate-triage-live-*` histories (`live-approve`, `live-needs-review`) are synthetic, like the rest.
 Every workflow change must sit behind `Workflow.Patched` (`renovate-triage-jev-retry-v1`, `renovate-triage-live-v1`, `renovate-triage-step2-v1`, `renovate-triage-claude-v1`, `renovate-triage-head-v1`). Re-recording rewrites every history a test names: restore the older ones with `git checkout` so they keep proving the older flow.
 
