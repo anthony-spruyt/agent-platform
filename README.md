@@ -69,8 +69,9 @@ In the cluster the run-data connection string uses `SSL Mode=VerifyFull` with `R
 3. The agent calls the `submit_result` tool of AgentGateway. The gateway checks the per-run session token and sends the result to the waiting workflow as a Temporal Update. The workflow accepts the first result and rejects any further one, so a repeated `submit_result` call gets an error.
 4. The workflow returns the submitted result with the run metadata (`Status`, `Result`, `Agent`, `Tier`, `WorkflowId`, `RunId`, and `Triage` for a triage run).
 
-Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod and re-attaches instead of creating a second one. A re-attach keeps the pod's per-run Secret and its deadline: it asks for the run's credentials again (the installation token provider returns its cached
-token), creates the Secret, and leaves an existing one untouched on `AlreadyExists`. The runner's Role needs only `create` and `delete` on Secrets. A pod that vanished while the activity waited is reported as `PodFailed` and is not recreated.
+Pod names are derived from the workflow ID, run ID and step, so a retried activity finds its pod and re-attaches instead of creating a second one. A re-attach keeps the pod's per-run Secret and its deadline. If the pod has started (Running, ended, or an init container running), the kubelet already mounted the Secret, so the runner mints nothing and creates nothing.
+If it is still Pending, the Secret may be missing (the worker died before creating it): the runner asks for the run's credentials again, creates the Secret and leaves an existing one untouched on `AlreadyExists`.
+The runner's Role needs only `create` and `delete` on Secrets. A pod that vanished while the activity waited is reported as `PodFailed` and is not recreated.
 
 Pod deletion has two owners. The activity deletes the pod when the workflow cancels it. An attempt that ends any other way (heartbeat timeout, worker shutdown, a transient API failure) leaves the pod for the retry to re-attach to. The workflow's `DeleteAgentPod` removes the pod once the run ends or fails for good, with the pod's `activeDeadlineSeconds` and the cluster's pod cleanup as the
 final backstop.

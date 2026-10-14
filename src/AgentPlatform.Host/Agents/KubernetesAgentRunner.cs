@@ -59,7 +59,11 @@ public sealed partial class KubernetesAgentRunner(
         if (existing is not null)
         {
             LogPodReattached(logger, name);
-            await EnsureSecretAsync(existing, request, null, replaceExisting: false, cancellationToken).ConfigureAwait(false);
+            if (!HasMountedSecret(existing))
+            {
+                await EnsureSecretAsync(existing, request, null, replaceExisting: false, cancellationToken).ConfigureAwait(false);
+            }
+
             return existing;
         }
 
@@ -78,6 +82,11 @@ public sealed partial class KubernetesAgentRunner(
         await EnsureSecretAsync(raced, request, contributions, replaceExisting: false, cancellationToken).ConfigureAwait(false);
         return raced;
     }
+
+    // The kubelet mounts the Secret before any container starts, so a pod past Pending already has it; the Role cannot read Secrets to check.
+    private static bool HasMountedSecret(V1Pod pod) =>
+        pod.Status?.Phase is "Running" or "Succeeded" or "Failed"
+        || (pod.Status?.InitContainerStatuses ?? []).Any(s => s.State?.Running is not null || s.State?.Terminated is not null);
 
     private async Task<V1Pod?> TryCreatePodAsync(V1Pod spec, CancellationToken cancellationToken)
     {
@@ -324,7 +333,7 @@ public sealed partial class KubernetesAgentRunner(
 
         if (summary.UsageLimitReached)
         {
-            return Result(AgentRunOutcome.UsageLimit, summary.UsageLimitMessage);
+            return Result(AgentRunOutcome.UsageLimit, summary.UsageLimitMessage) with { ResetsAt = summary.UsageLimitResetsAt };
         }
 
         if (summary.LimitStop is not null)

@@ -12,7 +12,8 @@ public sealed record ClaudeOutputSummary(
     bool UsageLimitReached,
     string? UsageLimitMessage,
     AgentRunUsage? Usage,
-    int SkippedLines = 0)
+    int SkippedLines = 0,
+    DateTimeOffset? UsageLimitResetsAt = null)
 {
     public string? LimitStop => Subtype switch
     {
@@ -34,6 +35,9 @@ public static partial class ClaudeOutputAnalyzer
 
     private const string RateLimitErrorValue = "rate_limit";
     private const string RateLimitFallbackMessage = "Claude rate limit reached";
+    private const long MaxResetsAtSeconds = 253_402_300_799;
+
+    private sealed record UsageLimit(string Message, DateTimeOffset? ResetsAt);
 
     [GeneratedRegex(
         @"usage limit reached|hit your (usage |session |weekly )?limit|(5-hour|weekly|session|opus) limit reached|limit reached\s*[|∙·]",
@@ -46,7 +50,7 @@ public static partial class ClaudeOutputAnalyzer
         ArgumentNullException.ThrowIfNull(reader);
 
         ClaudeOutputSummary result = new(false, null, null, false, null, false, null, null);
-        string? limitMessage = null;
+        UsageLimit? limit = null;
 
         var lines = new BoundedLineReader(reader);
         while (await lines.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
@@ -61,7 +65,7 @@ public static partial class ClaudeOutputAnalyzer
                 using (document)
                 {
                     var root = document.RootElement;
-                    limitMessage ??= FindUsageLimit(root);
+                    limit ??= FindUsageLimit(root);
                     if (GetString(root, "type") == "result")
                     {
                         result = ReadResult(root);
@@ -74,7 +78,13 @@ public static partial class ClaudeOutputAnalyzer
             }
         }
 
-        return result with { UsageLimitReached = limitMessage is not null, UsageLimitMessage = limitMessage, SkippedLines = lines.SkippedLines };
+        return result with
+        {
+            UsageLimitReached = limit is not null,
+            UsageLimitMessage = limit?.Message,
+            UsageLimitResetsAt = limit?.ResetsAt,
+            SkippedLines = lines.SkippedLines,
+        };
     }
 
     private static bool TryParseEvent(string line, out JsonDocument document)
@@ -123,18 +133,22 @@ public static partial class ClaudeOutputAnalyzer
         return new ClaudeOutputSummary(true, GetString(root, "subtype"), clamped, stopReasonIsNull, outputTokens, false, null, summaryUsage);
     }
 
-    private static string? FindUsageLimit(JsonElement root)
+    private static UsageLimit? FindUsageLimit(JsonElement root)
     {
         var type = GetString(root, "type");
         if (type == "rate_limit_event")
         {
-            var status = root.TryGetProperty("rate_limit_info", out var info) ? GetString(info, "status") : null;
-            return status == "rejected" ? "Claude rate limit rejected the request" : null;
+            if (!root.TryGetProperty("rate_limit_info", out var info) || GetString(info, "status") != "rejected")
+            {
+                return null;
+            }
+
+            return new UsageLimit("Claude rate limit rejected the request", ReadResetsAt(info));
         }
 
         if (type == "assistant" && GetString(root, "error") == RateLimitErrorValue)
         {
-            return FirstMessageText(root) ?? RateLimitFallbackMessage;
+            return new UsageLimit(FirstMessageText(root) ?? RateLimitFallbackMessage, null);
         }
 
         var text = type switch
@@ -144,7 +158,18 @@ public static partial class ClaudeOutputAnalyzer
             _ => null,
         };
 
-        return text is not null && UsageLimitText().IsMatch(text) ? text : null;
+        return text is not null && UsageLimitText().IsMatch(text) ? new UsageLimit(text, null) : null;
+    }
+
+    private static DateTimeOffset? ReadResetsAt(JsonElement info)
+    {
+        var seconds = GetLong(info, "resetsAt");
+        if (seconds is not > 0 or > MaxResetsAtSeconds)
+        {
+            return null;
+        }
+
+        return DateTimeOffset.FromUnixTimeSeconds(seconds.Value);
     }
 
     private static string? FirstMessageText(JsonElement root)

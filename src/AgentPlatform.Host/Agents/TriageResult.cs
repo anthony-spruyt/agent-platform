@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json;
+using AgentPlatform.Host.PullRequests;
 
 namespace AgentPlatform.Host.Agents;
 
@@ -21,11 +23,11 @@ public sealed record TriageResult(
 
     private static readonly string[] _verdicts = ["SAFE", "FIXABLE", "BLOCKED", "NEEDS_REVIEW"];
 
-    public static bool TryParse(SubmitResultPayload payload, string expectedHeadSha, out TriageResult? result, out string? error)
+    public static bool TryParse(SubmitResultPayload payload, string expectedHeadSha, StatedVersions? stated, out TriageResult? result, out string? error)
     {
         ArgumentNullException.ThrowIfNull(payload);
         result = null;
-        error = Check(payload, expectedHeadSha, out var parsed);
+        error = Check(payload, expectedHeadSha, out var parsed) ?? (stated is null ? null : CheckVersions(parsed!.Versions, stated));
         if (error is not null)
         {
             return false;
@@ -93,6 +95,35 @@ public sealed record TriageResult(
         parsed = new TriageResult(verdictElement.GetString()!, shaElement.GetString()!, payload.Summary, versions, fix, reasons);
         return null;
     }
+
+    private static string? CheckVersions(IReadOnlyList<TriageVersion> versions, StatedVersions stated)
+    {
+        if (stated.Rows is { } rows)
+        {
+            var expected = rows.Select(r => Key(r.Package, r.From, r.To)).Order(StringComparer.Ordinal);
+            var actual = versions.Select(v => Key(v.Dep, v.From, v.To)).Order(StringComparer.Ordinal);
+            return expected.SequenceEqual(actual, StringComparer.Ordinal)
+                ? null
+                : "data.versions must list exactly the updates in the head commit's table: "
+                    + string.Join("; ", rows.Take(MaxListItems).Select(r => $"{r.Package} {r.From} -> {r.To}")) + ".";
+        }
+
+        var allowed = versions.Count switch
+        {
+            0 => true,
+            1 => stated.SubjectVersion is { } subject && StripV(versions[0].To) == StripV(subject),
+            _ => false,
+        };
+        return allowed
+            ? null
+            : "data.versions must be empty or hold one entry whose \"to\" is the version the commit subject states"
+                + (stated.SubjectVersion is { } version ? $" ({version})." : ", and it states none.");
+    }
+
+    private static string Key(string dep, string from, string to) =>
+        string.Create(CultureInfo.InvariantCulture, $"{dep.ToLowerInvariant()}\n{StripV(from)}\n{StripV(to)}");
+
+    private static string StripV(string version) => version.StartsWith('v') || version.StartsWith('V') ? version[1..] : version;
 
     private static bool Property(JsonElement data, string name, out JsonElement value) =>
         data.TryGetProperty(name, out value) && value.ValueKind != JsonValueKind.Null;

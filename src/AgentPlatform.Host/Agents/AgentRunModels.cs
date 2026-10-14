@@ -46,6 +46,7 @@ public sealed record AgentRunResult(
     string? ResultText,
     string? Detail,
     AgentRunUsage? Usage,
-    string? Model = null);
+    string? Model = null,
+    DateTimeOffset? ResetsAt = null);
 
 public sealed record AgentRunIdentity(string WorkflowId, string RunId, string Step, int Attempt);

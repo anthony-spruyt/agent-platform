@@ -216,6 +216,43 @@ public class KubernetesAgentRunnerTests
         Assert.Equal("ghs_read", api.Secrets[PodName].StringData[AgentPodSpecBuilder.GitHubTokenKey]);
     }
 
+    [Theory]
+    [InlineData("Running")]
+    [InlineData("Succeeded")]
+    [InlineData("Failed")]
+    public async Task Run_ReattachToAPodThatAlreadyStarted_DoesNotMintAgain(string phase)
+    {
+        var api = ApiWith(Success);
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo };
+        api.Seed(new AgentPodSpecBuilder(new AgentPodsOptions()).Build(request));
+        api.Pods[PodName].Status.Phase = phase;
+        var runner = NewRunner(api, contributors: [contributor]);
+
+        await runner.RunAsync(request, Ct);
+
+        Assert.Equal(0, contributor.Calls);
+        Assert.Empty(api.Secrets);
+        Assert.Equal(0, api.PodsCreated);
+    }
+
+    [Fact]
+    public async Task Run_ReattachToAPodWhoseInitContainerRuns_DoesNotMintAgain()
+    {
+        var api = ApiWith(Success);
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo };
+        api.Seed(new AgentPodSpecBuilder(new AgentPodsOptions()).Build(request));
+        api.Pods[PodName].Status.InitContainerStatuses =
+        [
+            new V1ContainerStatus { Name = "git-clone", State = new V1ContainerState { Running = new V1ContainerStateRunning() } },
+        ];
+
+        await NewRunner(api, contributors: [contributor]).RunAsync(request, Ct);
+
+        Assert.Equal(0, contributor.Calls);
+    }
+
     [Fact]
     public async Task Run_CapsThePodDeadlineSoThePodNeverOutlivesTheToken()
     {
@@ -486,6 +523,17 @@ public class KubernetesAgentRunnerTests
 
         Assert.Equal(AgentRunOutcome.UsageLimit, result.Outcome);
         Assert.False(string.IsNullOrWhiteSpace(result.Detail));
+    }
+
+    [Fact]
+    public async Task Run_WhenClaudeRejectsTheRequestForAUsageLimit_ReportsWhenItResets()
+    {
+        var api = ApiWith("""{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1760000000}}""", 1, "Failed");
+
+        var result = await NewRunner(api).RunAsync(Request, Ct);
+
+        Assert.Equal(AgentRunOutcome.UsageLimit, result.Outcome);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1760000000), result.ResetsAt);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.PullRequests;
 
 namespace AgentPlatform.Tests.Agents;
 
@@ -15,7 +16,7 @@ public class TriageResultTests
 
     private static string? Error(SubmitResultPayload payload)
     {
-        TriageResult.TryParse(payload, Sha, out _, out var error);
+        TriageResult.TryParse(payload, Sha, null, out _, out var error);
         return error;
     }
 
@@ -26,7 +27,7 @@ public class TriageResultTests
     [InlineData("NEEDS_REVIEW")]
     public void TryParse_AcceptsEachVerdict(string verdict)
     {
-        Assert.True(TriageResult.TryParse(Payload(Valid(verdict)), Sha, out var result, out var error), error);
+        Assert.True(TriageResult.TryParse(Payload(Valid(verdict)), Sha, null, out var result, out var error), error);
 
         Assert.Equal(verdict, result!.Verdict);
         Assert.Equal("Looks fine.", result.Summary);
@@ -44,7 +45,7 @@ public class TriageResultTests
     [Fact]
     public void TryParse_TreatsMissingListsAsEmpty()
     {
-        Assert.True(TriageResult.TryParse(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}"}"""), Sha, out var result, out _));
+        Assert.True(TriageResult.TryParse(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}"}"""), Sha, null, out var result, out _));
         Assert.Empty(result!.Versions);
         Assert.Empty(result.Fix);
         Assert.Empty(result.Reasons);
@@ -125,5 +126,83 @@ public class TriageResultTests
         Assert.Contains(field, Error(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}","{{field}}":[{{tooLong}}]}""")), StringComparison.Ordinal);
         Assert.Contains(field, Error(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}","{{field}}":"nope"}""")), StringComparison.Ordinal);
         Assert.Contains(field, Error(Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}","{{field}}":[1]}""")), StringComparison.Ordinal);
+    }
+
+    private static StatedVersions Table(params (string Dep, string From, string To)[] rows) =>
+        new([.. rows.Select(r => new StatedVersion(r.Dep, r.From, r.To))], null);
+
+    private static string? VersionsError(string versions, StatedVersions stated)
+    {
+        var payload = Payload($$"""{"verdict":"SAFE","head_sha":"{{Sha}}","versions":{{versions}}}""");
+        TriageResult.TryParse(payload, Sha, stated, out _, out var error);
+        return error;
+    }
+
+    [Fact]
+    public void TryParse_AcceptsVersionsEqualToTheCommitTable_InAnyOrderIgnoringALeadingV()
+    {
+        var stated = Table(("a", "1.0.0", "1.1.0"), ("b", "v2.0.0", "v2.1.0"));
+
+        Assert.Null(VersionsError("""[{"dep":"b","from":"2.0.0","to":"2.1.0"},{"dep":"a","from":"v1.0.0","to":"1.1.0"}]""", stated));
+    }
+
+    [Theory]
+    [InlineData("""[{"dep":"a","from":"1.0.0","to":"1.1.0"}]""")]
+    [InlineData("""[{"dep":"a","from":"1.0.0","to":"1.1.0"},{"dep":"b","from":"2.0.0","to":"2.1.0"},{"dep":"c","from":"3.0.0","to":"3.1.0"}]""")]
+    [InlineData("""[{"dep":"a","from":"1.0.0","to":"1.1.0"},{"dep":"b","from":"2.0.0","to":"2.2.0"}]""")]
+    [InlineData("""[{"dep":"a","from":"1.0.0","to":"1.1.0"},{"dep":"x","from":"2.0.0","to":"2.1.0"}]""")]
+    [InlineData("""[{"dep":"a","from":"1.0.0","to":"1.1.0"},{"dep":"a","from":"1.0.0","to":"1.1.0"}]""")]
+    [InlineData("[]")]
+    public void TryParse_RejectsVersionsThatDifferFromTheCommitTable(string versions)
+    {
+        var stated = Table(("a", "1.0.0", "1.1.0"), ("b", "2.0.0", "2.1.0"));
+
+        Assert.Contains("data.versions", VersionsError(versions, stated), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryParse_DoesNotRequireALockfileOnlyPairTheTableDoesNotList()
+    {
+        var stated = Table(("a", "1.0.0", "1.1.0"));
+
+        Assert.Null(VersionsError("""[{"dep":"a","from":"1.0.0","to":"1.1.0"}]""", stated));
+    }
+
+    [Theory]
+    [InlineData("[]", "8.22.0")]
+    [InlineData("[]", null)]
+    [InlineData("""[{"dep":"x","from":"8.21.0","to":"8.22.0"}]""", "8.22.0")]
+    [InlineData("""[{"dep":"x","from":"8.21.0","to":"v8.22.0"}]""", "8.22.0")]
+    [InlineData("""[{"dep":"x","from":"8.21.0","to":"8.22.0"}]""", "v8.22.0")]
+    public void TryParse_WithNoTable_AcceptsNoVersionsOrOneEntryEndingAtTheSubjectVersion(string versions, string? subjectVersion)
+    {
+        Assert.Null(VersionsError(versions, new StatedVersions(null, subjectVersion)));
+    }
+
+    [Theory]
+    [InlineData("""[{"dep":"x","from":"8.21.0","to":"8.23.0"}]""", "8.22.0")]
+    [InlineData("""[{"dep":"x","from":"8.21.0","to":"8.22.0"}]""", null)]
+    [InlineData("""[{"dep":"x","from":"1","to":"8.22.0"},{"dep":"y","from":"1","to":"8.22.0"}]""", "8.22.0")]
+    public void TryParse_WithNoTable_RejectsAnythingElse(string versions, string? subjectVersion)
+    {
+        Assert.Contains("data.versions", VersionsError(versions, new StatedVersions(null, subjectVersion)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryParse_TellsTheAgentWhichUpdatesTheCommitStates()
+    {
+        var error = VersionsError("[]", Table(("a", "1.0.0", "1.1.0")));
+
+        Assert.Contains("a 1.0.0 -> 1.1.0", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryParse_ChecksTheVersionsOnlyAfterTheShapeIsValid()
+    {
+        var payload = Payload($$"""{"verdict":"MAYBE","head_sha":"{{Sha}}"}""");
+
+        TriageResult.TryParse(payload, Sha, Table(("a", "1", "2")), out _, out var error);
+
+        Assert.Contains("verdict", error, StringComparison.Ordinal);
     }
 }

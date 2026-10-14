@@ -41,13 +41,9 @@ public partial class SpikeWorkflow
 {
     public const string InvalidInputErrorType = "InvalidInput";
 
-    public static readonly TimeSpan ResultTimeout = TimeSpan.FromMinutes(2);
-
     private const string AgentStep = "spike";
 
     private const int RunAttempt = 1;
-
-    private const int MaxInvalidSubmits = 2;
 
     private const string ContextPatch = "spike-triage-context-v1";
 
@@ -63,66 +59,23 @@ public partial class SpikeWorkflow
         },
     };
 
+    private readonly AgentPodStep _podStep;
+
     private SubmitResultPayload? _result;
     private TriageResult? _triage;
-    private bool _submitted;
-    private int _invalidSubmits;
     private string? _triageHeadSha;
     private TriageContext? _context;
+
+    public SpikeWorkflow() => _podStep = new AgentPodStep(AgentStep, RunAttempt, ParseSubmitted);
 
     [WorkflowQuery(TriageContextQueries.GetTriageContext)]
     public TriageContext? GetTriageContext() => _context;
 
     [WorkflowUpdate(AgentResultUpdates.SubmitResult)]
-    public Task SubmitResultAsync(SubmitResultPayload payload)
-    {
-        ArgumentNullException.ThrowIfNull(payload);
-        if (_triageHeadSha is null)
-        {
-            _result = payload;
-        }
-        else if (TriageResult.TryParse(payload, _triageHeadSha, out var parsed, out var error))
-        {
-            _triage = parsed;
-        }
-        else
-        {
-            _invalidSubmits++;
-            throw new ApplicationFailureException(error!, errorType: AgentResultUpdates.InvalidResultErrorType, nonRetryable: true);
-        }
-
-        _submitted = true;
-        return Task.CompletedTask;
-    }
+    public Task SubmitResultAsync(SubmitResultPayload payload) => _podStep.AcceptAsync(payload);
 
     [WorkflowUpdateValidator(nameof(SubmitResultAsync))]
-    public void ValidateSubmitResult(SubmitResultPayload payload)
-    {
-        ArgumentNullException.ThrowIfNull(payload);
-        if (payload.Step != AgentStep || payload.Attempt != RunAttempt)
-        {
-            throw new ApplicationFailureException(
-                "The result does not belong to the current run step.",
-                errorType: AgentResultUpdates.StaleRunErrorType,
-                nonRetryable: true);
-        }
-
-        if (_submitted)
-        {
-            throw new ApplicationFailureException(
-                "A result was already submitted for this run.",
-                errorType: AgentResultUpdates.ResultAlreadySubmittedErrorType,
-                nonRetryable: true);
-        }
-
-        if (_invalidSubmits >= MaxInvalidSubmits)
-        {
-            throw new ApplicationFailureException(
-                "The run already failed after repeated invalid results.",
-                errorType: AgentResultUpdates.InvalidResultErrorType,
-                nonRetryable: true);
-        }
-    }
+    public void ValidateSubmitResult(SubmitResultPayload payload) => AgentPodStep.Validate(_podStep, payload);
 
     [WorkflowRun]
     public async Task<SpikeResult> RunAsync(SpikeInput input)
@@ -147,34 +100,13 @@ public partial class SpikeWorkflow
             }
 
             var agentStarted = Workflow.UtcNow;
-            var agent = await RunAgentPodAsync(input, prompt, repo);
-            await DeletePodAsync();
-
-            var status = SpikeStatus.AgentFailed;
-            if (agent.Outcome == AgentRunOutcome.Succeeded)
-            {
-                var arrived = await Workflow.WaitConditionAsync(() => _submitted || _invalidSubmits >= MaxInvalidSubmits, ResultTimeout);
-                status = !arrived ? SpikeStatus.ResultTimeout : _submitted ? SpikeStatus.Succeeded : SpikeStatus.InvalidResult;
-            }
+            var outcome = await _podStep.RunAsync(prompt, input.Tier, repo, AgentRunTimeouts.DefaultPodDeadlineSeconds, Workflow.CancellationToken);
+            var agent = outcome.Agent;
+            var status = ToSpikeStatus(outcome.Status);
 
             if (run is not null)
             {
-                var usage = agent.Usage;
-                await RunRecorder.RecordStepAsync(new RecordStepInput(
-                    run.RunId,
-                    1,
-                    AgentStep,
-                    LadderRung.Claude,
-                    StopReason(status, agent.Outcome),
-                    agentStarted,
-                    RunRecorder.ElapsedMs(agentStarted),
-                    Input: RunRecorder.ToJson(new { tier = input.Tier }),
-                    Output: RunRecorder.ToJson(new { outcome = agent.Outcome, resultText = agent.ResultText, detail = agent.Detail, submitted = (object?)_triage ?? _result }),
-                    PromptHash: run.PromptHash,
-                    Model: agent.Model,
-                    InputTokens: usage?.InputTokens,
-                    OutputTokens: usage?.OutputTokens,
-                    CostUsd: AgentRunUsage.ToCostUsd(usage?.CostUsd)));
+                await _podStep.RecordAsync(run, 1, outcome, agentStarted, RunRecorder.ToJson(new { tier = input.Tier }), (object?)_triage ?? _result);
                 await RunRecorder.CompleteAsync(new CompleteRunInput(
                     run.RunId,
                     status == SpikeStatus.Succeeded ? RunStatus.Succeeded : RunStatus.Failed,
@@ -210,13 +142,30 @@ public partial class SpikeWorkflow
         }
     }
 
-    private static string StopReason(SpikeStatus status, AgentRunOutcome outcome) => status switch
+    private static SpikeStatus ToSpikeStatus(AgentPodStepStatus status) => status switch
     {
-        SpikeStatus.Succeeded => "submitted",
-        SpikeStatus.ResultTimeout => "result_timeout",
-        SpikeStatus.InvalidResult => "invalid_result",
-        _ => JsonNamingPolicy.SnakeCaseLower.ConvertName(outcome.ToString()),
+        AgentPodStepStatus.Succeeded => SpikeStatus.Succeeded,
+        AgentPodStepStatus.ResultTimeout => SpikeStatus.ResultTimeout,
+        AgentPodStepStatus.InvalidResult => SpikeStatus.InvalidResult,
+        _ => SpikeStatus.AgentFailed,
     };
+
+    private string? ParseSubmitted(SubmitResultPayload payload)
+    {
+        if (_triageHeadSha is null)
+        {
+            _result = payload;
+            return null;
+        }
+
+        if (!TriageResult.TryParse(payload, _triageHeadSha, null, out var parsed, out var error))
+        {
+            return error;
+        }
+
+        _triage = parsed;
+        return null;
+    }
 
     private static async Task<(string PromptName, string Template, AgentRepoContext? Repo)> ResolvePromptAsync(SpikeInput input)
     {
@@ -255,58 +204,6 @@ public partial class SpikeWorkflow
     private static ApplicationFailureException InvalidInput(string message) =>
         new(message, errorType: InvalidInputErrorType, nonRetryable: true);
 
-    private static async Task<AgentRunResult> RunAgentPodAsync(SpikeInput input, string prompt, AgentRepoContext? repo)
-    {
-        var deadline = AgentRunTimeouts.DefaultPodDeadlineSeconds;
-        try
-        {
-            return await Workflow.ExecuteActivityAsync(
-                (AgentPodActivities activities) => activities.RunAgentPodAsync(new RunAgentPodInput(AgentStep, prompt, input.Tier, deadline, RunAttempt, repo)),
-                new ActivityOptions
-                {
-                    TaskQueue = TaskQueues.AgentPods,
-                    StartToCloseTimeout = AgentRunTimeouts.ActivityStartToClose(deadline),
-                    ScheduleToCloseTimeout = AgentRunTimeouts.ActivityScheduleToClose,
-                    HeartbeatTimeout = AgentRunTimeouts.HeartbeatTimeout,
-                    CancellationType = ActivityCancellationType.WaitCancellationCompleted,
-                    RetryPolicy = new RetryPolicy
-                    {
-                        InitialInterval = TimeSpan.FromSeconds(1),
-                        BackoffCoefficient = 2,
-                        MaximumInterval = TimeSpan.FromMinutes(1),
-                        MaximumAttempts = 5,
-                    },
-                });
-        }
-        catch (Exception ex) when (ex is ActivityFailureException or OperationCanceledException)
-        {
-            await DeletePodAsync();
-            throw;
-        }
-    }
-
-    private static async Task DeletePodAsync()
-    {
-        try
-        {
-            await Workflow.ExecuteLocalActivityAsync(
-                (AgentPodActivities activities) => activities.DeleteAgentPodAsync(AgentStep),
-                new LocalActivityOptions
-                {
-                    StartToCloseTimeout = TimeSpan.FromSeconds(30),
-                    CancellationToken = CancellationToken.None,
-                    RetryPolicy = new RetryPolicy { InitialInterval = TimeSpan.FromSeconds(1), MaximumAttempts = 5 },
-                });
-        }
-        catch (ActivityFailureException ex)
-        {
-            LogPodCleanupFailed(Workflow.Logger, ex);
-        }
-    }
-
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not build the triage context; the run starts without it.")]
     private static partial void LogContextFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not delete the agent pod after the run.")]
-    private static partial void LogPodCleanupFailed(ILogger logger, Exception exception);
 }
