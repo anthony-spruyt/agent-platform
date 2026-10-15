@@ -338,6 +338,18 @@ public static partial class TriageRules
         return new TriageDecision(TriageVerdict.NeedsReview, HighRisk, $"{NeedsReviewPrefix} `{term}` is on the high-risk list. These always get a human look.");
     }
 
+    public static TriageDecision HighRiskSafeDecision(TriageDecision safe, string term)
+    {
+        ArgumentNullException.ThrowIfNull(safe);
+        ArgumentNullException.ThrowIfNull(term);
+        var notice = $"**SAFE, but high-risk (`{term}`): needs your review.** Approve and remove `{NeedsReviewLabel}` to merge.";
+        return safe with
+        {
+            Reason = $"safe but high-risk ({term}), left for human review",
+            Comment = safe.Comment is { Length: > 0 } agent ? $"{notice}\n\n{agent}" : notice,
+        };
+    }
+
     public static TriageDecision JevErrorDecision() => new(TriageVerdict.NeedsReview, JevError, JevErrorComment);
 
     public static string ShortSha(string sha)

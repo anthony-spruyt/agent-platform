@@ -1846,17 +1846,55 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task Safe_OnABranchWithRiskyWords_CommentsAndLabelsButNeverApproves()
+        public async Task Safe_OnABranchWithRiskyWords_FlagsForHumanReviewAndNeverApprovesOrLabelsSafe()
         {
             var rig = Live();
             rig.Github.PullRequest = FakeGitHubApi.Renovate(branch: "renovate/major-postgres");
+            await Record(rig, _safe);
 
             var result = await Apply(rig, _safe);
 
-            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
             Assert.Empty(rig.Github.Approvals);
-            Assert.Equal([TriageRules.SafeLabel], rig.Github.AddedLabels);
-            Assert.Equal(Sticky(_safe.Comment!), Assert.Single(rig.Github.Comments).Body);
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+            Assert.DoesNotContain(TriageRules.SafeLabel, rig.Github.AddedLabels);
+            var comment = Assert.Single(rig.Github.Comments).Body;
+            Assert.Equal(Sticky(result.Effective!.Comment!), comment);
+            Assert.Contains("**SAFE, but high-risk (`postgres`): needs your review.** Approve and remove `agent/needs-human-review` to merge.", comment, StringComparison.Ordinal);
+            Assert.Contains(_safe.Comment!, comment, StringComparison.Ordinal);
+            Assert.Equal(TriageVerdict.Safe, result.Effective.Verdict);
+            Assert.Contains("postgres", result.Effective.Reason, StringComparison.Ordinal);
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task Safe_OnARiskyBranch_RetryCompletesWhenItsOwnNeedsReviewLabelIsAlreadyThere()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(branch: "renovate/major-postgres") with { Labels = [TriageRules.NeedsReviewLabel] };
+            await Record(rig, _safe);
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Single(rig.Github.Comments);
+            Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task Safe_OnARiskyBranch_StaysQuietWhenTheOwnerRemovesTheLabelOnTheSameHead()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(branch: "renovate/major-postgres");
+            await Record(rig, _safe);
+            await Apply(rig, _safe);
+            var writes = rig.Github.Writes.Count;
+            Labelled(rig, "dependencies");
+
+            var assessed = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.AlreadyJudged, Sha, Mode: TriageMode.Live), assessed);
+            Assert.Equal(writes, rig.Github.Writes.Count);
         }
 
         [Fact]
