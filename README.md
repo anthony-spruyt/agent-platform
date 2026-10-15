@@ -96,7 +96,7 @@ The Claude rung runs the `renovate-triage` prompt (embedded under `Prompts/`, wh
 
 ## GitHub webhook intake and App client
 
-The Web role serves `POST /webhooks/github` on the webhook port only (`/mcp` stays on the gateway port). The handler checks the `X-Hub-Signature-256` HMAC-SHA256 over the raw body with a constant-time compare before it parses anything; a missing or wrong signature gets `401` and no body is logged. Bodies over 1 MiB get `413`.
+The Web role serves `POST /webhooks/github` on the webhook port only (`/mcp` stays on the gateway port). The handler checks the `X-Hub-Signature-256` HMAC-SHA256 over the raw body with a constant-time compare before it parses anything; a missing or wrong signature gets `401` and no body is logged. Bodies over 1 MiB get `413`. A body that arrives too slowly for Kestrel (`BadHttpRequestException`) gets `408` and one Warning with the delivery id and the event name (`unknown` unless the `X-GitHub-Event` header is lowercase letters and underscores, up to 40), so the delivery can be traced and redelivered.
 
 | Event                                                                                                                              | Result                                                   |
 | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
