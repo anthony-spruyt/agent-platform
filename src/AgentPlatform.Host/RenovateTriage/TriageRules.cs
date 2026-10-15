@@ -338,6 +338,9 @@ public static partial class TriageRules
         return new TriageDecision(TriageVerdict.NeedsReview, HighRisk, $"{NeedsReviewPrefix} `{term}` is on the high-risk list. These always get a human look.");
     }
 
+    public static string HighRiskSafeComment(string? term, string? comment) =>
+        $"**SAFE, but high-risk (`{term}`): needs your approval.**" + (comment is null ? "" : $"\n{comment}");
+
     public static TriageDecision JevErrorDecision() => new(TriageVerdict.NeedsReview, JevError, JevErrorComment);
 
     public static string ShortSha(string sha)
