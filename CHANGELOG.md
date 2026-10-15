@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.14.2...v1.15.0) (2026-10-15)
+
+
+### Features
+
+* **triage:** show the queue cause in the check title and clear old verdict labels ([#98](https://github.com/anthony-spruyt/agent-platform/issues/98)) ([4d198ad](https://github.com/anthony-spruyt/agent-platform/commit/4d198adcb516b83d86c7a25f566f3c9305a8e567))
+
 ## [1.14.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.14.1...v1.14.2) (2026-10-15)
 
 
