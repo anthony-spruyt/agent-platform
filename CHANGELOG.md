@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.14.1...v1.14.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **triage:** accept suffixed image tag bumps when the commit table omits the suffix ([#94](https://github.com/anthony-spruyt/agent-platform/issues/94)) ([12b33c3](https://github.com/anthony-spruyt/agent-platform/commit/12b33c317ed896492ff777a2436b623e8f8bb30b))
+
 ## [1.14.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.14.0...v1.14.1) (2026-10-15)
 
 
