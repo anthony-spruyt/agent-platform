@@ -1862,8 +1862,8 @@ public class RenovateTriageActivitiesTests
             Assert.Equal(Sticky(result.Effective!.Comment!), comment);
             Assert.Contains("**SAFE, but high-risk (`postgres`): needs your review.** Approve and remove `agent/needs-human-review` to merge.", comment, StringComparison.Ordinal);
             Assert.Contains(_safe.Comment!, comment, StringComparison.Ordinal);
-            Assert.Equal(TriageVerdict.Safe, result.Effective.Verdict);
-            Assert.Contains("postgres", result.Effective.Reason, StringComparison.Ordinal);
+            Assert.Equal(TriageVerdict.NeedsReview, result.Effective.Verdict);
+            Assert.Equal(TriageRules.HighRiskSafe, result.Effective.Reason);
             Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
         }
 

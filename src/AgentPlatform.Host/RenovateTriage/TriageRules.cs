@@ -61,6 +61,7 @@ public static partial class TriageRules
     public const string CiFailed = "ci-failed";
     public const string CiTimeout = "ci-timeout";
     public const string HighRisk = "high-risk";
+    public const string HighRiskSafe = "high-risk-safe";
     public const string JevError = "jev-error";
     public const string Breaking = "breaking";
     public const string Digest = "digest";
@@ -338,16 +339,11 @@ public static partial class TriageRules
         return new TriageDecision(TriageVerdict.NeedsReview, HighRisk, $"{NeedsReviewPrefix} `{term}` is on the high-risk list. These always get a human look.");
     }
 
-    public static TriageDecision HighRiskSafeDecision(TriageDecision safe, string term)
+    public static TriageDecision HighRiskSafeDecision(TriageDecision safe, string branch)
     {
         ArgumentNullException.ThrowIfNull(safe);
-        ArgumentNullException.ThrowIfNull(term);
-        var notice = $"**SAFE, but high-risk (`{term}`): needs your review.** Approve and remove `{NeedsReviewLabel}` to merge.";
-        return safe with
-        {
-            Reason = $"safe but high-risk ({term}), left for human review",
-            Comment = safe.Comment is { Length: > 0 } agent ? $"{notice}\n\n{agent}" : notice,
-        };
+        var notice = $"**SAFE, but high-risk (`{RiskyTerm(branch)}`): needs your review.** Approve and remove `{NeedsReviewLabel}` to merge.";
+        return new TriageDecision(TriageVerdict.NeedsReview, HighRiskSafe, safe.Comment is null ? notice : $"{notice}\n\n{safe.Comment}");
     }
 
     public static TriageDecision JevErrorDecision() => new(TriageVerdict.NeedsReview, JevError, JevErrorComment);
