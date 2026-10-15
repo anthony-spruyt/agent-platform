@@ -311,6 +311,52 @@ public class DiffShapeTests
     }
 
     [Fact]
+    public void ASuffixedMultiPartTag_PassesWhenTheTableStatesTheVersionWithoutTheSuffix()
+    {
+        var result = Lines(
+            "10.0.12>10.0.13|10.0.401>10.0.402",
+            DefaultSubject,
+            ($"FROM mcr.microsoft.com/dotnet/aspnet:10.0.12-noble-chiseled@{_digestOne}", $"FROM mcr.microsoft.com/dotnet/aspnet:10.0.13-noble-chiseled@{_digestTwo}"),
+            ($"FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble@{_digestOne}", $"FROM mcr.microsoft.com/dotnet/sdk:10.0.402-noble@{_digestTwo}"));
+
+        Assert.True(result.Passed);
+    }
+
+    [Theory]
+    [InlineData("image: r/x:3.12.1-alpine", "image: r/x:3.12.2-alpine", "3.12.1>3.12.2")]
+    [InlineData("image: r/x:v3.12.1-slim", "image: r/x:v3.12.2-slim", "3.12.1>3.12.2")]
+    [InlineData("image: r/x:3.12.1-alpine3.20", "image: r/x:3.12.2-alpine3.20", "v3.12.1>v3.12.2")]
+    public void ASuffixedMultiPartTag_PassesWithTheSameSuffixOnBothSides(string oldLine, string newLine, string rows)
+    {
+        Assert.True(Line(oldLine, newLine, rows).Passed);
+    }
+
+    [Theory]
+    [InlineData("image: r/x:10.0.401-noble", "image: r/x:10.0.402-jammy")]
+    [InlineData("image: r/x:10.0.401-noble", "image: r/x:10.0.403-noble")]
+    [InlineData("image: r/x:10.0.400-noble", "image: r/x:10.0.402-noble")]
+    [InlineData("image: r/x:10.0.401", "image: r/x:10.0.402-noble")]
+    [InlineData("image: r/x:10.0.401-noble", "image: r/x:10.0.402")]
+    [InlineData("image: r/x:10.0.401+b1", "image: r/x:10.0.402+b1")]
+    [InlineData("image: r/x:10.0.401-noble", "image: r/x:10.0.402-noble-chiseled")]
+    public void ASuffixedMultiPartTag_FailsWhenTheSuffixOrNumberDoesNotMatchTheRow(string oldLine, string newLine)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, "10.0.401>10.0.402").Failure);
+    }
+
+    [Fact]
+    public void ASuffixedMultiPartTag_FailsWhenTheRowIsNotMultiPart()
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("image: r/x:22.1-alpine", "image: r/x:24.0-alpine", "22>24").Failure);
+    }
+
+    [Fact]
+    public void ASuffixedMultiPartTag_DoesNotRelaxTheSubjectLinePath()
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("image: r/x:1.2.3-alpine", "image: r/x:1.2.4-alpine", subject: "chore(deps): update x to 1.2.4").Failure);
+    }
+
+    [Fact]
     public void ASinglePartNumberUnderAKey_IsNotAVersion()
     {
         Assert.Equal(DiffShapeFailure.NotAVersionChange, Line("tag: 4", "tag: 5", "4.1>5.0").Failure);

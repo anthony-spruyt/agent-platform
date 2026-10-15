@@ -352,7 +352,7 @@ public static partial class DiffShape
         if (stated.Rows is { } rows)
         {
             return pair.Kind == Kind.Multi
-                ? rows.Any(r => StripV(r.From) == StripV(pair.Old) && StripV(r.To) == StripV(pair.New))
+                ? rows.Any(r => (StripV(r.From) == StripV(pair.Old) && StripV(r.To) == StripV(pair.New)) || StatesBeforeSharedSuffix(pair, r))
                 : rows.Any(r => MajorOf(r.From) == StripV(pair.Old) && MajorOf(r.To) == StripV(pair.New));
         }
 
@@ -362,6 +362,23 @@ public static partial class DiffShape
         }
 
         return (IsMultiPart(version) || pair.Kind == Kind.Single) && StripV(pair.New) == StripV(version);
+    }
+
+    private static bool StatesBeforeSharedSuffix(VersionPair pair, StatedVersion row)
+    {
+        if (!IsMultiPart(row.From) || !IsMultiPart(row.To))
+        {
+            return false;
+        }
+
+        var (from, to, oldTag, newTag) = (StripV(row.From), StripV(row.To), StripV(pair.Old), StripV(pair.New));
+        if (!oldTag.StartsWith(from, StringComparison.Ordinal) || !newTag.StartsWith(to, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var suffix = oldTag[from.Length..];
+        return suffix.Length > 1 && suffix[0] == '-' && string.Equals(newTag[to.Length..], suffix, StringComparison.Ordinal);
     }
 
     private static string StripV(string version) => version.StartsWith('v') || version.StartsWith('V') ? version[1..] : version;

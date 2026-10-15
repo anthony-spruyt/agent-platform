@@ -1,0 +1,27 @@
+{
+  "expectedFileCount": 3,
+  "head": "5610b349bf36ec04be09f28a6bf35f9073b48306",
+  "files": [
+    {
+      "path": ".config/dotnet-tools.json",
+      "status": "modified",
+      "patch": "@@ -3,7 +3,7 @@\n   \"isRoot\": true,\n   \"tools\": {\n     \"dotnet-ef\": {\n-      \"version\": \"10.0.12\",\n+      \"version\": \"10.0.13\",\n       \"commands\": [\n         \"dotnet-ef\"\n       ],"
+    },
+    {
+      "path": "Directory.Packages.props",
+      "status": "modified",
+      "patch": "@@ -7,13 +7,13 @@\n     <PackageVersion Include=\"Aspire.Hosting.PostgreSQL\" Version=\"13.6.1\" />\n     <PackageVersion Include=\"Aspire.Hosting.Testing\" Version=\"13.6.1\" />\n     <PackageVersion Include=\"KubernetesClient\" Version=\"19.0.2\" />\n-    <PackageVersion Include=\"Microsoft.AspNetCore.Mvc.Testing\" Version=\"10.0.12\" />\n-    <PackageVersion Include=\"Microsoft.EntityFrameworkCore\" Version=\"10.0.12\" />\n-    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.Design\" Version=\"10.0.12\" />\n-    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.InMemory\" Version=\"10.0.12\" />\n-    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.Relational\" Version=\"10.0.12\" />\n-    <PackageVersion Include=\"Microsoft.Extensions.Http.Resilience\" Version=\"10.10.0\" />\n-    <PackageVersion Include=\"Microsoft.Extensions.ServiceDiscovery\" Version=\"10.10.0\" />\n+    <PackageVersion Include=\"Microsoft.AspNetCore.Mvc.Testing\" Version=\"10.0.13\" />\n+    <PackageVersion Include=\"Microsoft.EntityFrameworkCore\" Version=\"10.0.13\" />\n+    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.Design\" Version=\"10.0.13\" />\n+    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.InMemory\" Version=\"10.0.13\" />\n+    <PackageVersion Include=\"Microsoft.EntityFrameworkCore.Relational\" Version=\"10.0.13\" />\n+    <PackageVersion Include=\"Microsoft.Extensions.Http.Resilience\" Version=\"10.11.0\" />\n+    <PackageVersion Include=\"Microsoft.Extensions.ServiceDiscovery\" Version=\"10.11.0\" />\n     <PackageVersion Include=\"Microsoft.Testing.Extensions.CodeCoverage\" Version=\"18.12.0\" />\n     <PackageVersion Include=\"ModelContextProtocol.AspNetCore\" Version=\"2.2.0\" />\n     <PackageVersion Include=\"Npgsql.EntityFrameworkCore.PostgreSQL\" Version=\"10.0.3\" />"
+    },
+    {
+      "path": "Dockerfile",
+      "status": "modified",
+      "patch": "@@ -1,4 +1,4 @@\n-FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS build\n+FROM mcr.microsoft.com/dotnet/sdk:10.0.402-noble@sha256:0d99ebf1ccad15037b5c98c9fe8979d6b8dbac23812feae2277a0b277b5c5ffa AS build\n WORKDIR /src\n \n COPY global.json Directory.Build.props Directory.Packages.props .editorconfig ./\n@@ -12,7 +12,7 @@ COPY src/AgentPlatform.Host/ src/AgentPlatform.Host/\n RUN dotnet publish src/AgentPlatform.Host/AgentPlatform.Host.csproj \\\n       --configuration Release --no-restore --runtime linux-x64 --self-contained false --output /app /p:UseAppHost=false\n \n-FROM mcr.microsoft.com/dotnet/aspnet:10.0.12-noble-chiseled@sha256:48e51f2f6798897be7ac4e775c049ed8fe60d3190f637e1f9c9dc7513efa659c\n+FROM mcr.microsoft.com/dotnet/aspnet:10.0.13-noble-chiseled@sha256:84def277556c2843a44fdeefbd3145d0a2e32d8f736d0c1a7b0a96b2880b0187\n WORKDIR /app\n COPY --from=build /app ./\n "
+    }
+  ],
+  "commits": [
+    {
+      "sha": "5610b349bf36ec04be09f28a6bf35f9073b48306",
+      "message": "fix(deps): update dotnet monorepo\n\n| datasource | package                                  | from     | to       |\n| ---------- | ---------------------------------------- | -------- | -------- |\n| nuget      | Microsoft.AspNetCore.Mvc.Testing         | 10.0.12  | 10.0.13  |\n| nuget      | Microsoft.EntityFrameworkCore            | 10.0.12  | 10.0.13  |\n| nuget      | Microsoft.EntityFrameworkCore.Design     | 10.0.12  | 10.0.13  |\n| nuget      | Microsoft.EntityFrameworkCore.InMemory   | 10.0.12  | 10.0.13  |\n| nuget      | Microsoft.EntityFrameworkCore.Relational | 10.0.12  | 10.0.13  |\n| nuget      | Microsoft.Extensions.Http.Resilience     | 10.10.0  | 10.11.0  |\n| nuget      | Microsoft.Extensions.ServiceDiscovery    | 10.10.0  | 10.11.0  |\n| nuget      | dotnet-ef                                | 10.0.12  | 10.0.13  |\n| docker     | mcr.microsoft.com/dotnet/aspnet          | 10.0.12  | 10.0.13  |\n| docker     | mcr.microsoft.com/dotnet/sdk             | 10.0.401 | 10.0.402 |"
+    }
+  ]
+}
