@@ -43,6 +43,19 @@ public class ClaudeRungActivitiesTests
     }
 
     [Fact]
+    public async Task Queue_ClearsAnOlderHeadsVerdictLabel_ButNotTheBlockedLabel()
+    {
+        var rig = Create();
+        rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.SafeLabel, TriageRules.BlockedLabel] };
+
+        await Run(() => rig.Activities.QueueAsync(new QueueInput(Repo, 7, Sha, "breaking-change")));
+
+        Assert.Equal([TriageRules.SafeLabel], rig.Github.RemovedLabels);
+        Assert.Equal([TriageRules.NeedsTriageLabel], rig.Github.AddedLabels);
+        Assert.Contains(TriageRules.BlockedLabel, rig.Github.PullRequest.Labels);
+    }
+
+    [Fact]
     public async Task Queue_WhenTheModeIsNoLongerLive_WritesNothing()
     {
         var rig = Create(mode: TriageMode.Shadow);

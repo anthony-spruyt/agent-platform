@@ -10,6 +10,13 @@ public class TriageCheckActivitiesTests
 {
     private const string Sha = FakeGitHubApi.Sha;
 
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private static readonly DateTimeOffset Now = new(2030, 1, 1, 9, 0, 0, TimeSpan.Zero);
+
     private static Task Run(TriageCheckActivities activities, TriageCheckInput input) =>
         new ActivityEnvironment().RunAsync(() => activities.ReportAsync(input));
 
@@ -38,6 +45,31 @@ public class TriageCheckActivitiesTests
         await Run(new TriageCheckActivities(reporter), new TriageCheckInput("anthony-spruyt/widgets", 7, Sha, CheckRunStatus.InProgress, null, "Waiting for CI.", startNew));
 
         Assert.Equal(startNew, Assert.Single(reporter.Reports).StartNew);
+    }
+
+    [Theory]
+    [InlineData("Queued for agent review: daily-cap, next try after 2030-01-01 15:22 UTC.", "daily-cap, next try after 15:22 UTC")]
+    [InlineData("Queued for agent review: daily-cap, next try after 2030-01-02 00:05 UTC.", "daily-cap, next try after 2030-01-02 00:05 UTC")]
+    [InlineData("Queued for agent review: usage-limit.", "usage-limit")]
+    public async Task AQueuedReport_TitlesTheCauseAndNextTry(string summary, string title)
+    {
+        var reporter = new FakeCheckRunReporter();
+
+        await Run(new TriageCheckActivities(reporter, new FixedTime(Now)), new TriageCheckInput("anthony-spruyt/widgets", 7, Sha, CheckRunStatus.Queued, null, summary));
+
+        var report = Assert.Single(reporter.Reports);
+        Assert.Equal(title, report.Title);
+        Assert.Equal(summary, report.Summary);
+    }
+
+    [Fact]
+    public async Task OtherStates_KeepTheCheckNameAsTheirTitle()
+    {
+        var reporter = new FakeCheckRunReporter();
+
+        await Run(new TriageCheckActivities(reporter, new FixedTime(Now)), new TriageCheckInput("anthony-spruyt/widgets", 7, Sha, CheckRunStatus.InProgress, null, "Queued for agent review: daily-cap."));
+
+        Assert.Equal("Agent triage", Assert.Single(reporter.Reports).Title);
     }
 
     [Fact]
