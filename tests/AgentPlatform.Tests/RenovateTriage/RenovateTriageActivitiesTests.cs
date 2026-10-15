@@ -1856,7 +1856,18 @@ public class RenovateTriageActivitiesTests
             Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
             Assert.Empty(rig.Github.Approvals);
             Assert.Equal([TriageRules.SafeLabel], rig.Github.AddedLabels);
-            Assert.Equal(Sticky(_safe.Comment!), Assert.Single(rig.Github.Comments).Body);
+            Assert.EndsWith(_safe.Comment!, Assert.Single(rig.Github.Comments).Body, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Safe_OnABranchWithRiskyWords_StartsTheCommentWithTheNeedsApprovalLineAndTheTerm()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(branch: "renovate/major-postgres");
+
+            await Apply(rig, _safe);
+
+            Assert.Equal(Sticky($"**SAFE, but high-risk (`postgres`): needs your approval.**\n{_safe.Comment}"), Assert.Single(rig.Github.Comments).Body);
         }
 
         [Fact]

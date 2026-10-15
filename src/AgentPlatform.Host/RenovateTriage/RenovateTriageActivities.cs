@@ -220,7 +220,7 @@ public sealed partial class RenovateTriageActivities(
             return new ApplyResult(ApplyOutcome.Applied, Effective: gate.Decision);
         });
 
-    private sealed record Gate(TriageDecision Decision, ApplyResult? Stop = null, bool CommentOnly = false);
+    private sealed record Gate(TriageDecision Decision, ApplyResult? Stop = null, string? HighRiskTerm = null);
 
     // A flag is not held to the approval gates, but the owner's own labels still stop it; the label it writes itself does not, so a retry completes.
     private static Gate GateFlag(ApplyInput input, GitHubPullRequest pr, TriageDecision decision)
@@ -290,7 +290,7 @@ public sealed partial class RenovateTriageActivities(
             SafeAction.Fixable => new Gate(TriageRules.SafeOnRedHeadDecision(input.Repo, input.HeadSha, TriageRules.FailedChecks(checks))),
             SafeAction.WaitForCi when input.CiWaitOver => new Gate(TriageRules.CiTimeoutDecision()),
             SafeAction.WaitForCi => new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason)),
-            SafeAction.CommentOnly => new Gate(input.Decision, CommentOnly: true),
+            SafeAction.CommentOnly => new Gate(input.Decision, HighRiskTerm: TriageRules.RiskyTerm(pr.HeadRef)),
             _ => new Gate(input.Decision),
         };
     }
@@ -301,11 +301,11 @@ public sealed partial class RenovateTriageActivities(
         switch (decision.Verdict)
         {
             case TriageVerdict.Approve:
-            case TriageVerdict.Safe when !gate.CommentOnly:
+            case TriageVerdict.Safe when gate.HighRiskTerm is null:
                 await ApproveAsync(input, decision, cancellationToken).ConfigureAwait(false);
                 return VerdictAction.Approve;
             case TriageVerdict.Safe:
-                await FlagAsync(input, decision, TriageRules.SafeLabel, cancellationToken).ConfigureAwait(false);
+                await FlagAsync(input, decision with { Comment = TriageRules.HighRiskSafeComment(gate.HighRiskTerm, decision.Comment) }, TriageRules.SafeLabel, cancellationToken).ConfigureAwait(false);
                 return VerdictAction.Comment;
             default:
                 await FlagAsync(input, decision, FlagLabel(decision.Verdict), cancellationToken).ConfigureAwait(false);
