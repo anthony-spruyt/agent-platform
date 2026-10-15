@@ -178,7 +178,7 @@ A verdict already stored for the head is never climbed again. `Shadow` mode neve
 5. The parsed result is stored as the verdict with rung `Claude`; `SAFE` goes through the same CI and status gates in `Apply` as any other `SAFE`. A pod failure or an invalid result counts as a failed attempt and the loop reserves again. A usage-limit stop counts as a failed attempt.
    It sets the global cooldown and parks until the end the cooldown now has (15 minutes to 24 hours from now; one hour when the pod gave no reset time).
 
-Parking ends the run with the check run `Queued`. The pending row and the `agent/needs-triage` label stay, and the next `CheckSuiteCompleted` signal for the pull request, or the sweeper (see Sweeper), starts the run again. `Apply` removes the label with the verdict.
+Parking ends the run with the check run `Queued`. Its title is the cause and the next try time (the date is left out when it is today in UTC), so the PR list shows them without opening the check. The pending row and the `agent/needs-triage` label stay, and the next `CheckSuiteCompleted` signal for the pull request, or the sweeper (see Sweeper), starts the run again. `Apply` removes the label with the verdict.
 It also settles an open pending row left for an older head of the same pull request. Every pull request comment of the rung is built from the fixed sticky-comment templates; agent text sits in the quoted, defused block described under Writes.
 
 The worker exports three gauges on the meter `AgentPlatform.Triage`, refreshed every 30 seconds: `triage_pending_total` (open pending rows), `claude_cooldown_active` (cooldowns in force) and `sweeper_last_success_timestamp` (Unix seconds of the last sweep in which every step succeeded; `0` before the first).
