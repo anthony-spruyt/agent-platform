@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.14.0...v1.14.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **deps:** update dotnet monorepo ([#88](https://github.com/anthony-spruyt/agent-platform/issues/88)) ([a09e4b2](https://github.com/anthony-spruyt/agent-platform/commit/a09e4b258b36f50dde0d25b8bef4d99866ce0ff0))
+
 ## [1.14.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.13.0...v1.14.0) (2026-10-15)
 
 
