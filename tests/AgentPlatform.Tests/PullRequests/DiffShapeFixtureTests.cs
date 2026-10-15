@@ -25,6 +25,7 @@ public class DiffShapeFixtureTests
     }
 
     [Theory]
+    [InlineData("agent-platform-88")]
     [InlineData("Chromance-11")]
     [InlineData("SunGather-410")]
     [InlineData("container-images-2206")]

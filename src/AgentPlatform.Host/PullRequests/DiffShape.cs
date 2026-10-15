@@ -39,6 +39,7 @@ public static partial class DiffShape
     private const char Placeholder = '\0';
     private const string UsesShaContext = "uses-sha";
     private const string UsesCommentContext = "uses-comment";
+    private const string ImageTagContext = "image-tag";
 
     private static readonly HashSet<string> _lockfiles = new(StringComparer.Ordinal)
     {
@@ -64,7 +65,7 @@ public static partial class DiffShape
 
     private sealed record Token(int Start, int End, Kind Kind, string Value, string? Context = null);
 
-    private sealed record VersionPair(Kind Kind, string Old, string New, string Path);
+    private sealed record VersionPair(Kind Kind, string Old, string New, string Path, bool IsImageTag = false);
 
     public static DiffShapeResult Classify(
         IReadOnlyList<DiffFile> files,
@@ -193,7 +194,7 @@ public static partial class DiffShape
                 return new DiffShapeResult(DiffShapeFailure.CommentWithoutShaChange, path);
             }
 
-            pairs.Add(new VersionPair(before.Kind, before.Value, after.Value, path));
+            pairs.Add(new VersionPair(before.Kind, before.Value, after.Value, path, before.Context == ImageTagContext));
         }
 
         return null;
@@ -271,7 +272,7 @@ public static partial class DiffShape
             var tagKind = ClassifyImageTag(tag.Value);
             if (tagKind is { } kind)
             {
-                tokens.Add(new Token(tag.Index, tag.Index + tag.Length, kind, tag.Value));
+                tokens.Add(new Token(tag.Index, tag.Index + tag.Length, kind, tag.Value, ImageTagContext));
             }
 
             occupied.Add((image.Index, image.Index + image.Length));
@@ -352,7 +353,7 @@ public static partial class DiffShape
         if (stated.Rows is { } rows)
         {
             return pair.Kind == Kind.Multi
-                ? rows.Any(r => StripV(r.From) == StripV(pair.Old) && StripV(r.To) == StripV(pair.New))
+                ? rows.Any(r => (StripV(r.From) == StripV(pair.Old) && StripV(r.To) == StripV(pair.New)) || (pair.IsImageTag && StatesBeforeSharedSuffix(pair, r)))
                 : rows.Any(r => MajorOf(r.From) == StripV(pair.Old) && MajorOf(r.To) == StripV(pair.New));
         }
 
@@ -362,6 +363,23 @@ public static partial class DiffShape
         }
 
         return (IsMultiPart(version) || pair.Kind == Kind.Single) && StripV(pair.New) == StripV(version);
+    }
+
+    private static bool StatesBeforeSharedSuffix(VersionPair pair, StatedVersion row)
+    {
+        if (!IsMultiPart(row.From) || !IsMultiPart(row.To))
+        {
+            return false;
+        }
+
+        var (from, to, oldTag, newTag) = (StripV(row.From), StripV(row.To), StripV(pair.Old), StripV(pair.New));
+        if (!oldTag.StartsWith(from, StringComparison.Ordinal) || !newTag.StartsWith(to, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var suffix = oldTag[from.Length..];
+        return suffix.Length > 1 && suffix[0] == '-' && string.Equals(newTag[to.Length..], suffix, StringComparison.Ordinal);
     }
 
     private static string StripV(string version) => version.StartsWith('v') || version.StartsWith('V') ? version[1..] : version;
