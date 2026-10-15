@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
@@ -27,7 +28,11 @@ public sealed record GitHubCheckRun(long Id, string Name, string Status, string?
 
 public sealed record GitHubCheckSuite(long Id, string Status, string? Conclusion, string? AppSlug, int CheckRunCount, long? AppId = null);
 
-public sealed record GitHubCommit(string Sha, string? AuthorLogin, long? AuthorId, string? AuthorEmail, string? CommitterEmail, bool Verified, string Message = "");
+public sealed record GitHubCommit(string Sha, string? AuthorLogin, long? AuthorId, string? AuthorEmail, string? CommitterEmail, bool Verified, string Message = "", IReadOnlyList<string>? Parents = null);
+
+public sealed record GitHubCompareFile(string Filename, string Status, string? Sha, string? PreviousFilename = null);
+
+public sealed record GitHubComparison(string Status, string? MergeBaseSha, IReadOnlyList<GitHubCompareFile>? Files);
 
 public sealed record GitHubPullRequestFile(string Filename, string? Patch, string Status = "modified");
 
@@ -56,6 +61,10 @@ public interface IGitHubApiClient
     Task<IReadOnlyList<GitHubCommit>> ListCommitsAsync(string repo, int number, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<GitHubPullRequestFile>> ListPullRequestFilesAsync(string repo, int number, CancellationToken cancellationToken);
+
+    Task<GitHubComparison?> CompareAsync(string repo, string baseRef, string headRef, CancellationToken cancellationToken);
+
+    Task<string> GetDefaultBranchAsync(string repo, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken);
 
@@ -99,6 +108,8 @@ public interface IGitHubApiClient
 public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenProvider tokens, IOptions<GitHubAppOptions> appOptions) : IGitHubApiClient
 {
     public const int MaxPages = 50;
+
+    public const int CompareFileLimit = 300;
 
     public const string TriageCheckExternalIdPrefix = "renovate-triage/";
 
@@ -151,7 +162,9 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
 
     private sealed record CheckSuiteDto(long Id, string? Status, string? Conclusion, AppDto? App, int LatestCheckRunsCount);
 
-    private sealed record CommitDto(string? Sha, UserDto? Author, CommitDetailDto? Commit);
+    private sealed record CommitDto(string? Sha, UserDto? Author, CommitDetailDto? Commit, List<ParentDto>? Parents);
+
+    private sealed record ParentDto(string? Sha);
 
     private sealed record CommitDetailDto(string? Message, PersonDto? Author, PersonDto? Committer, VerificationDto? Verification);
 
@@ -160,6 +173,14 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private sealed record VerificationDto(bool Verified);
 
     private sealed record FileDto(string? Filename, string? Patch, string? Status);
+
+    private sealed record CompareDto(string? Status, CompareCommitDto? MergeBaseCommit, List<CompareFileDto>? Files);
+
+    private sealed record CompareCommitDto(string? Sha);
+
+    private sealed record RepositoryDto(string? DefaultBranch);
+
+    private sealed record CompareFileDto(string? Filename, string? Status, string? Sha, string? PreviousFilename);
 
     private sealed record IssueCommentDto(long Id, UserDto? User, string? Body);
 
@@ -276,7 +297,8 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
                 c.Commit?.Author?.Email,
                 c.Commit?.Committer?.Email,
                 c.Commit?.Verification?.Verified ?? false,
-                c.Commit?.Message ?? string.Empty)),
+                c.Commit?.Message ?? string.Empty,
+                c.Parents is null ? null : [.. c.Parents.Select(p => p.Sha ?? string.Empty)])),
         ];
     }
 
@@ -294,6 +316,44 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             cancellationToken).ConfigureAwait(false);
 
         return [.. files.Select(f => new GitHubPullRequestFile(f.Filename ?? string.Empty, f.Patch, f.Status ?? string.Empty))];
+    }
+
+    public async Task<GitHubComparison?> CompareAsync(string repo, string baseRef, string headRef, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        var path = $"repos/{owner}/{name}/compare/{RefPath(baseRef, nameof(baseRef))}...{RefPath(headRef, nameof(headRef))}";
+
+        var token = await tokens.GetTokenAsync(repo, _contentsRead, cancellationToken).ConfigureAwait(false);
+        CompareDto? comparison;
+        try
+        {
+            comparison = await GitHubHttp.SendOrNullAsync<CompareDto>(http, GitHubHttp.Request(HttpMethod.Get, path, token), "comparison read", cancellationToken).ConfigureAwait(false);
+        }
+        catch (GitHubApiException ex) when (ex.StatusCode == HttpStatusCode.UnprocessableEntity)
+        {
+            return null;
+        }
+
+        return comparison is null
+            ? null
+            : new GitHubComparison(
+                comparison.Status ?? string.Empty,
+                comparison.MergeBaseCommit?.Sha,
+                comparison.Files is null ? null : [.. comparison.Files.Select(f => new GitHubCompareFile(f.Filename ?? string.Empty, f.Status ?? string.Empty, f.Sha, f.PreviousFilename))]);
+    }
+
+    public async Task<string> GetDefaultBranchAsync(string repo, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+
+        var token = await tokens.GetTokenAsync(repo, _contentsRead, cancellationToken).ConfigureAwait(false);
+        var payload = await GitHubHttp.SendAsync<RepositoryDto>(
+            http,
+            GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}", token),
+            "repository read",
+            cancellationToken).ConfigureAwait(false);
+
+        return payload.DefaultBranch ?? string.Empty;
     }
 
     public async Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)
@@ -611,6 +671,17 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             cancellationToken).ConfigureAwait(false);
 
         return [.. events.Select(e => new GitHubIssueEvent(e.Event ?? string.Empty, e.Actor?.Login, e.Label?.Name, e.CreatedAt))];
+    }
+
+    private static string RefPath(string value, string paramName)
+    {
+        var segments = value?.Split('/');
+        if (segments is null || segments.Any(s => s.Length == 0 || s is "." or ".."))
+        {
+            throw new ArgumentException("The value must be a ref of non-empty segments.", paramName);
+        }
+
+        return string.Join('/', segments.Select(Uri.EscapeDataString));
     }
 
     private static string PlainPath(string value, string paramName)

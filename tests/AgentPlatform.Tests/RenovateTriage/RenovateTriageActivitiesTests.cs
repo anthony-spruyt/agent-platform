@@ -307,6 +307,41 @@ public class RenovateTriageActivitiesTests
             Assert.Empty(rig.Jev.Bodies);
         }
 
+        [Fact]
+        public async Task ACommitThatOnlyMergesTheBaseIn_StillNeedsAJevJudgement_AtTheMergedHead()
+        {
+            var rig = Create();
+            rig.Github.MergeBaseIn();
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.NeedsJev, FakeGitHubApi.MergeSha), result);
+        }
+
+        [Fact]
+        public async Task AMergeThatAddsMoreThanTheBase_DecidesNeedsReview()
+        {
+            var rig = Create();
+            rig.Github.MergeBaseIn();
+            rig.Github.Comparisons[$"{FakeGitHubApi.Sha}...{FakeGitHubApi.MergeSha}"] = new GitHubComparison("ahead", null, [new GitHubCompareFile("deploy.sh", "added", "ccc")]);
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Decided, FakeGitHubApi.MergeSha, Decision: TriageRules.NonRenovateCommitDecision()), result);
+        }
+
+        [Fact]
+        public async Task ATransientErrorReadingTheComparisons_FailsTheActivityInsteadOfRecordingAVerdict()
+        {
+            var rig = Create();
+            rig.Github.MergeBaseIn();
+            rig.Github.CompareFailure = new GitHubApiException("GitHub comparison read failed with status 503.", HttpStatusCode.ServiceUnavailable);
+
+            var failure = await Assert.ThrowsAsync<GitHubApiException>(() => Assess(rig));
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, failure.StatusCode);
+        }
+
         [Theory]
         [InlineData(2)]
         [InlineData(0)]
@@ -2107,6 +2142,31 @@ public class RenovateTriageActivitiesTests
             rig.Github.Commits[0] = rig.Github.Commits[0] with { AuthorLogin = "someone" };
 
             var result = await Apply(rig, _approve);
+
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
+        }
+
+        [Fact]
+        public async Task Approve_AtAHeadThatOnlyMergesTheBaseIn_ApprovesThatHead_ReadingTheVersionsFromRenovatesCommit()
+        {
+            var rig = Live();
+            rig.Github.MergeBaseIn();
+
+            var result = await Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, FakeGitHubApi.MergeSha, _approve, TriageMode.Live)));
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
+            Assert.Equal(FakeGitHubApi.MergeSha, Assert.Single(rig.Github.Approvals).CommitId);
+        }
+
+        [Fact]
+        public async Task Approve_AtAHeadWhoseMergeAddsMoreThanTheBase_GoesToTheOwner()
+        {
+            var rig = Live();
+            rig.Github.MergeBaseIn();
+            rig.Github.Comparisons[$"{FakeGitHubApi.Sha}...{FakeGitHubApi.MergeSha}"] = new GitHubComparison("ahead", null, []);
+            await rig.Data.Verdicts.RecordAsync(Repo, 7, FakeGitHubApi.MergeSha, _approve, TriageMode.Live, null, Ct);
+
+            var result = await Run(() => rig.Activities.ApplyAsync(new ApplyInput(Repo, 7, FakeGitHubApi.MergeSha, _approve, TriageMode.Live)));
 
             await AssertHandedToTheOwnerAsync(rig, result, TriageRules.NonRenovateCommit, "commits that Renovate didn't make");
         }

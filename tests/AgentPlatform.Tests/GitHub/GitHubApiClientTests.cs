@@ -271,6 +271,148 @@ public class GitHubApiClientTests
     }
 
     [Fact]
+    public async Task ListCommits_KeepsTheParentsOfEachCommit()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""
+            [{"sha":"m1","parents":[{"sha":"p1"},{"sha":"p2"}]},{"sha":"c1","parents":[{"sha":"p0"}]},{"sha":"n1"}]
+            """));
+
+        var commits = await client.ListCommitsAsync("octo/widgets", 7, Ct);
+
+        Assert.Equal(["p1", "p2"], commits[0].Parents);
+        Assert.Equal(["p0"], commits[1].Parents);
+        Assert.Null(commits[2].Parents);
+    }
+
+    [Fact]
+    public async Task Compare_ReadsTheStatusMergeBaseAndFilesBetweenTwoRefs_WithAContentsReadToken()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""
+            {"status":"behind","merge_base_commit":{"sha":"abc123"},
+             "files":[{"filename":"a.txt","status":"modified","sha":"s1"},
+                      {"filename":"b.txt","status":"renamed","sha":"s2","previous_filename":"old.txt"}]}
+            """));
+
+        var comparison = await client.CompareAsync("octo/widgets", "release/1.x", Sha, Ct);
+
+        Assert.Equal("behind", comparison!.Status);
+        Assert.Equal("abc123", comparison.MergeBaseSha);
+        Assert.Equal([new GitHubCompareFile("a.txt", "modified", "s1"), new GitHubCompareFile("b.txt", "renamed", "s2", "old.txt")], comparison.Files);
+        Assert.Equal($"/repos/octo/widgets/compare/release/1.x...{Sha}", Assert.Single(handler.Requests).Uri.AbsolutePath);
+        Assert.Equal(new Dictionary<string, string> { ["contents"] = "read" }, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task Compare_KeepsAMissingFileListMissing_InsteadOfReadingItAsEmpty()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"status":"identical"}"""));
+
+        var comparison = await client.CompareAsync("octo/widgets", "main", Sha, Ct);
+
+        Assert.Equal("identical", comparison!.Status);
+        Assert.Null(comparison.MergeBaseSha);
+        Assert.Null(comparison.Files);
+    }
+
+    [Fact]
+    public async Task Compare_KeepsAnEmptyFileListEmpty()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"status":"identical","files":[]}"""));
+
+        var comparison = await client.CompareAsync("octo/widgets", "main", Sha, Ct);
+
+        Assert.Empty(comparison!.Files!);
+    }
+
+    [Fact]
+    public async Task GetDefaultBranch_ReadsItFromTheRepository_WithAContentsReadToken()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"full_name":"octo/widgets","default_branch":"trunk"}"""));
+
+        var branch = await client.GetDefaultBranchAsync("octo/widgets", Ct);
+
+        Assert.Equal("trunk", branch);
+        Assert.Equal("/repos/octo/widgets", Assert.Single(handler.Requests).Uri.AbsolutePath);
+        Assert.Equal(new Dictionary<string, string> { ["contents"] = "read" }, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task GetDefaultBranch_IsEmptyWhenTheRepositoryNamesNone()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        Assert.Equal(string.Empty, await client.GetDefaultBranchAsync("octo/widgets", Ct));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task GetDefaultBranch_ThrowsOnAFailure(HttpStatusCode status)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}", status));
+
+        var failure = await Assert.ThrowsAsync<GitHubApiException>(() => client.GetDefaultBranchAsync("octo/widgets", Ct));
+
+        Assert.Equal(status, failure.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDefaultBranch_RefusesARepoNameThatIsNotOwnerSlashName()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.GetDefaultBranchAsync("not-a-repo", Ct));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    public async Task Compare_GivesNoComparisonWhenGitHubSaysThereIsNone(HttpStatusCode status)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"message":"No common ancestor"}""", status));
+
+        Assert.Null(await client.CompareAsync("octo/widgets", "main", Sha, Ct));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Compare_ThrowsOnAnyOtherFailure(HttpStatusCode status)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}", status));
+
+        var failure = await Assert.ThrowsAsync<GitHubApiException>(() => client.CompareAsync("octo/widgets", "main", Sha, Ct));
+
+        Assert.Equal(status, failure.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("a//b")]
+    [InlineData("../main")]
+    [InlineData("main/.")]
+    public async Task Compare_RefusesARefThatCouldLeaveItsPlace(string bad)
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CompareAsync("octo/widgets", bad, Sha, Ct));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Compare_EscapesTheCharactersOfARef()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("""{"status":"behind"}"""));
+
+        await client.CompareAsync("octo/widgets", "feat/a b#1", Sha, Ct);
+
+        Assert.Equal($"/repos/octo/widgets/compare/feat/a%20b%231...{Sha}", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
     public async Task ListPullRequestFiles_ReadsEveryPageAndKeepsThePatchOfEachFile()
     {
         var (client, handler, tokens) = Create(request => Page(request, 101, (from, count) => JsonSerializer.Serialize(

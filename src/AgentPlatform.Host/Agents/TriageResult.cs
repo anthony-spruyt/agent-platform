@@ -122,12 +122,12 @@ public sealed record TriageResult(
     {
         if (rows.Count == 0)
         {
-            return "data.versions must be empty: the head commit's table lists no updates.";
+            return "data.versions must be empty: the Renovate commit's table lists no updates.";
         }
 
         var listed = string.Join("; ", rows.Take(MaxListItems).Select(r => $"{r.Package} {r.From} -> {r.To}"));
         var more = rows.Count > MaxListItems ? $" (and {rows.Count - MaxListItems} more)" : string.Empty;
-        return $"data.versions must list exactly the updates in the head commit's table: {listed}{more}.";
+        return $"data.versions must list exactly the updates in the Renovate commit's table: {listed}{more}.";
     }
 
     private static string Key(string dep, string from, string to) =>

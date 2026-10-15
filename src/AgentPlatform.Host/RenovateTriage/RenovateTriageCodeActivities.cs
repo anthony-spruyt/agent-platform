@@ -309,8 +309,8 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
     private async Task<StatedVersions?> StatedVersionsAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken)
     {
         var commits = await github.ListCommitsAsync(repo, prNumber, cancellationToken).ConfigureAwait(false);
-        return commits.Count > 0 && string.Equals(commits[^1].Sha, headSha, StringComparison.OrdinalIgnoreCase)
-            ? DiffShape.ReadStatedVersions(commits[^1].Message)
+        return commits.Count > 0 && string.Equals(commits[^1].Sha, headSha, StringComparison.OrdinalIgnoreCase) && TriageRules.StatedCommit(commits) is { } renovate
+            ? DiffShape.ReadStatedVersions(renovate.Message)
             : null;
     }
 

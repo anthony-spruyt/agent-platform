@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AgentPlatform.Host.Workflows;
 using Microsoft.Extensions.Options;
 
@@ -37,7 +38,18 @@ public static partial class GitHubWebhookEndpoint
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
         }
 
-        var body = await ReadBodyAsync(request.Body, cancellationToken).ConfigureAwait(false);
+        byte[]? body;
+        try
+        {
+            body = await ReadBodyAsync(request.Body, cancellationToken).ConfigureAwait(false);
+        }
+        catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status408RequestTimeout)
+        {
+            var sentEvent = request.Headers[EventHeader].ToString();
+            LogBodyTimedOut(logger, loggedDelivery, PlainEventName().IsMatch(sentEvent) ? sentEvent : "unknown");
+            return Results.StatusCode(StatusCodes.Status408RequestTimeout);
+        }
+
         if (body is null)
         {
             LogTooLarge(logger, loggedDelivery);
@@ -96,6 +108,12 @@ public static partial class GitHubWebhookEndpoint
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub webhook delivery {DeliveryId} rejected: signature missing or invalid.")]
     private static partial void LogRejected(ILogger logger, string deliveryId);
+
+    [GeneratedRegex(@"^[a-z_]{1,40}\z", RegexOptions.CultureInvariant, 1000)]
+    private static partial Regex PlainEventName();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub webhook delivery {DeliveryId} ({EventName}) timed out while its body was being read.")]
+    private static partial void LogBodyTimedOut(ILogger logger, string deliveryId, string eventName);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub webhook delivery {DeliveryId} rejected: body over the size limit.")]
     private static partial void LogTooLarge(ILogger logger, string deliveryId);

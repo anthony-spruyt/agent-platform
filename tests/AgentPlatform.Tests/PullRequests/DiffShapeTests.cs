@@ -39,7 +39,8 @@ public class DiffShapeTests
             expectedCount ?? files.Length,
             headRead,
             commits ?? [new DiffCommit(Head, message ?? DefaultSubject)],
-            headReread);
+            headReread,
+            (commits ?? [new DiffCommit(Head, message ?? DefaultSubject)]).LastOrDefault()?.Message ?? string.Empty);
 
     private static DiffShapeResult Line(string oldLine, string newLine, string? rows = null, string subject = DefaultSubject) =>
         Classify([new DiffFile("values.yaml", "modified", Patch((oldLine, newLine)))], Message(subject, rows));
@@ -136,6 +137,19 @@ public class DiffShapeTests
     {
         Assert.True(Line("a: 4.9.1", "a: 5.0.0", "4.9.1>5.0.0").Passed);
         Assert.Equal(DiffShapeFailure.VersionNotStated, Line("a: 4.9.1", "a: 5.0.0", "4.9.0>5.0.0").Failure);
+    }
+
+    [Fact]
+    public void TheStatedVersions_AreReadFromTheGivenMessage_NotFromTheHeadCommit()
+    {
+        var files = new[] { new DiffFile("values.yaml", "modified", Patch(("a: 1.0.0", "a: 1.1.0"))) };
+        DiffCommit[] commits = [new DiffCommit(ShaA, Message(DefaultSubject, "1.0.0>1.1.0")), new DiffCommit(Head, "Merge branch 'main' into renovate/x")];
+
+        var fromHead = DiffShape.Classify(files, 1, Head, commits, Head, commits[^1].Message);
+        var fromRenovate = DiffShape.Classify(files, 1, Head, commits, Head, commits[0].Message);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, fromHead.Failure);
+        Assert.True(fromRenovate.Passed);
     }
 
     [Fact]

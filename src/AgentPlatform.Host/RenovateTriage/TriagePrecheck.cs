@@ -22,7 +22,8 @@ internal static class TriagePrecheck
             pr.ChangedFiles,
             pr.HeadSha,
             [.. commits.Select(c => new DiffCommit(c.Sha, c.Message))],
-            reread.HeadSha);
+            reread.HeadSha,
+            TriageRules.StatedCommit(commits)?.Message ?? string.Empty);
         if (shape.Failure == DiffShapeFailure.HeadMoved)
         {
             return new PrecheckResult(true, PrecheckVerdict.Passed);
