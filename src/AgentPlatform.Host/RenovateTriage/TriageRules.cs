@@ -51,6 +51,8 @@ public static partial class TriageRules
     public const string RevertLabel = "agent/revert";
     public const string AutoApprovedLabel = "agent/auto-approved";
 
+    public static readonly IReadOnlyCollection<string> VerdictLabels = [SafeLabel, AutoApprovedLabel, FixableLabel];
+
     public const string NotOpen = "not-open";
     public const string ForeignRepo = "foreign-repo";
     public const string ForeignOwner = "foreign-owner";

@@ -219,6 +219,7 @@ public partial class RenovateTriageWorkflowTests
             Assert.Equal((CheckRunStatus.Queued, null), (queued.Status, queued.Conclusion));
             Assert.Contains("hourly-cap", queued.Summary, StringComparison.Ordinal);
             Assert.Contains("2030-01-01 12:00 UTC", queued.Summary, StringComparison.Ordinal);
+            Assert.Equal("hourly-cap, next try after 2030-01-01 12:00 UTC", queued.Title);
             Assert.Equal(TriagePendingStatus.Pending, (await PendingAsync(rig)).Status);
             Assert.Empty(await VerdictsAsync(rig));
 
