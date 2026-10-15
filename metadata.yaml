@@ -1,6 +1,15 @@
 ---
-# MCR serves the .NET base images; dotnet restore pulls from NuGet
+# MCR serves the .NET base images; dotnet restore pulls from NuGet and
+# checks package signatures against the DigiCert, Symantec and Microsoft CRL/OCSP hosts
 egress:
   - "*.data.mcr.microsoft.com:443"
   - api.nuget.org:443
+  - crl3.digicert.com:80
+  - crl4.digicert.com:80
   - mcr.microsoft.com:443
+  - ocsp.digicert.com:80
+  - s.symcb.com:80
+  - s.symcd.com:80
+  - ts-crl.ws.symantec.com:80
+  - ts-ocsp.ws.symantec.com:80
+  - www.microsoft.com:80
