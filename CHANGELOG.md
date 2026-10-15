@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.12.0...v1.13.0) (2026-10-15)
+
+
+### Features
+
+* **triage:** accept commits that only merge the base branch in ([#82](https://github.com/anthony-spruyt/agent-platform/issues/82)) ([4c4b701](https://github.com/anthony-spruyt/agent-platform/commit/4c4b70190bfa0eb707d0e82ecfdcbfdffee43b5f))
+
 ## [1.12.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.11.1...v1.12.0) (2026-10-14)
 
 
