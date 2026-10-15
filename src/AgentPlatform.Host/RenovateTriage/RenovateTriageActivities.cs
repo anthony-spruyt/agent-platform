@@ -226,10 +226,12 @@ public sealed partial class RenovateTriageActivities(
     private static Gate GateFlag(ApplyInput input, GitHubPullRequest pr, TriageDecision decision)
     {
         var own = FlagLabel(decision.Verdict);
-        var others = pr with { Labels = [.. pr.Labels.Where(l => !string.Equals(l, own, StringComparison.Ordinal))] };
-        var skip = SkipReason(input.Repo, others, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
+        var skip = SkipReason(input.Repo, WithoutLabel(pr, own), shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
         return skip is null ? new Gate(decision) : new Gate(decision, new ApplyResult(ApplyOutcome.Refused, skip));
     }
+
+    private static GitHubPullRequest WithoutLabel(GitHubPullRequest pr, string label) =>
+        pr with { Labels = [.. pr.Labels.Where(l => !string.Equals(l, label, StringComparison.Ordinal))] };
 
     // An approving verdict is only acted on after the checks Assess ran are redone on fresh data at this head.
     // The needs-review label is judged on the outcome: a hand-off writes it itself, so a retry must get past it.
@@ -252,7 +254,8 @@ public sealed partial class RenovateTriageActivities(
             return GateFlag(input, pr, gate.Decision);
         }
 
-        skip = SkipReason(input.Repo, pr, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
+        var judged = gate.CommentOnly ? WithoutLabel(pr, TriageRules.NeedsReviewLabel) : pr;
+        skip = SkipReason(input.Repo, judged, shadow: false, ignoreTriageSignals: true, honourNeedsReviewLabel: true);
         return skip is null ? gate : new Gate(gate.Decision, new ApplyResult(ApplyOutcome.Refused, skip));
     }
 
@@ -290,7 +293,7 @@ public sealed partial class RenovateTriageActivities(
             SafeAction.Fixable => new Gate(TriageRules.SafeOnRedHeadDecision(input.Repo, input.HeadSha, TriageRules.FailedChecks(checks))),
             SafeAction.WaitForCi when input.CiWaitOver => new Gate(TriageRules.CiTimeoutDecision()),
             SafeAction.WaitForCi => new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason)),
-            SafeAction.CommentOnly => new Gate(input.Decision, CommentOnly: true),
+            SafeAction.CommentOnly => new Gate(TriageRules.HighRiskSafeDecision(input.Decision, TriageRules.RiskyTerm(pr.HeadRef) ?? pr.HeadRef), CommentOnly: true),
             _ => new Gate(input.Decision),
         };
     }
@@ -305,7 +308,7 @@ public sealed partial class RenovateTriageActivities(
                 await ApproveAsync(input, decision, cancellationToken).ConfigureAwait(false);
                 return VerdictAction.Approve;
             case TriageVerdict.Safe:
-                await FlagAsync(input, decision, TriageRules.SafeLabel, cancellationToken).ConfigureAwait(false);
+                await FlagAsync(input, decision, TriageRules.NeedsReviewLabel, cancellationToken).ConfigureAwait(false);
                 return VerdictAction.Comment;
             default:
                 await FlagAsync(input, decision, FlagLabel(decision.Verdict), cancellationToken).ConfigureAwait(false);
