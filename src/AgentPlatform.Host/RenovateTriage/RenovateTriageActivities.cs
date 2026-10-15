@@ -76,7 +76,7 @@ public sealed partial class RenovateTriageActivities(
             }
 
             var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-            if (!TriageRules.AreAllRenovateCommits(commits, pr.Commits))
+            if (!await RenovateCommitCheck.IsRenovateOnlyAsync(github, input.Repo, pr, commits, cancellationToken).ConfigureAwait(false))
             {
                 return new AssessResult(AssessStatus.Decided, sha, Decision: TriageRules.NonRenovateCommitDecision(), Mode: mode);
             }
@@ -259,7 +259,7 @@ public sealed partial class RenovateTriageActivities(
     private async Task<Gate> DecideApprovalAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
     {
         var commits = await github.ListCommitsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-        if (!TriageRules.AreAllRenovateCommits(commits, pr.Commits))
+        if (!await RenovateCommitCheck.IsRenovateOnlyAsync(github, input.Repo, pr, commits, cancellationToken).ConfigureAwait(false))
         {
             return new Gate(TriageRules.NonRenovateCommitDecision());
         }

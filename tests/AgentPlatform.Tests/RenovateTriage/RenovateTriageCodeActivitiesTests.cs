@@ -374,6 +374,29 @@ public class RenovateTriageCodeActivitiesTests
         }
 
         [Fact]
+        public async Task AHeadThatMergesTheBaseIn_ReadsTheStatedVersionsFromRenovatesCommit()
+        {
+            var rig = Create();
+            rig.Github.MergeBaseIn();
+
+            var result = await Run(() => rig.Activities.PrecheckAsync(new PrecheckInput(Repo, 7, FakeGitHubApi.MergeSha)));
+
+            Assert.Equal(new PrecheckResult(false, PrecheckVerdict.Passed, ScannedText.Create(FakeGitHubApi.Body)), result);
+        }
+
+        [Fact]
+        public async Task AVersionRenovateDidNotStateInItsOwnCommit_FailsWhenTheHeadIsAMerge()
+        {
+            var rig = Create();
+            rig.Github.MergeBaseIn();
+            rig.Github.Commits[0] = rig.Github.Commits[0] with { Message = "chore(deps): update dep to v1.0.9\n\n| datasource | package | from | to |\n| --- | --- | --- | --- |\n| npm | dep | 1.0.0 | 1.0.9 |" };
+
+            var result = await Run(() => rig.Activities.PrecheckAsync(new PrecheckInput(Repo, 7, FakeGitHubApi.MergeSha)));
+
+            Assert.Equal(PrecheckVerdict.DiffNotVersionOnly, result.Verdict);
+        }
+
+        [Fact]
         public async Task ADiffBeyondVersionUpdates_FailsWithoutScanningTheBody()
         {
             var rig = Create();
@@ -482,6 +505,17 @@ public class RenovateTriageCodeActivitiesTests
             var rig = Create();
 
             var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
+
+            Assert.Equal([new StatedVersion("dep", "1.0.0", "1.0.1")], result.Stated!.Rows);
+        }
+
+        [Fact]
+        public async Task AHeadThatMergesTheBaseIn_StatesTheVersionsOfRenovatesCommit()
+        {
+            var rig = Create();
+            rig.Github.MergeBaseIn();
+
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, FakeGitHubApi.MergeSha, null, Body())));
 
             Assert.Equal([new StatedVersion("dep", "1.0.0", "1.0.1")], result.Stated!.Rows);
         }

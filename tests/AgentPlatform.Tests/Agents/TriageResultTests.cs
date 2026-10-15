@@ -213,7 +213,7 @@ public class TriageResultTests
     {
         var error = VersionsError("""[{"dep":"a","from":"1.0.0","to":"1.1.0"}]""", Table());
 
-        Assert.Contains("lists no updates", error, StringComparison.Ordinal);
+        Assert.Contains("Renovate commit's table lists no updates", error, StringComparison.Ordinal);
         Assert.DoesNotContain("table: .", error, StringComparison.Ordinal);
     }
 

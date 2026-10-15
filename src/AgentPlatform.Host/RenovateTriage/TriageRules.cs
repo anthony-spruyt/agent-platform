@@ -225,6 +225,24 @@ public static partial class TriageRules
         return prCommitCount is > 0 and < MaxListedCommits && commits.Count == prCommitCount && commits.All(IsRenovateCommit);
     }
 
+    public static int LeadingRenovateCommits(IReadOnlyList<GitHubCommit> commits)
+    {
+        ArgumentNullException.ThrowIfNull(commits);
+        var count = 0;
+        while (count < commits.Count && IsRenovateCommit(commits[count]))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    public static GitHubCommit? StatedCommit(IReadOnlyList<GitHubCommit> commits)
+    {
+        var count = LeadingRenovateCommits(commits);
+        return count == 0 ? null : commits[count - 1];
+    }
+
     public static bool IsRiskyBranch(string branch) => RiskyTerm(branch) is not null;
 
     public static string? RiskyTerm(string branch)
@@ -385,7 +403,7 @@ public static partial class TriageRules
         !string.Equals(suite.AppSlug, MergifyApp, StringComparison.Ordinal)
         && (string.Equals(suite.AppSlug, GitHubActionsApp, StringComparison.Ordinal) || suite.CheckRunCount > 0);
 
-    private static bool IsRenovateCommit(GitHubCommit commit) =>
+    internal static bool IsRenovateCommit(GitHubCommit commit) =>
         string.Equals(commit.AuthorLogin, RenovateLogin, StringComparison.Ordinal)
         && commit.AuthorId == RenovateUserId
         && string.Equals(commit.AuthorEmail, RenovateAuthorEmail, StringComparison.Ordinal)

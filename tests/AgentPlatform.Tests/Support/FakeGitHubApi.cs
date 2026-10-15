@@ -6,6 +6,9 @@ namespace AgentPlatform.Tests.Support;
 internal sealed class FakeGitHubApi : IGitHubApiClient
 {
     public const string Sha = "0123456789abcdef0123456789abcdef01234567";
+    public const string MergeSha = "2222222222222222222222222222222222222222";
+    public const string BaseParentSha = "3333333333333333333333333333333333333333";
+    public const string BranchPointSha = "4444444444444444444444444444444444444444";
 
     public GitHubPullRequest PullRequest { get; set; } = Renovate();
 
@@ -93,6 +96,37 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     {
         Calls.Add("files");
         return Result<IReadOnlyList<GitHubPullRequestFile>>([.. Files]);
+    }
+
+    public Dictionary<string, GitHubComparison> Comparisons { get; } = [];
+
+    public FakeGitHubApi MergeBaseIn()
+    {
+        Commits.Clear();
+        Commits.Add(RenovateCommit() with { Parents = ["5555555555555555555555555555555555555555"] });
+        Commits.Add(new GitHubCommit(MergeSha, "alice", 5, "alice@example.test", "noreply@github.com", true, "Merge branch 'main' into renovate/czkawka", [Sha, BaseParentSha]));
+        PullRequest = PullRequest with { HeadSha = MergeSha, Commits = 2 };
+        GitHubCompareFile[] changed = [new("README.md", "aaa", "modified"), new("src/new.txt", "bbb", "added")];
+        Comparisons[$"main...{BaseParentSha}"] = new GitHubComparison("behind", null, []);
+        Comparisons[$"main...{Sha}"] = new GitHubComparison("ahead", BranchPointSha, []);
+        Comparisons[$"{Sha}...{MergeSha}"] = new GitHubComparison("ahead", null, changed);
+        Comparisons[$"{BranchPointSha}...{BaseParentSha}"] = new GitHubComparison("ahead", null, changed);
+        return this;
+    }
+
+    public Exception? CompareFailure { get; set; }
+
+    public int CompareFailureAfter { get; set; }
+
+    public Task<GitHubComparison?> CompareAsync(string repo, string baseRef, string headRef, CancellationToken cancellationToken)
+    {
+        Calls.Add($"compare:{baseRef}...{headRef}");
+        if (CompareFailure is not null && Calls.Count(c => c.StartsWith("compare:", StringComparison.Ordinal)) > CompareFailureAfter)
+        {
+            return Task.FromException<GitHubComparison?>(CompareFailure);
+        }
+
+        return Result(Comparisons.GetValueOrDefault($"{baseRef}...{headRef}"));
     }
 
     public Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)
