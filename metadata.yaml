@@ -1,0 +1,6 @@
+---
+# MCR serves the .NET base images; dotnet restore pulls from NuGet
+egress:
+  - "*.data.mcr.microsoft.com:443"
+  - api.nuget.org:443
+  - mcr.microsoft.com:443
