@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.13.0...v1.14.0) (2026-10-15)
+
+
+### Features
+
+* **triage:** say when a high-risk SAFE PR needs approval ([#89](https://github.com/anthony-spruyt/agent-platform/issues/89)) ([2e53f2b](https://github.com/anthony-spruyt/agent-platform/commit/2e53f2b04109ac5c449721c035d1ce2d6b980d17))
+
 ## [1.13.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.12.0...v1.13.0) (2026-10-15)
 
 
