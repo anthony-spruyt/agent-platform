@@ -330,7 +330,7 @@ public sealed partial class RenovateTriageActivities(
             await github.ApproveAsync(input.Repo, input.PrNumber, input.HeadSha, summary, cancellationToken).ConfigureAwait(false);
         }
 
-        await github.AddLabelsAsync(input.Repo, input.PrNumber, [safe ? TriageRules.SafeLabel : TriageRules.AutoApprovedLabel], cancellationToken).ConfigureAwait(false);
+        await github.SetExclusiveLabelAsync(input.Repo, input.PrNumber, TriageRules.VerdictLabels, safe ? TriageRules.SafeLabel : TriageRules.AutoApprovedLabel, cancellationToken).ConfigureAwait(false);
 
         var sticky = await FindStickyAsync(input, cancellationToken).ConfigureAwait(false);
         if (safe)
@@ -354,7 +354,7 @@ public sealed partial class RenovateTriageActivities(
             await DismissAsync(input, stale, cancellationToken).ConfigureAwait(false);
         }
 
-        await github.AddLabelsAsync(input.Repo, input.PrNumber, [label], cancellationToken).ConfigureAwait(false);
+        await github.SetExclusiveLabelAsync(input.Repo, input.PrNumber, TriageRules.VerdictLabels, label, cancellationToken).ConfigureAwait(false);
 
         if (decision.Comment is { } comment)
         {

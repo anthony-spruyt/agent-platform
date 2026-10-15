@@ -38,7 +38,7 @@ public sealed class ClaudeRungActivities(IGitHubApiClient github, TriagePendingS
 
             // Row first: a label with no row would block the PR for good.
             await pendings.UpsertAsync(input.Repo, input.PrNumber, input.HeadSha, input.Reason, cancellationToken).ConfigureAwait(false);
-            await github.AddLabelsAsync(input.Repo, input.PrNumber, [TriageRules.NeedsTriageLabel], cancellationToken).ConfigureAwait(false);
+            await github.SetExclusiveLabelAsync(input.Repo, input.PrNumber, TriageRules.VerdictLabels, TriageRules.NeedsTriageLabel, cancellationToken).ConfigureAwait(false);
             var sticky = await TriageSticky.FindAsync(github, input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             await TriageSticky.UpsertAsync(github, input.Repo, input.PrNumber, sticky, StickyComment.Queued(input.Reason), cancellationToken).ConfigureAwait(false);
             return new QueueResult(false, pods.Model);

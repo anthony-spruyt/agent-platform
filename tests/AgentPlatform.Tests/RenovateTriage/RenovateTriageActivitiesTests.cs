@@ -1366,6 +1366,33 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
+        public async Task NeedsReview_ClearsAnOlderHeadsVerdictLabel_AndKeepsOtherLabels()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.SafeLabel, "dependencies"] };
+            await Record(rig, _needsReview);
+
+            await Apply(rig, _needsReview);
+
+            Assert.Equal([TriageRules.SafeLabel], rig.Github.RemovedLabels);
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+            Assert.Contains("dependencies", rig.Github.PullRequest.Labels);
+        }
+
+        [Fact]
+        public async Task Approve_ClearsAnOlderHeadsVerdictLabels()
+        {
+            var rig = Live();
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.SafeLabel, TriageRules.FixableLabel] };
+            await Record(rig, _approve);
+
+            await Apply(rig, _approve);
+
+            Assert.Equal([TriageRules.SafeLabel, TriageRules.FixableLabel], rig.Github.RemovedLabels);
+            Assert.Equal([TriageRules.AutoApprovedLabel], rig.Github.AddedLabels);
+        }
+
+        [Fact]
         public async Task NeedsReview_LabelsAndPostsTheStickyComment()
         {
             var rig = Live();
