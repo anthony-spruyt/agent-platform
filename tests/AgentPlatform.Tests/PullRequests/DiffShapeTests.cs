@@ -225,6 +225,7 @@ public class DiffShapeTests
     [InlineData("uses: o/a@{A} # v4", "uses: o/a@{B} # v4", null, DiffShapeFailure.None)]
     [InlineData("uses: o/a@{A} # v2.21.0", "uses: o/a@{B} # v2.21.1", "2.21.0>2.21.1", DiffShapeFailure.None)]
     [InlineData("uses: o/a@{A} # v2.21.0", "uses: o/a@{A} # v2.21.1", "2.21.0>2.21.1", DiffShapeFailure.CommentWithoutShaChange)]
+    [InlineData("uses: o/a@{A} # v1.2.3-node20", "uses: o/a@{B} # v1.2.4-node20", "v1.2.3>v1.2.4", DiffShapeFailure.VersionNotStated)]
     public void APinnedActionComment_ChangesOnlyTogetherWithItsSha(string oldLine, string newLine, string? rows, DiffShapeFailure expected)
     {
         var result = Line(oldLine.Replace("{A}", ShaA, StringComparison.Ordinal), newLine.Replace("{B}", ShaB, StringComparison.Ordinal).Replace("{A}", ShaA, StringComparison.Ordinal), rows);
@@ -348,6 +349,12 @@ public class DiffShapeTests
     public void ASuffixedMultiPartTag_FailsWhenTheRowIsNotMultiPart()
     {
         Assert.Equal(DiffShapeFailure.VersionNotStated, Line("image: r/x:22.1-alpine", "image: r/x:24.0-alpine", "22>24").Failure);
+    }
+
+    [Fact]
+    public void ASuffixedVersionOutsideAnImageTag_MustEqualTheRowExactly()
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("version: 1.2.3-rc.1", "version: 1.2.4-rc.1", "1.2.3>1.2.4").Failure);
     }
 
     [Fact]
