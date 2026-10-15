@@ -26,6 +26,8 @@ public class RenovateCommitCheckTests
 
     private static GitHubCompareFile File(string name, string sha, string status = "modified", string? previous = null) => new(name, status, sha, previous);
 
+    private static string RenovateChange => $"{BranchPoint}...{RenovateSha}";
+
     private static GitHubComparison Ahead(params GitHubCompareFile[] files) => new("ahead", null, files);
 
     private static GitHubComparison Behind() => new("behind", null, []);
@@ -137,6 +139,145 @@ public class RenovateCommitCheckTests
         github.Comparisons[$"{BranchPoint}...{BaseParent}"] = Ahead(File("package.json", "base-blob"));
 
         Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task AMergeThatTakesTheBaseVersionOfAFileRenovateChanged_IsRejected()
+    {
+        var github = HonestMerge();
+        github.Comparisons[$"{RenovateSha}...{MergeSha}"] = Ahead(File("package.json", "base-blob"));
+        github.Comparisons[$"{BranchPoint}...{BaseParent}"] = Ahead(File("package.json", "base-blob"));
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task ABaseChangeToThePreviousNameOfAFileRenovateRenamed_IsRejected()
+    {
+        var github = HonestMerge();
+        github.Comparisons[RenovateChange] = Ahead(File("new.json", "r1", "renamed", "old.json"));
+        github.Comparisons[$"{RenovateSha}...{MergeSha}"] = Ahead(File("old.json", "base-blob"));
+        github.Comparisons[$"{BranchPoint}...{BaseParent}"] = Ahead(File("old.json", "base-blob"));
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task ABaseChangeToTheNewNameOfAFileRenovateRenamed_IsRejected()
+    {
+        var github = HonestMerge();
+        github.Comparisons[RenovateChange] = Ahead(File("new.json", "r1", "renamed", "old.json"));
+        github.Comparisons[$"{RenovateSha}...{MergeSha}"] = Ahead(File("new.json", "base-blob"));
+        github.Comparisons[$"{BranchPoint}...{BaseParent}"] = Ahead(File("new.json", "base-blob"));
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task ARenovateChangeTheBaseDoesNotTouch_IsAccepted()
+    {
+        var github = HonestMerge();
+        github.Comparisons[RenovateChange] = Ahead(File("package.json", "r1"), File("package-lock.json", "r2"));
+
+        Assert.True(await Check(github));
+    }
+
+    [Fact]
+    public async Task ARenovateChangeThatGitHubDoesNotKnow_IsRejected()
+    {
+        var github = HonestMerge();
+        github.Comparisons.Remove(RenovateChange);
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task ARenovateChangeWithoutAFileList_IsRejected()
+    {
+        var github = HonestMerge();
+        github.Comparisons[RenovateChange] = new GitHubComparison("ahead", null, null);
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task ATruncatedRenovateChange_IsRejected()
+    {
+        var github = HonestMerge();
+        github.Comparisons[RenovateChange] = Ahead([.. Enumerable.Range(0, GitHubApiClient.CompareFileLimit).Select(i => File($"r{i}", $"s{i}"))]);
+
+        Assert.False(await Check(github));
+    }
+
+    [Theory]
+    [InlineData("added-side")]
+    [InlineData("base-side")]
+    public async Task AComparisonWithoutAFileList_IsRejected(string side)
+    {
+        var github = HonestMerge();
+        var key = side == "added-side" ? $"{RenovateSha}...{MergeSha}" : $"{BranchPoint}...{BaseParent}";
+        github.Comparisons[key] = new GitHubComparison("ahead", null, null);
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task AnEmptyBaseRef_IsRejectedWithoutReadingAnything()
+    {
+        var github = HonestMerge();
+        github.PullRequest = github.PullRequest with { BaseRef = string.Empty };
+        github.Calls.Clear();
+
+        Assert.False(await Check(github));
+        Assert.Empty(github.Calls);
+    }
+
+    [Fact]
+    public async Task APrWhoseBaseIsNotTheDefaultBranch_IsRejected()
+    {
+        var github = HonestMerge();
+        github.DefaultBranch = "develop";
+
+        Assert.False(await Check(github));
+        Assert.DoesNotContain(github.Calls, c => c.StartsWith("compare:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task APrWhoseBaseIsTheDefaultBranchByAnotherCase_IsRejected()
+    {
+        var github = HonestMerge();
+        github.DefaultBranch = "Main";
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task AnUnreadableDefaultBranch_IsRejected()
+    {
+        var github = HonestMerge();
+        github.DefaultBranch = string.Empty;
+
+        Assert.False(await Check(github));
+    }
+
+    [Fact]
+    public async Task AnAllRenovatePr_DoesNotReadTheDefaultBranch()
+    {
+        var github = new FakeGitHubApi();
+
+        Assert.True(await Check(github));
+        Assert.DoesNotContain("default-branch", github.Calls);
+    }
+
+    [Fact]
+    public async Task ATransientErrorReadingTheDefaultBranch_Throws()
+    {
+        var github = HonestMerge();
+        github.Failure = new GitHubApiException("GitHub repository read failed.", HttpStatusCode.ServiceUnavailable);
+
+        var thrown = await Assert.ThrowsAsync<GitHubApiException>(() => Check(github));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, thrown.StatusCode);
     }
 
     [Fact]
@@ -359,7 +500,7 @@ public class RenovateCommitCheckTests
     public async Task ATransientGitHubError_ThrowsInsteadOfGivingAVerdict(HttpStatusCode status)
     {
         var github = HonestMerge();
-        github.Failure = new GitHubApiException("GitHub comparison read failed.", status);
+        github.CompareFailure = new GitHubApiException("GitHub comparison read failed.", status);
 
         var thrown = await Assert.ThrowsAsync<GitHubApiException>(() => Check(github));
 

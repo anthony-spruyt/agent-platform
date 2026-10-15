@@ -32,7 +32,7 @@ public sealed record GitHubCommit(string Sha, string? AuthorLogin, long? AuthorI
 
 public sealed record GitHubCompareFile(string Filename, string Status, string? Sha, string? PreviousFilename = null);
 
-public sealed record GitHubComparison(string Status, string? MergeBaseSha, IReadOnlyList<GitHubCompareFile> Files);
+public sealed record GitHubComparison(string Status, string? MergeBaseSha, IReadOnlyList<GitHubCompareFile>? Files);
 
 public sealed record GitHubPullRequestFile(string Filename, string? Patch, string Status = "modified");
 
@@ -63,6 +63,8 @@ public interface IGitHubApiClient
     Task<IReadOnlyList<GitHubPullRequestFile>> ListPullRequestFilesAsync(string repo, int number, CancellationToken cancellationToken);
 
     Task<GitHubComparison?> CompareAsync(string repo, string baseRef, string headRef, CancellationToken cancellationToken);
+
+    Task<string> GetDefaultBranchAsync(string repo, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken);
 
@@ -175,6 +177,8 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private sealed record CompareDto(string? Status, CompareCommitDto? MergeBaseCommit, List<CompareFileDto>? Files);
 
     private sealed record CompareCommitDto(string? Sha);
+
+    private sealed record RepositoryDto(string? DefaultBranch);
 
     private sealed record CompareFileDto(string? Filename, string? Status, string? Sha, string? PreviousFilename);
 
@@ -335,7 +339,21 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             : new GitHubComparison(
                 comparison.Status ?? string.Empty,
                 comparison.MergeBaseCommit?.Sha,
-                [.. (comparison.Files ?? []).Select(f => new GitHubCompareFile(f.Filename ?? string.Empty, f.Status ?? string.Empty, f.Sha, f.PreviousFilename))]);
+                comparison.Files is null ? null : [.. comparison.Files.Select(f => new GitHubCompareFile(f.Filename ?? string.Empty, f.Status ?? string.Empty, f.Sha, f.PreviousFilename))]);
+    }
+
+    public async Task<string> GetDefaultBranchAsync(string repo, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+
+        var token = await tokens.GetTokenAsync(repo, _contentsRead, cancellationToken).ConfigureAwait(false);
+        var payload = await GitHubHttp.SendAsync<RepositoryDto>(
+            http,
+            GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}", token),
+            "repository read",
+            cancellationToken).ConfigureAwait(false);
+
+        return payload.DefaultBranch ?? string.Empty;
     }
 
     public async Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)

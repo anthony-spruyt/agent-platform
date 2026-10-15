@@ -106,13 +106,16 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         Commits.Add(RenovateCommit() with { Parents = ["5555555555555555555555555555555555555555"] });
         Commits.Add(new GitHubCommit(MergeSha, "alice", 5, "alice@example.test", "noreply@github.com", true, "Merge branch 'main' into renovate/czkawka", [Sha, BaseParentSha]));
         PullRequest = PullRequest with { HeadSha = MergeSha, Commits = 2 };
-        GitHubCompareFile[] changed = [new("README.md", "aaa", "modified"), new("src/new.txt", "bbb", "added")];
+        GitHubCompareFile[] changed = [new("README.md", "modified", "aaa"), new("src/new.txt", "added", "bbb")];
         Comparisons[$"main...{BaseParentSha}"] = new GitHubComparison("behind", null, []);
         Comparisons[$"main...{Sha}"] = new GitHubComparison("ahead", BranchPointSha, []);
+        Comparisons[$"{BranchPointSha}...{Sha}"] = new GitHubComparison("ahead", null, [new("package.json", "modified", "rrr")]);
         Comparisons[$"{Sha}...{MergeSha}"] = new GitHubComparison("ahead", null, changed);
         Comparisons[$"{BranchPointSha}...{BaseParentSha}"] = new GitHubComparison("ahead", null, changed);
         return this;
     }
+
+    public string DefaultBranch { get; set; } = "main";
 
     public Exception? CompareFailure { get; set; }
 
@@ -127,6 +130,12 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         }
 
         return Result(Comparisons.GetValueOrDefault($"{baseRef}...{headRef}"));
+    }
+
+    public Task<string> GetDefaultBranchAsync(string repo, CancellationToken cancellationToken)
+    {
+        Calls.Add("default-branch");
+        return Result(DefaultBranch);
     }
 
     public Task<IReadOnlyList<GitHubReview>> ListReviewsAsync(string repo, int number, CancellationToken cancellationToken)

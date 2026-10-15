@@ -79,6 +79,12 @@ internal static class RenovateCommitCheck
             return false;
         }
 
+        var defaultBranch = await github.GetDefaultBranchAsync(repo, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(pr.BaseRef, defaultBranch, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         foreach (var parent in chain.BaseParents)
         {
             var onBase = await github.CompareAsync(repo, pr.BaseRef, parent, cancellationToken).ConfigureAwait(false);
@@ -96,10 +102,28 @@ internal static class RenovateCommitCheck
 
         var added = await github.CompareAsync(repo, chain.Renovate.Sha, pr.HeadSha, cancellationToken).ConfigureAwait(false);
         var baseChange = await github.CompareAsync(repo, branched.MergeBaseSha, chain.BaseParents[^1], cancellationToken).ConfigureAwait(false);
+        var renovateChange = await github.CompareAsync(repo, branched.MergeBaseSha, chain.Renovate.Sha, cancellationToken).ConfigureAwait(false);
         return added?.Status is "ahead" or "identical"
-            && baseChange is not null
-            && SameFiles(added.Files, baseChange.Files);
+            && added.Files is { } addedFiles
+            && baseChange?.Files is { } baseFiles
+            && renovateChange?.Files is { } renovateFiles
+            && SameFiles(addedFiles, baseFiles)
+            && !Overlaps(renovateFiles, addedFiles, baseFiles);
     }
+
+    private static bool Overlaps(IReadOnlyList<GitHubCompareFile> renovate, IReadOnlyList<GitHubCompareFile> added, IReadOnlyList<GitHubCompareFile> baseChange)
+    {
+        if (renovate.Count >= GitHubApiClient.CompareFileLimit)
+        {
+            return true;
+        }
+
+        var paths = renovate.SelectMany(Paths).ToHashSet(StringComparer.Ordinal);
+        return added.Concat(baseChange).SelectMany(Paths).Any(paths.Contains);
+    }
+
+    private static IEnumerable<string> Paths(GitHubCompareFile file) =>
+        string.IsNullOrEmpty(file.PreviousFilename) ? [file.Filename] : [file.Filename, file.PreviousFilename];
 
     private static bool SameFiles(IReadOnlyList<GitHubCompareFile> added, IReadOnlyList<GitHubCompareFile> baseChange)
     {

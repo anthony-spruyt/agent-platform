@@ -43,7 +43,7 @@ public static partial class GitHubWebhookEndpoint
         {
             body = await ReadBodyAsync(request.Body, cancellationToken).ConfigureAwait(false);
         }
-        catch (BadHttpRequestException)
+        catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status408RequestTimeout)
         {
             var sentEvent = request.Headers[EventHeader].ToString();
             LogBodyTimedOut(logger, loggedDelivery, PlainEventName().IsMatch(sentEvent) ? sentEvent : "unknown");

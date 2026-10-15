@@ -20,7 +20,8 @@ public class DiffShapeFixtureTests
             fixture.ExpectedFileCount,
             fixture.Head,
             [.. fixture.Commits.Select(c => new DiffCommit(c.Sha, c.Message))],
-            fixture.Head);
+            fixture.Head,
+            fixture.Commits[^1].Message);
     }
 
     [Theory]

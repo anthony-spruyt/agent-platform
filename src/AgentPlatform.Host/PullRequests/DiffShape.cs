@@ -72,7 +72,7 @@ public static partial class DiffShape
         string headShaRead,
         IReadOnlyList<DiffCommit> commits,
         string headShaReread,
-        string? statedMessage = null)
+        string statedMessage)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(commits);
@@ -92,7 +92,7 @@ public static partial class DiffShape
             return new DiffShapeResult(DiffShapeFailure.FileCountMismatch);
         }
 
-        if (ReadStatedVersions(statedMessage ?? commits[^1].Message ?? string.Empty) is not { } stated)
+        if (ReadStatedVersions(statedMessage) is not { } stated)
         {
             return new DiffShapeResult(DiffShapeFailure.MalformedTable);
         }

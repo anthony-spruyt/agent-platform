@@ -323,7 +323,7 @@ public class RenovateTriageActivitiesTests
         {
             var rig = Create();
             rig.Github.MergeBaseIn();
-            rig.Github.Comparisons[$"{FakeGitHubApi.Sha}...{FakeGitHubApi.MergeSha}"] = new GitHubComparison("ahead", null, [new GitHubCompareFile("deploy.sh", "ccc", "added")]);
+            rig.Github.Comparisons[$"{FakeGitHubApi.Sha}...{FakeGitHubApi.MergeSha}"] = new GitHubComparison("ahead", null, [new GitHubCompareFile("deploy.sh", "added", "ccc")]);
 
             var result = await Assess(rig);
 

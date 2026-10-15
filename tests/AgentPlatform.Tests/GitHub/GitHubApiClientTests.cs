@@ -303,7 +303,7 @@ public class GitHubApiClientTests
     }
 
     [Fact]
-    public async Task Compare_ToleratesAMissingFileList()
+    public async Task Compare_KeepsAMissingFileListMissing_InsteadOfReadingItAsEmpty()
     {
         var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"status":"identical"}"""));
 
@@ -311,7 +311,59 @@ public class GitHubApiClientTests
 
         Assert.Equal("identical", comparison!.Status);
         Assert.Null(comparison.MergeBaseSha);
-        Assert.Empty(comparison.Files);
+        Assert.Null(comparison.Files);
+    }
+
+    [Fact]
+    public async Task Compare_KeepsAnEmptyFileListEmpty()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"status":"identical","files":[]}"""));
+
+        var comparison = await client.CompareAsync("octo/widgets", "main", Sha, Ct);
+
+        Assert.Empty(comparison!.Files!);
+    }
+
+    [Fact]
+    public async Task GetDefaultBranch_ReadsItFromTheRepository_WithAContentsReadToken()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"full_name":"octo/widgets","default_branch":"trunk"}"""));
+
+        var branch = await client.GetDefaultBranchAsync("octo/widgets", Ct);
+
+        Assert.Equal("trunk", branch);
+        Assert.Equal("/repos/octo/widgets", Assert.Single(handler.Requests).Uri.AbsolutePath);
+        Assert.Equal(new Dictionary<string, string> { ["contents"] = "read" }, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task GetDefaultBranch_IsEmptyWhenTheRepositoryNamesNone()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        Assert.Equal(string.Empty, await client.GetDefaultBranchAsync("octo/widgets", Ct));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task GetDefaultBranch_ThrowsOnAFailure(HttpStatusCode status)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}", status));
+
+        var failure = await Assert.ThrowsAsync<GitHubApiException>(() => client.GetDefaultBranchAsync("octo/widgets", Ct));
+
+        Assert.Equal(status, failure.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDefaultBranch_RefusesARepoNameThatIsNotOwnerSlashName()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.GetDefaultBranchAsync("not-a-repo", Ct));
+        Assert.Empty(handler.Requests);
     }
 
     [Theory]
