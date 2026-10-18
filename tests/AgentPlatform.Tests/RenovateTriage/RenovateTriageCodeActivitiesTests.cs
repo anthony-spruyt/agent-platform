@@ -506,7 +506,7 @@ public class RenovateTriageCodeActivitiesTests
 
             var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
 
-            Assert.Equal([new StatedVersion("dep", "1.0.0", "1.0.1")], result.Stated!.Rows);
+            Assert.Equal([new StatedVersion("dep", "1.0.0", "1.0.1", "npm")], result.Stated!.Rows);
         }
 
         [Fact]
@@ -517,7 +517,7 @@ public class RenovateTriageCodeActivitiesTests
 
             var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, FakeGitHubApi.MergeSha, null, Body())));
 
-            Assert.Equal([new StatedVersion("dep", "1.0.0", "1.0.1")], result.Stated!.Rows);
+            Assert.Equal([new StatedVersion("dep", "1.0.0", "1.0.1", "npm")], result.Stated!.Rows);
         }
 
         [Fact]

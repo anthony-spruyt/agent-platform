@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "b3fa140ef33e56ad43d832eb0504d28878aed957",
+  "files": [
+    {
+      "path": ".github/workflows/ci-repo.yaml",
+      "status": "modified",
+      "patch": "@@ -48,7 +48,7 @@ jobs:\n       - name: \"Setup Python\"\n         uses: \"actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97\" # v7.0.0\n         with:\n-          python-version: \"3.14\"\n+          python-version: \"3.15\"\n \n       - name: \"Cache PlatformIO\"\n         uses: \"actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9\" # v6.1.0"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "b3fa140ef33e56ad43d832eb0504d28878aed957",
+      "message": "chore(deps): update dependency python to 3.15\n\n| datasource      | package                 | from   | to     |\n| --------------- | ----------------------- | ------ | ------ |\n| github-releases | actions/python-versions | 3.14.8 | 3.15.0 |"
+    }
+  ]
+}

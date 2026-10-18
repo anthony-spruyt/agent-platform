@@ -16,14 +16,14 @@ public class DiffShapeTests
         "@@ -1,1 +1,1 @@\n" + string.Join("\n", lines.Select(l => $"-{l.Old}\n+{l.New}"));
 
     // "from>to" pairs joined by "|"; null means the commit carries no table.
-    private static string Message(string subject, string? rows)
+    private static string Message(string subject, string? rows, string datasource = "docker")
     {
         if (rows is null)
         {
             return subject;
         }
 
-        var body = rows.Split('|').Select(r => r.Split('>')).Select(p => $"| docker | p | {p[0]} | {p[1]} |");
+        var body = rows.Split('|').Select(r => r.Split('>')).Select(p => $"| {datasource} | p | {p[0]} | {p[1]} |");
         return subject + "\n\n| datasource | package | from | to |\n| --- | --- | --- | --- |\n" + string.Join("\n", body);
     }
 
@@ -529,5 +529,166 @@ public class DiffShapeTests
         };
 
         Assert.True(Classify(files, Message(DefaultSubject, "1.0.0>1.1.0")).Passed);
+    }
+
+    private static string Hash(char c) => $"    --hash=sha256:{new string(c, 64)}";
+
+    private static DiffShapeResult Requirements(string[] removed, string[] added, string rows = "8.0>8.1") =>
+        Classify(
+            [new DiffFile("docs/requirements.txt", "modified", "@@ -1,1 +1,1 @@\n" + string.Join("\n", removed.Select(l => "-" + l)) + "\n" + string.Join("\n", added.Select(l => "+" + l)))],
+            Message(DefaultSubject, rows));
+
+    [Fact]
+    public void APipPinWithADifferentNumberOfHashLines_PassesWhenThePinIsStated()
+    {
+        var result = Requirements(
+            ["backrefs==8.0 \\", Hash('1') + " \\", Hash('2')],
+            ["backrefs==8.1 \\", Hash('3') + " \\", Hash('4') + " \\", Hash('5')]);
+
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void APipPinWithHashLines_StillNeedsItsVersionStated()
+    {
+        var result = Requirements(["backrefs==8.0 \\", Hash('1')], ["backrefs==8.2 \\", Hash('2'), Hash('3')]);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Fact]
+    public void ANewPipPinWithNoRemoval_IsUnpaired()
+    {
+        var result = Classify([new DiffFile("requirements.txt", "modified", "@@ -1,1 +1,3 @@\n+evil==1.0 \\\n+" + Hash('1'))], Message(DefaultSubject, "8.0>8.1"));
+
+        Assert.Equal(DiffShapeFailure.UnpairedLines, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("    # via mkdocs-material", "    # via evil")]
+    [InlineData("-r base.txt", "-r evil.txt")]
+    [InlineData("--index-url https://pypi.org/simple", "--index-url https://evil.example/simple")]
+    public void AChangedPipOptionOrViaLine_BesideHashLines_IsNotAVersionChange(string oldLine, string newLine)
+    {
+        var result = Requirements(["backrefs==8.0 \\", Hash('1'), oldLine], ["backrefs==8.1 \\", Hash('2'), Hash('3'), newLine]);
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+    }
+
+    [Fact]
+    public void ARunOfOnlyHashLines_IsNotAVersionChange()
+    {
+        var result = Requirements([Hash('1')], [Hash('2'), Hash('3')]);
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("python-version: \"3.14\"", "python-version: \"3.15\"", "3.14.8>3.15.0")]
+    [InlineData("version = \"~> 0.81\"", "version = \"~> 0.82\"", "0.81.0>0.82.0")]
+    [InlineData("a: v3.14", "a: v3.15", "v3.14.8>v3.15.0")]
+    public void AShortenedVersion_PassesWhenItPrefixesTheRowsFromAndTo(string oldLine, string newLine, string rows)
+    {
+        Assert.True(Line(oldLine, newLine, rows).Passed);
+    }
+
+    [Theory]
+    [InlineData("a: 3.1", "a: 3.15")]
+    [InlineData("a: 3.14", "a: 3.1")]
+    [InlineData("a: 3.14", "a: 3.16")]
+    [InlineData("a: 3.15", "a: 3.14")]
+    [InlineData("a: 3.14-rc1", "a: 3.15-rc1")]
+    public void AShortenedVersion_FailsWhenItIsNotADotBoundaryPrefixOfTheRow(string oldLine, string newLine)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, "3.14.8>3.15.0").Failure);
+    }
+
+    [Theory]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14\"]", DiffShapeFailure.None)]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.15\"]", DiffShapeFailure.VersionNotStated)]
+    [InlineData("requires = [\"uv_build>=0.12,<0.14\"]", "requires = [\"uv_build>=0.13,<0.15\"]", DiffShapeFailure.VersionNotStated)]
+    [InlineData("requires = [\"uv_build>=0.11,<0.12\"]", "requires = [\"uv_build>=0.12,<0.13\"]", DiffShapeFailure.VersionNotStated)]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13\", \"x>=1.5\"]", "requires = [\"uv_build>=0.13,<0.14\", \"x>=1.6\"]", DiffShapeFailure.VersionNotStated)]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14.0\"]", DiffShapeFailure.VersionNotStated)]
+    public void ARangeUpperBound_FollowsOnlyTheStatedLowerBoundBumpedByOne(string oldLine, string newLine, DiffShapeFailure expected)
+    {
+        Assert.Equal(expected, Line(oldLine, newLine, "0.12.24>0.13.0").Failure);
+    }
+
+    private static DiffShapeResult GoMod(string rows, string datasource, params (string Old, string New)[] lines) =>
+        Classify([new DiffFile("go.mod", "modified", Patch(lines))], Message(DefaultSubject, rows, datasource));
+
+    private static readonly (string Old, string New) _directBump = ("\tgithub.com/p/c v1.24.1", "\tgithub.com/p/c v1.25.0");
+
+    [Fact]
+    public void AnIndirectGoRequireThatGoesUp_PassesBesideAStatedGoRow()
+    {
+        var result = GoMod("v1.24.1>v1.25.0", "go", _directBump, ("\tgithub.com/p/m v0.70.1 // indirect", "\tgithub.com/p/m v0.72.0 // indirect"));
+
+        Assert.True(result.Passed);
+    }
+
+    [Theory]
+    [InlineData("\tgithub.com/p/m v0.72.0 // indirect", "\tgithub.com/p/m v0.70.1 // indirect")]
+    [InlineData("\tgithub.com/p/m v0.70.1", "\tgithub.com/p/m v0.72.0")]
+    [InlineData("\tgithub.com/p/m v0.70.1 // direct", "\tgithub.com/p/m v0.72.0 // direct")]
+    [InlineData("\tgithub.com/p/m v0.70.1 // indirect", "\tgithub.com/p/m v0.70.1-rc1 // indirect")]
+    [InlineData("replace github.com/p/m => github.com/q/m v0.70.1 // indirect", "replace github.com/p/m => github.com/q/m v0.72.0 // indirect")]
+    [InlineData("exclude github.com/p/m v0.70.1 // indirect", "exclude github.com/p/m v0.72.0 // indirect")]
+    [InlineData("go 1.27.1 // indirect", "go 1.27.2 // indirect")]
+    [InlineData("toolchain go1.27.1 // indirect", "toolchain go1.27.2 // indirect")]
+    public void AnIndirectGoRequireThatDoesNotGoUp_OrIsNotARequireLine_Fails(string oldLine, string newLine)
+    {
+        var result = GoMod("v1.24.1>v1.25.0", "go", _directBump, (oldLine, newLine));
+
+        Assert.False(result.Passed);
+    }
+
+    [Theory]
+    [InlineData("go")]
+    [InlineData("docker")]
+    public void AnIndirectGoRequire_NeedsAStatedGoRowForAPairInTheSameGoMod(string datasource)
+    {
+        var indirect = ("\tgithub.com/p/m v0.70.1 // indirect", "\tgithub.com/p/m v0.72.0 // indirect");
+        var anchorElsewhere = Classify(
+            [
+                new DiffFile("tools/go.mod", "modified", Patch(_directBump)),
+                new DiffFile("go.mod", "modified", Patch(indirect)),
+            ],
+            Message(DefaultSubject, "v1.24.1>v1.25.0", datasource));
+        var onlyIndirect = GoMod("v1.24.1>v1.25.0", datasource, indirect);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, anchorElsewhere.Failure);
+        Assert.Equal(DiffShapeFailure.VersionNotStated, onlyIndirect.Failure);
+    }
+
+    [Fact]
+    public void AnIndirectGoRequire_FailsWhenTheCommitStatesNoTable()
+    {
+        var result = Classify([new DiffFile("go.mod", "modified", Patch(("\tgithub.com/p/m v0.70.1 // indirect", "\tgithub.com/p/m v0.72.0 // indirect")))], DefaultSubject);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Fact]
+    public void AnIndirectLineOutsideGoMod_IsNotRelaxed()
+    {
+        var result = Classify(
+            [
+                new DiffFile("go.mod", "modified", Patch(_directBump)),
+                new DiffFile("notes.txt", "modified", Patch(("\tgithub.com/p/m v0.70.1 // indirect", "\tgithub.com/p/m v0.72.0 // indirect"))),
+            ],
+            Message(DefaultSubject, "v1.24.1>v1.25.0", "go"));
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Fact]
+    public void ANewGoRequireLine_IsUnpaired()
+    {
+        var patch = "@@ -1,1 +1,2 @@\n-\tgithub.com/p/c v1.24.1\n+\tgithub.com/p/c v1.25.0\n+\tgithub.com/p/m v0.72.0 // indirect";
+        var result = Classify([new DiffFile("go.mod", "modified", patch)], Message(DefaultSubject, "v1.24.1>v1.25.0", "go"));
+
+        Assert.Equal(DiffShapeFailure.UnpairedLines, result.Failure);
     }
 }

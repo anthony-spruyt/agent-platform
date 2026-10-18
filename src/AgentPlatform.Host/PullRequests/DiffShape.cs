@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -7,7 +8,7 @@ public sealed record DiffFile(string Path, string Status, string? Patch);
 
 public sealed record DiffCommit(string Sha, string Message);
 
-public sealed record StatedVersion(string Package, string From, string To);
+public sealed record StatedVersion(string Package, string From, string To, string Datasource = "");
 
 public sealed record StatedVersions(IReadOnlyList<StatedVersion>? Rows, string? SubjectVersion);
 
@@ -65,7 +66,7 @@ public static partial class DiffShape
 
     private sealed record Token(int Start, int End, Kind Kind, string Value, string? Context = null);
 
-    private sealed record VersionPair(Kind Kind, string Old, string New, string Path, bool IsImageTag = false);
+    private sealed record VersionPair(Kind Kind, string Old, string New, string Path, object Line, bool IsImageTag = false, bool IsIndirect = false);
 
     public static DiffShapeResult Classify(
         IReadOnlyList<DiffFile> files,
@@ -123,12 +124,15 @@ public static partial class DiffShape
             }
         }
 
+        var accepted = new List<VersionPair>();
         foreach (var pair in pairs)
         {
-            if (!IsStated(pair, stated))
+            if (!IsStated(pair, stated) && !IsRangeUpperBound(pair, accepted) && !IsIndirectUpgrade(pair, pairs, stated))
             {
                 return new DiffShapeResult(DiffShapeFailure.VersionNotStated, pair.Path);
             }
+
+            accepted.Add(pair);
         }
 
         return DiffShapeResult.Pass;
@@ -136,11 +140,19 @@ public static partial class DiffShape
 
     private static DiffShapeResult? CheckPatch(DiffFile file, List<VersionPair> pairs)
     {
-        foreach (var (removed, added) in ChangeRuns(file.Patch!))
+        foreach (var (allRemoved, allAdded) in ChangeRuns(file.Patch!))
         {
+            var removed = allRemoved.Where(l => !PipHashLine().IsMatch(l)).ToList();
+            var added = allAdded.Where(l => !PipHashLine().IsMatch(l)).ToList();
             if (removed.Count != added.Count)
             {
                 return new DiffShapeResult(DiffShapeFailure.UnpairedLines, file.Path);
+            }
+
+            var droppedHashes = removed.Count + added.Count < allRemoved.Count + allAdded.Count;
+            if (droppedHashes && !removed.Exists(l => l.Contains("==", StringComparison.Ordinal)))
+            {
+                return new DiffShapeResult(DiffShapeFailure.NotAVersionChange, file.Path);
             }
 
             for (var i = 0; i < removed.Count; i++)
@@ -160,6 +172,8 @@ public static partial class DiffShape
     {
         var (oldMask, oldTokens) = Tokenize(oldLine);
         var (newMask, newTokens) = Tokenize(newLine);
+        var line = new object();
+        var indirect = FileName(path) == "go.mod" && GoIndirectRequire().IsMatch(newLine);
         if (!string.Equals(oldMask, newMask, StringComparison.Ordinal)
             || oldTokens.Count != newTokens.Count
             || oldTokens.Zip(newTokens).Any(t => t.First.Kind != t.Second.Kind))
@@ -194,7 +208,7 @@ public static partial class DiffShape
                 return new DiffShapeResult(DiffShapeFailure.CommentWithoutShaChange, path);
             }
 
-            pairs.Add(new VersionPair(before.Kind, before.Value, after.Value, path, before.Context == ImageTagContext));
+            pairs.Add(new VersionPair(before.Kind, before.Value, after.Value, path, line, before.Context == ImageTagContext, indirect));
         }
 
         return null;
@@ -353,7 +367,7 @@ public static partial class DiffShape
         if (stated.Rows is { } rows)
         {
             return pair.Kind == Kind.Multi
-                ? rows.Any(r => (StripV(r.From) == StripV(pair.Old) && StripV(r.To) == StripV(pair.New)) || (pair.IsImageTag && StatesBeforeSharedSuffix(pair, r)))
+                ? rows.Any(r => (IsDotPrefix(StripV(pair.Old), StripV(r.From)) && IsDotPrefix(StripV(pair.New), StripV(r.To))) || (pair.IsImageTag && StatesBeforeSharedSuffix(pair, r)))
                 : rows.Any(r => MajorOf(r.From) == StripV(pair.Old) && MajorOf(r.To) == StripV(pair.New));
         }
 
@@ -364,6 +378,36 @@ public static partial class DiffShape
 
         return (IsMultiPart(version) || pair.Kind == Kind.Single) && StripV(pair.New) == StripV(version);
     }
+
+    private static bool IsDotPrefix(string prefix, string version) =>
+        version.StartsWith(prefix, StringComparison.Ordinal) && (version.Length == prefix.Length || version[prefix.Length] == '.');
+
+    private static bool IsRangeUpperBound(VersionPair pair, List<VersionPair> accepted)
+    {
+        var (old, next) = (StripV(pair.Old).Split('.'), StripV(pair.New).Split('.'));
+        return pair.Kind == Kind.Multi
+            && old.Length == next.Length
+            && old.AsSpan(..^1).SequenceEqual(next.AsSpan(..^1))
+            && int.TryParse(old[^1], NumberStyles.None, CultureInfo.InvariantCulture, out var last)
+            && next[^1] == (last + 1).ToString(CultureInfo.InvariantCulture)
+            && accepted.Exists(a => a.Line == pair.Line && a.New == pair.Old);
+    }
+
+    private static bool IsIndirectUpgrade(VersionPair pair, List<VersionPair> pairs, StatedVersions stated)
+    {
+        if (!pair.IsIndirect || pair.Kind != Kind.Multi || !IsGoUpgrade(pair.Old, pair.New) || stated.Rows is not { } rows)
+        {
+            return false;
+        }
+
+        StatedVersions goRows = new([.. rows.Where(r => r.Datasource == "go")], null);
+        return pairs.Exists(p => p.Path == pair.Path && IsStated(p, goRows));
+    }
+
+    private static bool IsGoUpgrade(string old, string next) =>
+        Version.TryParse(GoCore(old), out var from) && Version.TryParse(GoCore(next), out var to) && to > from;
+
+    private static string GoCore(string version) => StripV(version).Split('-', '+')[0];
 
     private static bool StatesBeforeSharedSuffix(VersionPair pair, StatedVersion row)
     {
@@ -405,7 +449,8 @@ public static partial class DiffShape
         var from = header.IndexOf("from");
         var to = header.IndexOf("to");
         var package = header.IndexOf("package");
-        if (header.IndexOf("datasource") < 0 || package < 0 || from < 0 || to < 0)
+        var datasource = header.IndexOf("datasource");
+        if (datasource < 0 || package < 0 || from < 0 || to < 0)
         {
             return false;
         }
@@ -424,7 +469,7 @@ public static partial class DiffShape
                 return false;
             }
 
-            read.Add(new StatedVersion(cells[package], cells[from], cells[to]));
+            read.Add(new StatedVersion(cells[package], cells[from], cells[to], cells[datasource]));
         }
 
         rows = read;
@@ -435,6 +480,12 @@ public static partial class DiffShape
 
     [GeneratedRegex(@"\r\n|\r|\n", RegexOptions.CultureInvariant)]
     private static partial Regex LineBreak();
+
+    [GeneratedRegex(@"^\s*--hash=sha256:[0-9a-f]{64}(?: \\)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex PipHashLine();
+
+    [GeneratedRegex(@"^\s*(?:require\s+)?\S+\s+v\S+\s+// indirect$", RegexOptions.CultureInvariant)]
+    private static partial Regex GoIndirectRequire();
 
     [GeneratedRegex(@"uses:\s*""?[\w.-]+/[^@\s""]+@(?<sha>[0-9a-f]{40})""?\s*#\s*(?<ver>v?[0-9]+(?:\.[0-9]+)*(?:[-+][\w.]+)*)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex UsesPin();

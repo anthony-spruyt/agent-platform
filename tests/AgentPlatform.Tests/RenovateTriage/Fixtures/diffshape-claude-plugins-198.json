@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "20479bb6e69714e8db28183e1b88c2485cee145c",
+  "files": [
+    {
+      "path": ".github/workflows/ci-repo.yaml",
+      "status": "modified",
+      "patch": "@@ -28,7 +28,7 @@ jobs:\n       - uses: \"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\" # v7\n       - uses: \"actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97\" # v7\n         with:\n-          python-version: \"3.14\"\n+          python-version: \"3.15\"\n       - name: \"Install Python dependencies\"\n         run: \"pip install --require-hashes --only-binary :all: -r .github/ci-requirements.txt\"\n       - name: \"Run unit tests\""
+    }
+  ],
+  "commits": [
+    {
+      "sha": "20479bb6e69714e8db28183e1b88c2485cee145c",
+      "message": "chore(deps): update dependency python to 3.15\n\n| datasource      | package                 | from   | to     |\n| --------------- | ----------------------- | ------ | ------ |\n| github-releases | actions/python-versions | 3.14.8 | 3.15.0 |"
+    }
+  ]
+}
