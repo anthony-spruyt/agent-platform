@@ -583,6 +583,24 @@ public class DiffShapeTests
         Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
     }
 
+    [Fact]
+    public void ARunWithDroppedHashLines_NeedsAVersionPairNotJustADoubleEquals()
+    {
+        var result = Requirements(["foo==aaaaaaa \\", Hash('1')], ["foo==bbbbbbb \\", Hash('2'), Hash('3')]);
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+    }
+
+    [Fact]
+    public void APipPinWithCrlfLineEndings_PassesWhenThePinIsStated()
+    {
+        var result = Requirements(
+            ["backrefs==8.0 \\\r", Hash('1') + " \\\r", Hash('2') + "\r"],
+            ["backrefs==8.1 \\\r", Hash('3') + " \\\r", Hash('4') + " \\\r", Hash('5') + "\r"]);
+
+        Assert.True(result.Passed);
+    }
+
     [Theory]
     [InlineData("python-version: \"3.14\"", "python-version: \"3.15\"", "3.14.8>3.15.0")]
     [InlineData("version = \"~> 0.81\"", "version = \"~> 0.82\"", "0.81.0>0.82.0")]
@@ -610,9 +628,20 @@ public class DiffShapeTests
     [InlineData("requires = [\"uv_build>=0.11,<0.12\"]", "requires = [\"uv_build>=0.12,<0.13\"]", DiffShapeFailure.VersionNotStated)]
     [InlineData("requires = [\"uv_build>=0.12,<0.13\", \"x>=1.5\"]", "requires = [\"uv_build>=0.13,<0.14\", \"x>=1.6\"]", DiffShapeFailure.VersionNotStated)]
     [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14.0\"]", DiffShapeFailure.VersionNotStated)]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13,!=0.14\"]", "requires = [\"uv_build>=0.13,<0.14,!=0.15\"]", DiffShapeFailure.VersionNotStated)]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14,<0.14\"]", DiffShapeFailure.VersionNotStated)]
+    [InlineData("requires = [\"uv_build>=0.12,<=0.13\"]", "requires = [\"uv_build>=0.13,<=0.14\"]", DiffShapeFailure.None)]
     public void ARangeUpperBound_FollowsOnlyTheStatedLowerBoundBumpedByOne(string oldLine, string newLine, DiffShapeFailure expected)
     {
         Assert.Equal(expected, Line(oldLine, newLine, "0.12.24>0.13.0").Failure);
+    }
+
+    [Fact]
+    public void ARangeSuccessor_NeedsTheLessThanBeforeIt()
+    {
+        var result = Line("pins: foo==1.0 bar==1.1", "pins: foo==1.1 bar==1.2", "1.0>1.1");
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
     }
 
     private static DiffShapeResult GoMod(string rows, string datasource, params (string Old, string New)[] lines) =>
@@ -636,6 +665,8 @@ public class DiffShapeTests
     [InlineData("replace github.com/p/m => github.com/q/m v0.70.1 // indirect", "replace github.com/p/m => github.com/q/m v0.72.0 // indirect")]
     [InlineData("exclude github.com/p/m v0.70.1 // indirect", "exclude github.com/p/m v0.72.0 // indirect")]
     [InlineData("go 1.27.1 // indirect", "go 1.27.2 // indirect")]
+    [InlineData("\tgithub.com/evil/lib-1.2 v1.0.0 // indirect", "\tgithub.com/evil/lib-1.3 v1.0.1 // indirect")]
+    [InlineData("\tretract v0.70.1 // indirect", "\tretract v0.72.0 // indirect")]
     [InlineData("toolchain go1.27.1 // indirect", "toolchain go1.27.2 // indirect")]
     public void AnIndirectGoRequireThatDoesNotGoUp_OrIsNotARequireLine_Fails(string oldLine, string newLine)
     {
@@ -681,6 +712,14 @@ public class DiffShapeTests
             Message(DefaultSubject, "v1.24.1>v1.25.0", "go"));
 
         Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Fact]
+    public void AnIndirectGoRequireWithCrlfLineEndings_PassesBesideAStatedGoRow()
+    {
+        var result = GoMod("v1.24.1>v1.25.0", "go", (_directBump.Old + "\r", _directBump.New + "\r"), ("\tgithub.com/p/m v0.70.1 // indirect\r", "\tgithub.com/p/m v0.72.0 // indirect\r"));
+
+        Assert.True(result.Passed);
     }
 
     [Fact]
