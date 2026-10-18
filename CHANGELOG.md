@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.15.0...v1.15.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* **deps:** pin MessagePack to a patched 2.5 release ([#105](https://github.com/anthony-spruyt/agent-platform/issues/105)) ([e9e4ff2](https://github.com/anthony-spruyt/agent-platform/commit/e9e4ff263e2ca33e9ea557c223eee0a56e4e4fa1))
+* **triage:** accept pip hash lines, shortened versions and go indirect bumps as version-only ([#104](https://github.com/anthony-spruyt/agent-platform/issues/104)) ([707ec1e](https://github.com/anthony-spruyt/agent-platform/commit/707ec1e1db177e237aef11d6f02816edbaa86343))
+
 ## [1.15.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.14.2...v1.15.0) (2026-10-15)
 
 
