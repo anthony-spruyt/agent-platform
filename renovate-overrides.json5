@@ -20,6 +20,11 @@
       allowedVersions: "/^1\\.9\\./"
     },
     {
+      description: ["MessagePack stays on 2.x: StreamJsonRpc 2.25 targets MessagePack 2."],
+      matchPackageNames: ["MessagePack"],
+      allowedVersions: "/^2\\./"
+    },
+    {
       description: ["The SDK floor in global.json moves together with the SDK image in the Dockerfile."],
       matchManagers: ["nuget"],
       matchFileNames: ["global.json"],
