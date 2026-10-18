@@ -463,6 +463,55 @@ public class TriageRulesTests
         }
 
         [Fact]
+        public void ANewerSuccessfulRun_SupersedesAnOlderCancelledRunOfTheSameCheck()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(116880220225, "Guard Linter Removals", "completed", "cancelled", "github-actions", 15368),
+                new(116880225845, "Guard Linter Removals", "completed", "success", "github-actions", 15368),
+            ];
+
+            Assert.Equal(CiState.Passed, Assess(runs));
+            Assert.Empty(TriageRules.FailedChecks(runs));
+        }
+
+        [Fact]
+        public void ANewerFailedRun_SupersedesAnOlderSuccessfulRunOfTheSameCheck()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(2, "build", "completed", "failure", "github-actions", 15368),
+                new(1, "build", "completed", "success", "github-actions", 15368),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([2L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void ALoneCancelledRun_StillFails()
+        {
+            GitHubCheckRun[] runs = [new(1, "build", "completed", "cancelled", "github-actions", 15368)];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Single(TriageRules.FailedChecks(runs));
+        }
+
+        [Fact]
+        public void TheSameCheckNameFromTwoApps_BothCount()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "failure", "github-actions", 15368),
+                new(2, "build", "completed", "success", "other-app", 99),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([1L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+            Assert.Equal(CiState.Pending, Assess([runs[0], new(3, "build", "in_progress", null, "other-app", 99)]));
+        }
+
+        [Fact]
         public void SkynetChecks_DoNotFailButStillHoldTheJudgementWhilePending()
         {
             Assert.Equal(CiState.Passed, Assess([Run("test"), Run("skynet/triage", conclusion: "failure")]));

@@ -398,7 +398,10 @@ public static partial class TriageRules
     }
 
     private static List<GitHubCheckRun> ConsideredChecks(IReadOnlyList<GitHubCheckRun> checks) =>
-        [.. checks.Where(c => !StartsWithAny(c.Name, _ignoredCheckPrefixes) && !string.Equals(c.AppSlug, MergifyApp, StringComparison.Ordinal))];
+        [.. checks
+            .Where(c => !StartsWithAny(c.Name, _ignoredCheckPrefixes) && !string.Equals(c.AppSlug, MergifyApp, StringComparison.Ordinal))
+            .GroupBy(c => (c.AppId, c.AppSlug, c.Name))
+            .Select(g => g.MaxBy(c => c.Id)!)];
 
     private static bool IsFailing(GitHubCheckRun check) => !StartsWithAny(check.Name, _notFailingCheckPrefixes) && !PassingConclusion(check.Conclusion);
 
