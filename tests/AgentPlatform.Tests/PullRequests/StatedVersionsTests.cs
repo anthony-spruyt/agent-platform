@@ -12,7 +12,7 @@ public class StatedVersionsTests
         var stated = DiffShape.ReadStatedVersions(message);
 
         Assert.NotNull(stated);
-        Assert.Equal([new StatedVersion("actions/checkout", "4.1.0", "4.2.0"), new StatedVersion("p", "1", "2")], stated.Rows);
+        Assert.Equal([new StatedVersion("actions/checkout", "4.1.0", "4.2.0", "github-tags"), new StatedVersion("p", "1", "2", "docker")], stated.Rows);
     }
 
     [Theory]

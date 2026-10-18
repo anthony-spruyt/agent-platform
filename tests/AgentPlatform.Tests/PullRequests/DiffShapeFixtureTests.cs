@@ -35,6 +35,17 @@ public class DiffShapeFixtureTests
     [InlineData("spruyt-labs-3426")]
     [InlineData("spruyt-labs-3465")]
     [InlineData("xfg-1133")]
+    [InlineData("Chromance-6")]
+    [InlineData("container-images-2285")]
+    [InlineData("spruyt-labs-3502")]
+    [InlineData("xfg-1247")]
+    [InlineData("SunGather-423")]
+    [InlineData("spruyt-labs-3633")]
+    [InlineData("Chromance-22")]
+    [InlineData("claude-plugins-198")]
+    [InlineData("litellm-middleware-89")]
+    [InlineData("litellm-middleware-69")]
+    [InlineData("kata-tap-qdisc-fix-26")]
     public void MergedRenovatePrs_Pass(string name)
     {
         Assert.True(Classify(name).Passed);
@@ -42,10 +53,7 @@ public class DiffShapeFixtureTests
 
     [Theory]
     [InlineData("container-images-2291", DiffShapeFailure.VersionNotStated)]
-    [InlineData("Chromance-6", DiffShapeFailure.VersionNotStated)]
-    [InlineData("spruyt-labs-3502", DiffShapeFailure.VersionNotStated)]
-    [InlineData("container-images-2241", DiffShapeFailure.UnpairedLines)]
-    [InlineData("container-images-2285", DiffShapeFailure.UnpairedLines)]
+    [InlineData("container-images-2241", DiffShapeFailure.NotAVersionChange)]
     public void MergedRenovatePrsWithUnstatedOrUnpairedChanges_Fail(string name, DiffShapeFailure expected)
     {
         Assert.Equal(expected, Classify(name).Failure);
