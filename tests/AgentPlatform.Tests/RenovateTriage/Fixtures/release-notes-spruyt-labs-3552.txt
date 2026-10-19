@@ -1,0 +1,74 @@
+This PR contains the following updates:
+
+| Package | Update | Change | Pending |
+|---|---|---|---|
+| [n8nio/n8n](https://n8n.io) ([source](https://redirect.github.com/n8n-io/n8n)) | patch | `2.42.3` → `2.42.6` | `2.43.7` (+4) |
+| [n8nio/runners](https://n8n.io) ([source](https://redirect.github.com/n8n-io/n8n)) | patch | `2.42.3` → `2.42.6` | `2.43.7` (+4) |
+
+---
+
+### Release Notes
+
+<details>
+<summary>n8n-io/n8n (n8nio/n8n)</summary>
+
+### [`v2.42.6`](https://redirect.github.com/n8n-io/n8n/releases/tag/n8n%402.42.6)
+
+##### Features
+
+- **core:** Block create/update of workflows with deprecated nodes ([#&#8203;40707](https://redirect.github.com/n8n-io/n8n/issues/40707)) ([ff1a24c](https://redirect.github.com/n8n-io/n8n/commit/ff1a24c72f360ce9d047f17eef08e0732c829f4b))
+- **Google Gemini Node:** Show Nano Banana 2.1 and 2 Lite in the image model list ([#&#8203;40656](https://redirect.github.com/n8n-io/n8n/issues/40656)) ([8dfc695](https://redirect.github.com/n8n-io/n8n/commit/8dfc695c8c6a9f799a1780ac76444770c174f8a1))
+
+<!-- This is an auto-generated description by cubic. -->
+
+<a href="https://cubic.dev/pr/n8n-io/n8n/pull/40735?utm_source=github" target="_blank" rel="noopener noreferrer" data-no-image-dialog="true"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.cubic.dev/buttons/review-in-cubic-dark.svg"><source media="(prefers-color-scheme: light)" srcset="https://www.cubic.dev/buttons/review-in-cubic-light.svg"><img alt="View guided diff" src="https://www.cubic.dev/buttons/review-in-cubic-light.svg"></picture></a> <a href="https://www.cubic.dev/action/auto-fix/pr/n8n-io/n8n/40735?returnTo=https%3A%2F%2Fgithub.com%2Fn8n-io%2Fn8n%2Fpull%2F40735&source=description" target="_blank" rel="noopener noreferrer" data-no-image-dialog="true"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.cubic.dev/buttons/turn-on-auto-fix-dark.svg"><source media="(prefers-color-scheme: light)" srcset="https://www.cubic.dev/buttons/turn-on-auto-fix-light.svg"><img alt="Turn on auto-fix" src="https://www.cubic.dev/buttons/turn-on-auto-fix-light.svg"></picture></a>
+
+<!-- End of auto-generated description by cubic. -->
+
+### [`v2.42.5`](https://redirect.github.com/n8n-io/n8n/releases/tag/n8n%402.42.5)
+
+##### Bug Fixes
+
+- **editor:** Show the Agent artifact while the builder creates it ([#&#8203;40551](https://redirect.github.com/n8n-io/n8n/issues/40551)) ([e825e75](https://redirect.github.com/n8n-io/n8n/commit/e825e75840cb65f6f9814b8e3848230bdfaa1130))
+
+<!-- This is an auto-generated description by cubic. -->
+
+<a href="https://cubic.dev/pr/n8n-io/n8n/pull/40629?utm_source=github" target="_blank" rel="noopener noreferrer" data-no-image-dialog="true"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.cubic.dev/buttons/review-in-cubic-dark.svg"><source media="(prefers-color-scheme: light)" srcset="https://www.cubic.dev/buttons/review-in-cubic-light.svg"><img alt="View guided diff" src="https://www.cubic.dev/buttons/review-in-cubic-light.svg"></picture></a> <a href="https://www.cubic.dev/action/auto-fix/pr/n8n-io/n8n/40629?returnTo=https%3A%2F%2Fgithub.com%2Fn8n-io%2Fn8n%2Fpull%2F40629&source=description" target="_blank" rel="noopener noreferrer" data-no-image-dialog="true"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.cubic.dev/buttons/turn-on-auto-fix-dark.svg"><source media="(prefers-color-scheme: light)" srcset="https://www.cubic.dev/buttons/turn-on-auto-fix-light.svg"><img alt="Turn on auto-fix" src="https://www.cubic.dev/buttons/turn-on-auto-fix-light.svg"></picture></a>
+
+<!-- End of auto-generated description by cubic. -->
+
+### [`v2.42.4`](https://redirect.github.com/n8n-io/n8n/releases/tag/n8n%402.42.4)
+
+<!-- This is an auto-generated description by cubic. -->
+
+<a href="https://cubic.dev/pr/n8n-io/n8n/pull/40477?utm_source=github" target="_blank" rel="noopener noreferrer" data-no-image-dialog="true"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.cubic.dev/buttons/review-in-cubic-dark.svg"><source media="(prefers-color-scheme: light)" srcset="https://www.cubic.dev/buttons/review-in-cubic-light.svg"><img alt="Review in cubic" src="https://www.cubic.dev/buttons/review-in-cubic-dark.svg"></picture></a> <a href="https://www.cubic.dev/action/auto-fix/pr/n8n-io/n8n/40477?returnTo=https%3A%2F%2Fgithub.com%2Fn8n-io%2Fn8n%2Fpull%2F40477&source=description" target="_blank" rel="noopener noreferrer" data-no-image-dialog="true"><picture><source media="(prefers-color-scheme: dark)" srcset="https://www.cubic.dev/buttons/turn-on-auto-fix-dark.svg"><source media="(prefers-color-scheme: light)" srcset="https://www.cubic.dev/buttons/turn-on-auto-fix-light.svg"><img alt="Turn on auto-fix" src="https://www.cubic.dev/buttons/turn-on-auto-fix-dark.svg"></picture></a>
+
+<!-- End of auto-generated description by cubic. -->
+
+</details>
+
+---
+
+### Configuration
+
+📅 **Schedule**: (UTC)
+
+- Branch creation
+  - At any time (no schedule defined)
+- Automerge
+  - At any time (no schedule defined)
+
+🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.
+
+♻ **Rebasing**: Whenever PR becomes conflicted, or you tick the rebase/retry checkbox.
+
+🔕 **Ignore**: Close this PR and you won't be reminded about these updates again.
+
+---
+
+ - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box
+
+---
+
+This PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/anthony-spruyt/spruyt-labs).
+<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0NC4xNTUuMiIsInVwZGF0ZWRJblZlciI6IjQ0LjE2NC4xIiwidGFyZ2V0QnJhbmNoIjoibWFpbiIsImxhYmVscyI6WyJyZW5vdmF0ZS9pbWFnZSIsInJlbm92YXRlL3NjcmlwdCJdfQ==-->

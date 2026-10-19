@@ -275,7 +275,7 @@ public static partial class TriageRules
         return match.Success && !lower.Contains("n8n-mcp", StringComparison.Ordinal) ? match.Value : null;
     }
 
-    public static TriageDecision DecideFromJev(string branch, JevAnswers jev, BumpFacts facts)
+    public static TriageDecision DecideFromJev(string branch, JevAnswers jev, BumpFacts facts, bool notesFound = false)
     {
         ArgumentNullException.ThrowIfNull(branch);
         ArgumentNullException.ThrowIfNull(jev);
@@ -308,7 +308,7 @@ public static partial class TriageRules
                 return new TriageDecision(TriageVerdict.NeedsReview, OtherBump, OtherBumpComment);
             case "patch":
             case "minor":
-                return DecidePatchOrMinor(branch, jev, facts);
+                return DecidePatchOrMinor(branch, jev, facts, notesFound);
             default:
                 return new TriageDecision(TriageVerdict.NeedsReview, UnknownBump, OtherBumpComment);
         }
@@ -383,7 +383,7 @@ public static partial class TriageRules
         return reason.Length == 0 ? $"{commit}." : $"{commit}, {char.ToLowerInvariant(reason[0])}{reason[1..]}.";
     }
 
-    private static TriageDecision DecidePatchOrMinor(string branch, JevAnswers jev, BumpFacts facts)
+    private static TriageDecision DecidePatchOrMinor(string branch, JevAnswers jev, BumpFacts facts, bool notesFound)
     {
         var disagreeing = facts.Versions.FirstOrDefault(v => !string.Equals(v.Kind, jev.BumpType, StringComparison.Ordinal));
         if (disagreeing is not null)
@@ -404,7 +404,7 @@ public static partial class TriageRules
             return new TriageDecision(TriageVerdict.Approve, Allowlisted, AllowlistedApprovalComment);
         }
 
-        return jev.Changelog >= ChangelogThreshold
+        return notesFound || jev.Changelog >= ChangelogThreshold
             ? new TriageDecision(TriageVerdict.Approve, ChangelogPresent, $"{AutoApprovedPrefix} {jev.BumpType} bump with changelog.")
             : new TriageDecision(TriageVerdict.NeedsReview, NoChangelog, NoChangelogComment);
     }

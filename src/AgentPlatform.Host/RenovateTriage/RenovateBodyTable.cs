@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public sealed record RenovateUpdate(string Dependency, string? SourceRepo, string From, string To);
+public sealed record RenovateUpdate(string Dependency, string? SourceRepo, string From, string To, string? SourcePath = null, string? Resolved = null);
 
 public static partial class RenovateBodyTable
 {
@@ -29,7 +29,7 @@ public static partial class RenovateBodyTable
         foreach (var line in lines.Skip(header + 1).TakeWhile(l => l.StartsWith('|')))
         {
             var row = Cells(line);
-            if (row.Count <= Math.Max(packageColumn, changeColumn) || ReadRow(row[packageColumn], row[changeColumn]) is not { } update)
+            if (row.Count <= Math.Max(packageColumn, changeColumn) || ReadRow(row, packageColumn, changeColumn) is not { } update)
             {
                 continue;
             }
@@ -44,9 +44,10 @@ public static partial class RenovateBodyTable
         return updates;
     }
 
-    private static RenovateUpdate? ReadRow(string packageCell, string changeCell)
+    private static RenovateUpdate? ReadRow(List<string> row, int packageColumn, int changeColumn)
     {
-        var change = Change().Match(changeCell);
+        var packageCell = row[packageColumn];
+        var change = Change().Match(row[changeColumn]);
         if (!change.Success)
         {
             return null;
@@ -59,20 +60,36 @@ public static partial class RenovateBodyTable
             return null;
         }
 
+        var source = Source(packageCell);
         return new RenovateUpdate(
             name,
-            SourceRepo(packageCell),
+            source is null ? null : $"{source.Groups["owner"].Value}/{source.Groups["repo"].Value}",
             change.Groups["from"].Value,
-            change.Groups["to"].Value);
+            change.Groups["to"].Value,
+            source?.Groups["path"].Value is { Length: > 0 } path ? path : null,
+            Resolved(row));
     }
 
-    private static string? SourceRepo(string packageCell)
+    internal static string Bare(string version) => version.TrimStart('=', 'v', 'V');
+
+    private static string? Resolved(List<string> row)
+    {
+        var versions = Link().Matches(string.Join(' ', row))
+            .Select(l => ResolvedVersion().Match(l.Groups["url"].Value))
+            .Where(m => m.Success)
+            .Select(m => Uri.UnescapeDataString(m.Groups["version"].Value))
+            .DistinctBy(Bare, StringComparer.Ordinal)
+            .ToList();
+        return versions.Count == 1 ? versions[0] : null;
+    }
+
+    private static Match? Source(string packageCell)
     {
         var links = Link().Matches(packageCell).ToList();
         var link = links.Find(l => string.Equals(l.Groups["text"].Value, "source", StringComparison.OrdinalIgnoreCase))
             ?? links.Find(l => GitHubSource().IsMatch(l.Groups["url"].Value));
         var source = link is null ? Match.Empty : GitHubSource().Match(link.Groups["url"].Value);
-        return source.Success ? $"{source.Groups["owner"].Value}/{source.Groups["repo"].Value}" : null;
+        return source.Success ? source : null;
     }
 
     private static List<string> Cells(string line)
@@ -96,9 +113,12 @@ public static partial class RenovateBodyTable
     [GeneratedRegex(@"\[(?<text>[^\]]+)\]\((?<url>[^)\s]+)\)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Link();
 
-    [GeneratedRegex(@"^https://(?:redirect\.)?github\.com/(?<owner>[\w.-]+)/(?<repo>[\w.-]+)/?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^https://(?:redirect\.)?github\.com/(?<owner>[\w.-]+)/(?<repo>[\w.-]+)(?:/(?<path>.*?)/?)?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex GitHubSource();
 
-    [GeneratedRegex(@"`(?<from>[^`\s]+)`\s*(?:→|->)\s*`(?<to>[^`\s]+)`", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^https://(?:renovatebot\.com/diffs/(?:[^/?#]+/){3,}|developer\.mend\.io/api/mc/badges/(?:age|adoption)/(?:[^/?#]+/){2,})(?<version>[^/?#]+)(?:\?[^#]*)?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex ResolvedVersion();
+
+    [GeneratedRegex(@"`(?<from>[^`]+)`\s*(?:→|->)\s*`(?<to>[^`]+)`", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Change();
 }

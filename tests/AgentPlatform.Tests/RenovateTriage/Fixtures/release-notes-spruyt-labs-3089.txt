@@ -1,0 +1,107 @@
+This PR contains the following updates:
+
+| Package | Update | Change |
+|---|---|---|
+| [docker.io/velero/velero](https://redirect.github.com/paketo-buildpacks/jammy-tiny-stack) | patch | `v1.18.2` → `v1.18.3` |
+| [velero/velero-plugin-for-aws](https://redirect.github.com/vmware-tanzu/velero-plugin-for-aws) | patch | `v1.14.2` → `v1.14.3` |
+| [vmware-tanzu/velero](https://redirect.github.com/vmware-tanzu/velero) | patch | `v1.18.2` → `v1.18.3` |
+
+---
+
+### Release Notes
+
+<details>
+<summary>vmware-tanzu/velero-plugin-for-aws (velero/velero-plugin-for-aws)</summary>
+
+### [`v1.14.3`](https://redirect.github.com/velero-io/velero-plugin-for-aws/releases/tag/v1.14.3)
+
+[Compare Source](https://redirect.github.com/vmware-tanzu/velero-plugin-for-aws/compare/v1.14.2...v1.14.3)
+
+##### All changes
+
+- Bump golang version and google.golang.org/grpc version. ([#&#8203;333](https://redirect.github.com/vmware-tanzu/velero-plugin-for-aws/issues/333), [@&#8203;blackpiglet](https://redirect.github.com/blackpiglet))
+- Bump dependencies and Go version to fix CVEs ([#&#8203;329](https://redirect.github.com/vmware-tanzu/velero-plugin-for-aws/issues/329), [@&#8203;blackpiglet](https://redirect.github.com/blackpiglet))
+- Fix prevent amz-checksum encapsulation when checksumAlgorithm="" ([#&#8203;313](https://redirect.github.com/vmware-tanzu/velero-plugin-for-aws/issues/313), [@&#8203;kaovilai](https://redirect.github.com/kaovilai))
+- Fix SSE-C signed URLs ([#&#8203;310](https://redirect.github.com/vmware-tanzu/velero-plugin-for-aws/issues/310), [@&#8203;Minding000](https://redirect.github.com/Minding000))
+- Only set PutObject Tagging when tags are configured ([#&#8203;309](https://redirect.github.com/vmware-tanzu/velero-plugin-for-aws/issues/309), [@&#8203;cleverer](https://redirect.github.com/cleverer))
+
+</details>
+
+<details>
+<summary>vmware-tanzu/velero (vmware-tanzu/velero)</summary>
+
+### [`v1.18.3`](https://redirect.github.com/velero-io/velero/releases/tag/v1.18.3)
+
+[Compare Source](https://redirect.github.com/vmware-tanzu/velero/compare/v1.18.2...v1.18.3)
+
+#### v1.18.3
+
+##### Download
+
+<https://github.com/vmware-tanzu/velero/releases/tag/v1.18.3>
+
+##### Container Image
+
+`velero/velero:v1.18.3`
+
+##### Documentation
+
+<https://velero.io/docs/v1.18/>
+
+##### Upgrading
+
+<https://velero.io/docs/v1.18/upgrade-to-1.18/>
+
+##### All Changes
+
+- Avoid duplicated InitContainer names generated in velero install CLI. ([#&#8203;10396](https://redirect.github.com/vmware-tanzu/velero/issues/10396), [@&#8203;blackpiglet](https://redirect.github.com/blackpiglet))
+- Bound WaitRestoreExecHook polling with resourceTimeout to avoid an infinite wait when restore exec hooks never complete. ([#&#8203;10394](https://redirect.github.com/vmware-tanzu/velero/issues/10394), [@&#8203;nitishmalang](https://redirect.github.com/nitishmalang))
+- fix log format string mismatches that produce wrong or mangled output ([#&#8203;10392](https://redirect.github.com/vmware-tanzu/velero/issues/10392), [@&#8203;samay43](https://redirect.github.com/samay43))
+- Skip DeleteSnapshot when ProviderSnapshotID is empty ([#&#8203;10381](https://redirect.github.com/vmware-tanzu/velero/issues/10381), [@&#8203;kaovilai](https://redirect.github.com/kaovilai))
+- Fail backup validation when built-in data mover is requested but no node-agent pods are running ([#&#8203;10360](https://redirect.github.com/vmware-tanzu/velero/issues/10360), [@&#8203;Joeavaikath](https://redirect.github.com/Joeavaikath))
+- Fix issue [#&#8203;10341](https://redirect.github.com/vmware-tanzu/velero/issues/10341), avoid mutating the cached node-agent LoadAffinity so the OS node selector term is not appended repeatedly to data mover pods ([#&#8203;10348](https://redirect.github.com/vmware-tanzu/velero/issues/10348), [@&#8203;shubham-pampattiwar](https://redirect.github.com/shubham-pampattiwar))
+- Fix PodVolumeBackup metadata loss on fs-backup timeout, which caused all fs-backup volumes to become unrestorable ([#&#8203;9999](https://redirect.github.com/vmware-tanzu/velero/issues/9999), [@&#8203;shubham-pampattiwar](https://redirect.github.com/shubham-pampattiwar))
+- Fix repo connection contest of the two repositories with the same storage type ([#&#8203;10377](https://redirect.github.com/vmware-tanzu/velero/issues/10377), [@&#8203;Lyndon-Li](https://redirect.github.com/Lyndon-Li))
+- Only sync finished backups from object storage ([#&#8203;10347](https://redirect.github.com/vmware-tanzu/velero/issues/10347), [@&#8203;chlins](https://redirect.github.com/chlins))
+- Support copying namespace-scoped secrets and configmaps for backup and restore PVC provisioning to enable datamover backup/restore of encrypted CSI volumes ([#&#8203;10335](https://redirect.github.com/vmware-tanzu/velero/issues/10335), [@&#8203;shubham-pampattiwar](https://redirect.github.com/shubham-pampattiwar))
+- Remove PVC and PV inclusion check during creating PVR. ([#&#8203;10319](https://redirect.github.com/vmware-tanzu/velero/issues/10319), [@&#8203;blackpiglet](https://redirect.github.com/blackpiglet))
+- Fix a potential deadlock when resultsLock is held by the informer but blocked on resChan because the early quit of RestorePodVolumes ([#&#8203;10263](https://redirect.github.com/vmware-tanzu/velero/issues/10263), [@&#8203;Lyndon-Li](https://redirect.github.com/Lyndon-Li))
+- Fix restore-wait init container ignoring pod-level securityContext, falling back to hardcoded runAsUser 1000 instead of the workload's own uid/gid, causing fs-backup restores to deadlock at Init:0/1 on owner-restricted volumes ([#&#8203;10224](https://redirect.github.com/vmware-tanzu/velero/issues/10224), [@&#8203;kaovilai](https://redirect.github.com/kaovilai))
+- Add use guide for restore fine-grained filters via resource policy ([#&#8203;10164](https://redirect.github.com/vmware-tanzu/velero/issues/10164), [@&#8203;adam-jian-zhang](https://redirect.github.com/adam-jian-zhang))
+- Add restore.velero.io/must-include-additional-items so RestoreItemActions can opt in to bypassing global restore filters for AdditionalItems (mirrors the backup-side must-include annotation; no default behavior change for existing restores/plugins). Stop force-including VolumeSnapshotContents via resourceMustHave on every restore; CSI VolumeSnapshot/PVC RestoreItemActions now set restore.velero.io/must-include-additional-items so bound snapshot dependencies are restored only when their parent is restored (fixes [#&#8203;9957](https://redirect.github.com/vmware-tanzu/velero/issues/9957)) ([#&#8203;10101](https://redirect.github.com/vmware-tanzu/velero/issues/10101), [@&#8203;adam-jian-zhang](https://redirect.github.com/adam-jian-zhang))
+- User guide for backup fine-grained filters via resource policy, and add set based label selectors for fine-grained filters ([#&#8203;10072](https://redirect.github.com/vmware-tanzu/velero/issues/10072), [@&#8203;adam-jian-zhang](https://redirect.github.com/adam-jian-zhang))
+- Fix issue [#&#8203;10032](https://redirect.github.com/vmware-tanzu/velero/issues/10032), prioritize exact namespace match in restore ([#&#8203;10052](https://redirect.github.com/vmware-tanzu/velero/issues/10052), [@&#8203;adam-jian-zhang](https://redirect.github.com/adam-jian-zhang))
+- Fix issue [#&#8203;9997](https://redirect.github.com/vmware-tanzu/velero/issues/9997), cancel ongoing PVB on timeout and wait for all PVBs to terminal state ([#&#8203;10039](https://redirect.github.com/vmware-tanzu/velero/issues/10039), [@&#8203;Lyndon-Li](https://redirect.github.com/Lyndon-Li))
+- Add fine-grained filters for restore via resource policy, introduced resourcePolicy field for restoreSpec, which contains ClusterScopedFilterPolicy and NamespacedFilterPolicy section ([#&#8203;10015](https://redirect.github.com/vmware-tanzu/velero/issues/10015), [@&#8203;adam-jian-zhang](https://redirect.github.com/adam-jian-zhang))
+- Add support for matching PVCs by volume mode and access mode in resource policies, and introduce the `--global-backup-volume-policies-configmap` server flag to merge cluster-wide backup volume policies into every backup. ([#&#8203;10012](https://redirect.github.com/vmware-tanzu/velero/issues/10012), [@&#8203;chlins](https://redirect.github.com/chlins))
+- Add fine-grained filters for backup via resource policy, introduced ClusterScopedFilterPolicy and NamespacedFilterPolicy section for resource policy ([#&#8203;10011](https://redirect.github.com/vmware-tanzu/velero/issues/10011), [@&#8203;adam-jian-zhang](https://redirect.github.com/adam-jian-zhang))
+- Add operation context to user-facing error messages in CR statuses and CLI output ([#&#8203;10474](https://redirect.github.com/vmware-tanzu/velero/issues/10474), [@&#8203;chlins](https://redirect.github.com/chlins))
+- Fix issue 10454, enforce resource filter policies in memory in stage 1 to fix wildcard namespace bypassing issue ([#&#8203;10473](https://redirect.github.com/vmware-tanzu/velero/issues/10473), [@&#8203;adam-jian-zhang](https://redirect.github.com/adam-jian-zhang))
+
+</details>
+
+---
+
+### Configuration
+
+📅 **Schedule**: (UTC)
+
+- Branch creation
+  - At any time (no schedule defined)
+- Automerge
+  - At any time (no schedule defined)
+
+🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.
+
+♻ **Rebasing**: Whenever PR becomes conflicted, or you tick the rebase/retry checkbox.
+
+👻 **Immortal**: This PR will be recreated if closed unmerged. Get [config help](https://redirect.github.com/renovatebot/renovate/discussions) if that's undesired.
+
+---
+
+ - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box
+
+---
+
+This PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/anthony-spruyt/spruyt-labs).
+<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0NC4xMDMuMCIsInVwZGF0ZWRJblZlciI6IjQ0LjEwMy4wIiwidGFyZ2V0QnJhbmNoIjoibWFpbiIsImxhYmVscyI6WyJkZXAvcGF0Y2giLCJyZW5vdmF0ZS9oZWxtLXZhbHVlcyIsInJlbm92YXRlL2ltYWdlIiwicmVub3ZhdGUvc2NyaXB0IiwicmVub3ZhdGUvdGFza2ZpbGUiXX0=-->

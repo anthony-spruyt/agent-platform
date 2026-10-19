@@ -1,0 +1,77 @@
+This PR contains the following updates:
+
+| Package | Update | Change | Pending |
+|---|---|---|---|
+| [vaultwarden/server](https://redirect.github.com/dani-garcia/vaultwarden) | patch | `1.37.2-alpine` → `1.37.3-alpine` | `1.37.4-alpine` |
+
+---
+
+### Release Notes
+
+<details>
+<summary>dani-garcia/vaultwarden (vaultwarden/server)</summary>
+
+### [`v1.37.3`](https://redirect.github.com/dani-garcia/vaultwarden/releases/tag/1.37.3)
+
+[Compare Source](https://redirect.github.com/dani-garcia/vaultwarden/compare/1.37.2...1.37.3)
+
+#### What's Changed
+
+- Fix password change with newer web-vault by [@&#8203;BlackDex](https://redirect.github.com/BlackDex) in [#&#8203;7634](https://redirect.github.com/dani-garcia/vaultwarden/pull/7634)
+- chore: remove duplicate "the" in ciphers.rs comment by [@&#8203;mvanhorn](https://redirect.github.com/mvanhorn) in [#&#8203;7254](https://redirect.github.com/dani-garcia/vaultwarden/pull/7254)
+- Ignore reset-password auto-enroll when mail is disabled by [@&#8203;xhon-pelushi](https://redirect.github.com/xhon-pelushi) in [#&#8203;7585](https://redirect.github.com/dani-garcia/vaultwarden/pull/7585)
+- Fix migration for MariaDB 12.2.2 by [@&#8203;Timshel](https://redirect.github.com/Timshel) in [#&#8203;7265](https://redirect.github.com/dani-garcia/vaultwarden/pull/7265)
+- Add SSO_SIGNUPS_ALLOWED by [@&#8203;Timshel](https://redirect.github.com/Timshel) in [#&#8203;7272](https://redirect.github.com/dani-garcia/vaultwarden/pull/7272)
+- log_event take enum parameter not i32 by [@&#8203;Timshel](https://redirect.github.com/Timshel) in [#&#8203;7656](https://redirect.github.com/dani-garcia/vaultwarden/pull/7656)
+- Misc Updates by [@&#8203;BlackDex](https://redirect.github.com/BlackDex) in [#&#8203;7676](https://redirect.github.com/dani-garcia/vaultwarden/pull/7676)
+- Update rust docker version by [@&#8203;dani-garcia](https://redirect.github.com/dani-garcia) in [#&#8203;7689](https://redirect.github.com/dani-garcia/vaultwarden/pull/7689)
+- Fix organization import failing with missing field groups by [@&#8203;tom27052006](https://redirect.github.com/tom27052006) in [#&#8203;7699](https://redirect.github.com/dani-garcia/vaultwarden/pull/7699)
+- Add `pm-32413-multi-client-password-management` feature flag by [@&#8203;tom27052006](https://redirect.github.com/tom27052006) in [#&#8203;7677](https://redirect.github.com/dani-garcia/vaultwarden/pull/7677)
+- Log IP/username on two-factor email-login credential failures by [@&#8203;crahn](https://redirect.github.com/crahn) in [#&#8203;7654](https://redirect.github.com/dani-garcia/vaultwarden/pull/7654)
+- Support admin reset 2fa by [@&#8203;Timshel](https://redirect.github.com/Timshel) in [#&#8203;7435](https://redirect.github.com/dani-garcia/vaultwarden/pull/7435)
+- fix(security): revoke 2FA remember tokens when credentials or 2FA change by [@&#8203;BryanFRD](https://redirect.github.com/BryanFRD) in [#&#8203;7682](https://redirect.github.com/dani-garcia/vaultwarden/pull/7682)
+- fix(security): rate limit prelogin and auth request endpoints by [@&#8203;BryanFRD](https://redirect.github.com/BryanFRD) in [#&#8203;7681](https://redirect.github.com/dani-garcia/vaultwarden/pull/7681)
+- fix: Correct invalid comment syntax in .dockerignore by [@&#8203;niniconi](https://redirect.github.com/niniconi) in [#&#8203;7274](https://redirect.github.com/dani-garcia/vaultwarden/pull/7274)
+- Update Rust and adjust DockerSettings by [@&#8203;BlackDex](https://redirect.github.com/BlackDex) in [#&#8203;7690](https://redirect.github.com/dani-garcia/vaultwarden/pull/7690)
+- Route service clients through shared HTTP setup by [@&#8203;txase](https://redirect.github.com/txase) in [#&#8203;7639](https://redirect.github.com/dani-garcia/vaultwarden/pull/7639)
+- Fix iOS registration token response by [@&#8203;tom27052006](https://redirect.github.com/tom27052006) in [#&#8203;7714](https://redirect.github.com/dani-garcia/vaultwarden/pull/7714)
+- Use insert_into when possible by [@&#8203;Timshel](https://redirect.github.com/Timshel) in [#&#8203;6437](https://redirect.github.com/dani-garcia/vaultwarden/pull/6437)
+- Fix archiveDate update by [@&#8203;BlackDex](https://redirect.github.com/BlackDex) in [#&#8203;7722](https://redirect.github.com/dani-garcia/vaultwarden/pull/7722)
+
+#### New Contributors
+
+- [@&#8203;mvanhorn](https://redirect.github.com/mvanhorn) made their first contribution in [#&#8203;7254](https://redirect.github.com/dani-garcia/vaultwarden/pull/7254)
+- [@&#8203;xhon-pelushi](https://redirect.github.com/xhon-pelushi) made their first contribution in [#&#8203;7585](https://redirect.github.com/dani-garcia/vaultwarden/pull/7585)
+- [@&#8203;crahn](https://redirect.github.com/crahn) made their first contribution in [#&#8203;7654](https://redirect.github.com/dani-garcia/vaultwarden/pull/7654)
+- [@&#8203;BryanFRD](https://redirect.github.com/BryanFRD) made their first contribution in [#&#8203;7682](https://redirect.github.com/dani-garcia/vaultwarden/pull/7682)
+- [@&#8203;niniconi](https://redirect.github.com/niniconi) made their first contribution in [#&#8203;7274](https://redirect.github.com/dani-garcia/vaultwarden/pull/7274)
+
+**Full Changelog**: <https://github.com/dani-garcia/vaultwarden/compare/1.37.2...1.37.3>
+
+</details>
+
+---
+
+### Configuration
+
+📅 **Schedule**: (UTC)
+
+- Branch creation
+  - At any time (no schedule defined)
+- Automerge
+  - At any time (no schedule defined)
+
+🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.
+
+♻ **Rebasing**: Whenever PR becomes conflicted, or you tick the rebase/retry checkbox.
+
+🔕 **Ignore**: Close this PR and you won't be reminded about this update again.
+
+---
+
+ - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box
+
+---
+
+This PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/anthony-spruyt/spruyt-labs).
+<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0NC4xMjUuMSIsInVwZGF0ZWRJblZlciI6IjQ0LjEzNC4xIiwidGFyZ2V0QnJhbmNoIjoibWFpbiIsImxhYmVscyI6WyJkZXAvcGF0Y2giLCJyZW5vdmF0ZS9oZWxtLXZhbHVlcyIsInJlbm92YXRlL2ltYWdlIl19-->

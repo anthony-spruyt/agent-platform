@@ -121,6 +121,34 @@ public class ChangelogFetcherTests
         Assert.Empty(api.Calls);
     }
 
+    [Fact]
+    public async Task Fetch_ReadsNothingForARangeTheTableParserKeeps()
+    {
+        var (fetcher, api) = Create();
+        const string Body = "| Package | Change |\n|---|---|\n| [tfe](https://registry.terraform.io/providers/hashicorp/tfe) ([source](https://redirect.github.com/hashicorp/terraform-provider-tfe)) | `~> 0.76` → `~> 0.78` |\n";
+
+        var sections = await fetcher.FetchAsync(Repo, RenovateBodyTable.Parse(Body), Ct);
+
+        Assert.Empty(sections);
+        Assert.Empty(api.Calls);
+    }
+
+    [Theory]
+    [InlineData("https://redirect.github.com/upstream/dep", true)]
+    [InlineData("https://redirect.github.com/upstream/dep/", true)]
+    [InlineData("https://redirect.github.com/upstream/dep/tree/HEAD/packages/x", false)]
+    [InlineData("https://redirect.github.com/upstream/dep/tree/main/packages/x/", false)]
+    [InlineData("https://redirect.github.com/upstream/dep/blob/main/CHANGELOG.md", false)]
+    public async Task Fetch_ReadsASourceOnlyWhenItsLinkIsTheRepoRoot(string source, bool fetched)
+    {
+        var (fetcher, api) = Create();
+        var body = $"| Package | Change |\n|---|---|\n| [dep](https://example.test) ([source]({source})) | `v1.2.2` → `v1.2.3` |\n";
+
+        await fetcher.FetchAsync(Repo, RenovateBodyTable.Parse(body), Ct);
+
+        Assert.Equal(fetched, api.Calls.Count > 0);
+    }
+
     [Theory]
     [InlineData("1.0.\uFF10")]
     [InlineData("v1.0.\u0663")]

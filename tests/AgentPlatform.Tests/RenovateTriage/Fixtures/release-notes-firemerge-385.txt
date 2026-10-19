@@ -1,0 +1,183 @@
+This PR contains the following updates:
+
+| Package | Change | [Age](https://docs.renovatebot.com/merge-confidence/) | [Adoption](https://docs.renovatebot.com/merge-confidence/) | [Passing](https://docs.renovatebot.com/merge-confidence/) | [Confidence](https://docs.renovatebot.com/merge-confidence/) |
+|---|---|---|---|---|---|
+| [@tanstack/react-query](https://tanstack.com/query) ([source](https://redirect.github.com/TanStack/query/tree/HEAD/packages/react-query)) | [`5.101.0` → `5.102.8`](https://renovatebot.com/diffs/npm/@tanstack%2freact-query/5.101.0/5.102.8) | ![age](https://developer.mend.io/api/mc/badges/age/npm/@tanstack%2freact-query/5.102.8?slim=true) | ![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/@tanstack%2freact-query/5.102.8?slim=true) | ![passing](https://developer.mend.io/api/mc/badges/compatibility/npm/@tanstack%2freact-query/5.101.0/5.102.8?slim=true) | ![confidence](https://developer.mend.io/api/mc/badges/confidence/npm/@tanstack%2freact-query/5.101.0/5.102.8?slim=true) |
+
+---
+
+### Release Notes
+
+<details>
+<summary>TanStack/query (@&#8203;tanstack/react-query)</summary>
+
+### [`v5.102.8`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51028)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.7...@tanstack/react-query@5.102.8)
+
+##### Patch Changes
+
+- Updated dependencies \[]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.8
+
+### [`v5.102.7`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51027)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.6...@tanstack/react-query@5.102.7)
+
+##### Patch Changes
+
+- Updated dependencies \[]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.7
+
+### [`v5.102.6`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51026)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.5...@tanstack/react-query@5.102.6)
+
+##### Patch Changes
+
+- [#&#8203;11305](https://redirect.github.com/TanStack/query/pull/11305) [`ac2b612`](https://redirect.github.com/TanStack/query/commit/ac2b61230ea35b90b177ba35dc030598bac9c9a6) - fix(react-query): throw falsy errors from `useQueries` and `useSuspenseQueries` to the error boundary
+
+- Updated dependencies \[]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.6
+
+### [`v5.102.5`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51025)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.4...@tanstack/react-query@5.102.5)
+
+##### Patch Changes
+
+- Updated dependencies \[[`578e5c2`](https://redirect.github.com/TanStack/query/commit/578e5c26e8ebd0d7351b4b8e2bafba695e672b8d)]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.5
+
+### [`v5.102.4`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51024)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.3...@tanstack/react-query@5.102.4)
+
+##### Patch Changes
+
+- Updated dependencies \[[`a05df6a`](https://redirect.github.com/TanStack/query/commit/a05df6aefb0e2489ec2c879ae16e2ee7cb3123ec)]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.4
+
+### [`v5.102.3`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51023)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.2...@tanstack/react-query@5.102.3)
+
+##### Patch Changes
+
+- Updated dependencies \[]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.3
+
+### [`v5.102.2`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51022)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.1...@tanstack/react-query@5.102.2)
+
+##### Patch Changes
+
+- Updated dependencies \[[`80fbf73`](https://redirect.github.com/TanStack/query/commit/80fbf73e77892d702c107e14a84c219a8ed825dc)]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.2
+
+### [`v5.102.1`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51021)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.102.0...@tanstack/react-query@5.102.1)
+
+##### Patch Changes
+
+- Updated dependencies \[[`134890d`](https://redirect.github.com/TanStack/query/commit/134890dbdc60e4fb0313e44b512d29284ca82f96)]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.1
+
+### [`v5.102.0`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51020)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.101.4...@tanstack/react-query@5.102.0)
+
+##### Minor Changes
+
+- [#&#8203;10668](https://redirect.github.com/TanStack/query/pull/10668) [`e674826`](https://redirect.github.com/TanStack/query/commit/e6748265c86294704f6c872e6f435d9ec5a92b28) - react-query: update usePrefetchQuery and usePrefetchInfiniteQuery to use queryClient.query and queryClient.infiniteQuery
+
+##### Patch Changes
+
+- [#&#8203;11245](https://redirect.github.com/TanStack/query/pull/11245) [`37127db`](https://redirect.github.com/TanStack/query/commit/37127dbe479a4892dbbe28ac8ceabf8832b5f1a3) - revert: remove NoInfer from useQuery return types
+
+- [#&#8203;10373](https://redirect.github.com/TanStack/query/pull/10373) [`6e3d521`](https://redirect.github.com/TanStack/query/commit/6e3d521fe54f78624e53c1c6f9cadd678504bee8) - fix(types): propagate generic type parameters to `useMutationState` select callback
+
+- [#&#8203;11224](https://redirect.github.com/TanStack/query/pull/11224) [`294d4e6`](https://redirect.github.com/TanStack/query/commit/294d4e62c4f7d674574a4903eef2a1bc3dd1413b) - Fix `queryOptions` and `infiniteQueryOptions` return types so exported inferred options can be emitted in declaration files without leaking internal data tag symbols.
+
+- [#&#8203;11147](https://redirect.github.com/TanStack/query/pull/11147) [`cb6c9d3`](https://redirect.github.com/TanStack/query/commit/cb6c9d3725db0fed94fb5133820e41b7c326d2ef) - Default `TData` of `UseInfiniteQueryOptions` and `UseSuspenseInfiniteQueryOptions` to `InfiniteData<TQueryFnData>` so it matches the hook generics.
+
+- [#&#8203;8737](https://redirect.github.com/TanStack/query/pull/8737) [`2215bb0`](https://redirect.github.com/TanStack/query/commit/2215bb031139cdc8a84751b37a485c38ca9d2b6e) - fix: make mutation variables optional when `undefined extends TVariables`
+
+- [#&#8203;11221](https://redirect.github.com/TanStack/query/pull/11221) [`1ef4208`](https://redirect.github.com/TanStack/query/commit/1ef42087c9a266c2137d2ef645cbcc662f60ac93) - Remove experimental render-time prefetching and the `promise` property from query results.
+
+- [#&#8203;11228](https://redirect.github.com/TanStack/query/pull/11228) [`fb6c3fa`](https://redirect.github.com/TanStack/query/commit/fb6c3fabda4cb6b291cccc6651ed88a7db901915) - Avoid emitting a runtime import for React Query's type-only exports.
+
+- [#&#8203;11130](https://redirect.github.com/TanStack/query/pull/11130) [`8834267`](https://redirect.github.com/TanStack/query/commit/88342670eca6e4949416aab832b1f81cc7b881f8) - fix(react-query): don't show optimistic fetching for unsubscribed useQueries
+
+- [#&#8203;11233](https://redirect.github.com/TanStack/query/pull/11233) [`b866a95`](https://redirect.github.com/TanStack/query/commit/b866a95adde7e8465462526df5870ebc12340b36) - remove unused experimental\_beforeQuery and experimental\_afterQuery hooks
+
+- [#&#8203;11144](https://redirect.github.com/TanStack/query/pull/11144) [`e546d03`](https://redirect.github.com/TanStack/query/commit/e546d03bef116c66a05dbf42ccfd70b6d8600a8f) - fix: remove placeholderData from suspense infinite query
+
+- Updated dependencies \[[`34f7cee`](https://redirect.github.com/TanStack/query/commit/34f7ceed09c10e4a3aa2df31a106ddf02ec4e787), [`b4368c4`](https://redirect.github.com/TanStack/query/commit/b4368c43792349f6c29d1fb41f7ee1ef3a8bdd2c), [`5bb089d`](https://redirect.github.com/TanStack/query/commit/5bb089d153d33933983b7ea80f8d69b51d423698), [`ba4650c`](https://redirect.github.com/TanStack/query/commit/ba4650c05e61e33c609e051b948c9f7d31ce70d1), [`294d4e6`](https://redirect.github.com/TanStack/query/commit/294d4e62c4f7d674574a4903eef2a1bc3dd1413b), [`1f631b3`](https://redirect.github.com/TanStack/query/commit/1f631b3604aab6567fb3f6c90646a5a304641546), [`01a02bf`](https://redirect.github.com/TanStack/query/commit/01a02bfad32f9efbc17796be31d6399f1197a655), [`18c1c1e`](https://redirect.github.com/TanStack/query/commit/18c1c1ef94883e781ad36d36f9ea4a043ce4260b), [`5448063`](https://redirect.github.com/TanStack/query/commit/5448063f828d2270dccd41ae375e1afde35e91f2), [`2215bb0`](https://redirect.github.com/TanStack/query/commit/2215bb031139cdc8a84751b37a485c38ca9d2b6e), [`1ef4208`](https://redirect.github.com/TanStack/query/commit/1ef42087c9a266c2137d2ef645cbcc662f60ac93), [`5981771`](https://redirect.github.com/TanStack/query/commit/5981771abec9330b344a2617543eb05ba7c99e24), [`4a9bef6`](https://redirect.github.com/TanStack/query/commit/4a9bef6cf19b1cd6b014032d696129f12a848185), [`bef4bc7`](https://redirect.github.com/TanStack/query/commit/bef4bc780ce7cca32b7e3dea85f77d92f82a62a2), [`9656dc4`](https://redirect.github.com/TanStack/query/commit/9656dc4e5fef5f8c502579b52459f9e8c72e787c), [`326aaf1`](https://redirect.github.com/TanStack/query/commit/326aaf1333e5d9cbc46569c53f218d31684162d2), [`3e83601`](https://redirect.github.com/TanStack/query/commit/3e836010032c2586e9f1c66a271fa9114a6401f9), [`c6fc17c`](https://redirect.github.com/TanStack/query/commit/c6fc17cfad6e452261c585fabfb8c210e60531ed)]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.102.0
+
+### [`v5.101.4`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51014)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.101.3...@tanstack/react-query@5.101.4)
+
+##### Patch Changes
+
+- Updated dependencies \[]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.101.4
+
+### [`v5.101.3`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51013)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.101.2...@tanstack/react-query@5.101.3)
+
+##### Patch Changes
+
+- Updated dependencies \[[`7e3c822`](https://redirect.github.com/TanStack/query/commit/7e3c822a10896f41a8f1031c16b85096277af677)]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.101.3
+
+### [`v5.101.2`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51012)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.101.1...@tanstack/react-query@5.101.2)
+
+##### Patch Changes
+
+- Updated dependencies \[]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.101.2
+
+### [`v5.101.1`](https://redirect.github.com/TanStack/query/blob/HEAD/packages/react-query/CHANGELOG.md#51011)
+
+[Compare Source](https://redirect.github.com/TanStack/query/compare/@tanstack/react-query@5.101.0...@tanstack/react-query@5.101.1)
+
+##### Patch Changes
+
+- Updated dependencies \[[`9eff92e`](https://redirect.github.com/TanStack/query/commit/9eff92ed86e284ec0125b3a3539d028688235bd1)]:
+  - [@&#8203;tanstack/query-core](https://redirect.github.com/tanstack/query-core)@5.101.1
+
+</details>
+
+---
+
+### Configuration
+
+📅 **Schedule**: (UTC)
+
+- Branch creation
+  - At any time (no schedule defined)
+- Automerge
+  - At any time (no schedule defined)
+
+🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.
+
+♻ **Rebasing**: Whenever PR becomes conflicted, or you tick the rebase/retry checkbox.
+
+🔕 **Ignore**: Close this PR and you won't be reminded about this update again.
+
+---
+
+ - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box
+
+---
+
+This PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/anthony-spruyt/firemerge).
+<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0My4yNDIuMiIsInVwZGF0ZWRJblZlciI6IjQ0LjYxLjMiLCJ0YXJnZXRCcmFuY2giOiJtYWluIiwibGFiZWxzIjpbInJlbm92YXRlL25wbSJdfQ==-->

@@ -60,7 +60,7 @@ public sealed record JudgeInput(
     ScannedText? Body = null,
     IReadOnlyList<ScannedText>? Changelogs = null);
 
-public sealed record JudgeResult(bool HeadMoved, TriageDecision? Decision = null, JevAnswers? Jev = null, string? JevError = null);
+public sealed record JudgeResult(bool HeadMoved, TriageDecision? Decision = null, JevAnswers? Jev = null, string? JevError = null, bool NotesFound = false);
 
 public sealed record RecordVerdictInput(string Repo, int PrNumber, string HeadSha, TriageDecision Decision, TriageMode Mode = TriageMode.Shadow, LadderRung? Rung = null);
 

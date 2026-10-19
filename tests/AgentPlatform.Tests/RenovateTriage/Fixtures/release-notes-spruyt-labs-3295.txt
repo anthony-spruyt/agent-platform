@@ -1,0 +1,468 @@
+This PR contains the following updates:
+
+| Package | Change | [Age](https://docs.renovatebot.com/merge-confidence/) | [Adoption](https://docs.renovatebot.com/merge-confidence/) | [Passing](https://docs.renovatebot.com/merge-confidence/) | [Confidence](https://docs.renovatebot.com/merge-confidence/) |
+|---|---|---|---|---|---|
+| [@bull-board/api](https://github.com/felixmosh/bull-board) ([source](https://github.com/felixmosh/bull-board/tree/HEAD/packages/api)) | [`^8.0.0` → `^9.0.0`](https://renovatebot.com/diffs/npm/@bull-board%2fapi/8.6.1/9.10.2) | ![age](https://developer.mend.io/api/mc/badges/age/npm/@bull-board%2fapi/9.10.2?slim=true) | ![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/@bull-board%2fapi/9.10.2?slim=true) | ![passing](https://developer.mend.io/api/mc/badges/compatibility/npm/@bull-board%2fapi/8.6.1/9.10.2?slim=true) | ![confidence](https://developer.mend.io/api/mc/badges/confidence/npm/@bull-board%2fapi/8.6.1/9.10.2?slim=true) |
+| [@bull-board/express](https://github.com/felixmosh/bull-board) ([source](https://github.com/felixmosh/bull-board/tree/HEAD/packages/express)) | [`^8.0.0` → `^9.0.0`](https://renovatebot.com/diffs/npm/@bull-board%2fexpress/8.6.1/9.10.2) | ![age](https://developer.mend.io/api/mc/badges/age/npm/@bull-board%2fexpress/9.10.2?slim=true) | ![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/@bull-board%2fexpress/9.10.2?slim=true) | ![passing](https://developer.mend.io/api/mc/badges/compatibility/npm/@bull-board%2fexpress/8.6.1/9.10.2?slim=true) | ![confidence](https://developer.mend.io/api/mc/badges/confidence/npm/@bull-board%2fexpress/8.6.1/9.10.2?slim=true) |
+
+---
+
+### Release Notes
+
+<details>
+<summary>felixmosh/bull-board (@&#8203;bull-board/api)</summary>
+
+### [`v9.10.2`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v9102)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.10.1...v9.10.2)
+
+> 2026-09-29
+
+### [`v9.10.1`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v9101)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.10.0...v9.10.1)
+
+> 2026-09-12
+
+### [`v9.10.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v9100)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.9.0...v9.10.0)
+
+> 2026-09-10
+
+### [`v9.9.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v990)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.8.0...v9.9.0)
+
+> 2026-09-08
+
+### [`v9.8.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v980)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.7.0...v9.8.0)
+
+> 2026-09-03
+
+### [`v9.7.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v970)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.6.1...v9.7.0)
+
+> 2026-09-03
+
+### [`v9.6.1`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v961)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.6.0...v9.6.1)
+
+> 2026-09-01
+
+### [`v9.6.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v960)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.5.0...v9.6.0)
+
+> 2026-08-30
+
+### [`v9.5.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v950)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.4.0...v9.5.0)
+
+> 2026-08-26
+
+### [`v9.4.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v940)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.3.3...v9.4.0)
+
+> 2026-08-22
+
+### [`v9.3.3`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v933)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.3.2...v9.3.3)
+
+> 2026-08-22
+
+### [`v9.3.2`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v932)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.3.1...v9.3.2)
+
+> 2026-08-19
+
+### [`v9.3.1`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v931)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.3.0...v9.3.1)
+
+> 2026-08-19
+
+### [`v9.3.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v930)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.2.0...v9.3.0)
+
+> 2026-08-18
+
+### [`v9.2.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v920)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.1.0...v9.2.0)
+
+> 2026-08-18
+
+### [`v9.1.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v910)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.0.1...v9.1.0)
+
+> 2026-08-18
+
+### [`v9.0.1`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v901)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v9.0.0...v9.0.1)
+
+> 2026-08-18
+
+### [`v9.0.0`](https://github.com/felixmosh/bull-board/blob/HEAD/CHANGELOG.md#v900)
+
+[Compare Source](https://github.com/felixmosh/bull-board/compare/v8.6.1...v9.0.0)
+
+> 2026-08-17
+
+##### Features
+
+- design token theming with whitelabel overrides and a visual refresh ([#&#8203;1306](https://github.com/felixmosh/bull-board/issues/1306)) (Aleksander Stós) [`937b961`](https://github.com/felixmosh/bull-board/pull/1306)
+- force option for obliterating a queue with active jobs ([#&#8203;1307](https://github.com/felixmosh/bull-board/issues/1307)) (Nikola Madic) [`2d62cba`](https://github.com/felixmosh/bull-board/pull/1307)
+
+##### Bug Fixes
+
+- align hover styles (Felix Mosheev) [`8187696`](https://github.com/felixmosh/bull-board/commit/8187696ffa695c2f4f0216abf151e8271c51d57c)
+
+##### Dependency Updates
+
+- bump [@&#8203;hono/node-server](https://github.com/hono/node-server) in /examples/with-sails ([#&#8203;1355](https://github.com/felixmosh/bull-board/issues/1355)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`9235854`](https://github.com/felixmosh/bull-board/pull/1355)
+- bump nanoid from 6.0.0 to 6.0.1 ([#&#8203;1353](https://github.com/felixmosh/bull-board/issues/1353)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`16ba3a8`](https://github.com/felixmosh/bull-board/pull/1353)
+- bump [@&#8203;hono/node-server](https://github.com/hono/node-server) in /examples/with-hono ([#&#8203;1348](https://github.com/felixmosh/bull-board/issues/1348)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`aa77636`](https://github.com/felixmosh/bull-board/pull/1348)
+
+##### Refactoring
+
+- extract links for metricsHistory and jobSchedulers (Felix Mosheev) [`89543d9`](https://github.com/felixmosh/bull-board/commit/89543d9d55ac6f875b7abad3a4b165f0233041ec)
+
+##### [v8.6.1](https://github.com/felixmosh/bull-board/compare/v8.6.0...v8.6.1)
+
+> 2026-08-12
+
+##### Features
+
+- add Russian (ru-RU) locale ([#&#8203;1345](https://github.com/felixmosh/bull-board/issues/1345)) (Andrey Nazarenko) [`6679dfe`](https://github.com/felixmosh/bull-board/pull/1345)
+
+##### Bug Fixes
+
+- count grouped jobs, not groups, in BullMQProAdapter ([#&#8203;1347](https://github.com/felixmosh/bull-board/issues/1347)) (Igor Savin) [`9cbcddd`](https://github.com/felixmosh/bull-board/pull/1347)
+- drop status-set ids that no longer resolve, and report them ([#&#8203;1330](https://github.com/felixmosh/bull-board/issues/1330)) (Aleksander Stós) [`794dcc4`](https://github.com/felixmosh/bull-board/pull/1330)
+- count grouped jobs, not groups, in BullMQProAdapter ([#&#8203;1347](https://github.com/felixmosh/bull-board/issues/1347)) (Igor Savin) [`9cbcddd`](https://github.com/felixmosh/bull-board/commit/9cbcddda32d1c619e300d74dfa636cfa430ef2de)
+
+##### Dependency Updates
+
+- bump hono from 4.12.34 to 4.13.0 ([#&#8203;1333](https://github.com/felixmosh/bull-board/issues/1333)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`f695faa`](https://github.com/felixmosh/bull-board/pull/1333)
+- bump hono from 4.12.27 to 4.12.34 in /examples/with-hono ([#&#8203;1343](https://github.com/felixmosh/bull-board/issues/1343)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`d1cce5a`](https://github.com/felixmosh/bull-board/pull/1343)
+- bump concurrently from 10.0.3 to 10.0.4 ([#&#8203;1342](https://github.com/felixmosh/bull-board/issues/1342)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`fcc240e`](https://github.com/felixmosh/bull-board/pull/1342)
+- bump [@&#8203;types/pg](https://github.com/types/pg) from 8.20.3 to 8.20.4 ([#&#8203;1340](https://github.com/felixmosh/bull-board/issues/1340)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`7b24945`](https://github.com/felixmosh/bull-board/pull/1340)
+- bump [@&#8203;base-ui/react](https://github.com/base-ui/react) from 1.6.0 to 1.7.0 ([#&#8203;1339](https://github.com/felixmosh/bull-board/issues/1339)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`3c931da`](https://github.com/felixmosh/bull-board/pull/1339)
+- bump js-yaml from 3.15.0 to 3.15.1 ([#&#8203;1338](https://github.com/felixmosh/bull-board/issues/1338)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`6de2ddb`](https://github.com/felixmosh/bull-board/pull/1338)
+- bump [@&#8203;hapi/hapi](https://github.com/hapi/hapi) from 21.4.9 to 21.4.10 ([#&#8203;1337](https://github.com/felixmosh/bull-board/issues/1337)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`03159d5`](https://github.com/felixmosh/bull-board/pull/1337)
+- bump oxfmt from 0.59.0 to 0.62.0 ([#&#8203;1335](https://github.com/felixmosh/bull-board/issues/1335)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`373d2a2`](https://github.com/felixmosh/bull-board/pull/1335)
+- bump i18next-http-backend from 4.0.0 to 4.0.1 ([#&#8203;1334](https://github.com/felixmosh/bull-board/issues/1334)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`b4ea1f2`](https://github.com/felixmosh/bull-board/pull/1334)
+- bump [@&#8203;rspress/core](https://github.com/rspress/core) from 2.0.18 to 2.0.19 ([#&#8203;1332](https://github.com/felixmosh/bull-board/issues/1332)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`ce73de4`](https://github.com/felixmosh/bull-board/pull/1332)
+- bump axios from 1.18.1 to 1.19.0 ([#&#8203;1331](https://github.com/felixmosh/bull-board/issues/1331)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`608a1e8`](https://github.com/felixmosh/bull-board/pull/1331)
+- bump fast-uri from 3.1.2 to 3.1.5 in /examples/with-nestjs ([#&#8203;1328](https://github.com/felixmosh/bull-board/issues/1328)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`6c9aa4f`](https://github.com/felixmosh/bull-board/pull/1328)
+- bump brace-expansion in /examples/with-sails ([#&#8203;1326](https://github.com/felixmosh/bull-board/issues/1326)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`5456f2a`](https://github.com/felixmosh/bull-board/pull/1326)
+
+##### [v8.6.0](https://github.com/felixmosh/bull-board/compare/v8.5.0...v8.6.0)
+
+> 2026-08-05
+
+##### Features
+
+- support BullMQ v6 ([#&#8203;1316](https://github.com/felixmosh/bull-board/issues/1316)) (Aleksander Stós) [`66d3520`](https://github.com/felixmosh/bull-board/pull/1316)
+
+##### Bug Fixes
+
+- pass queue prefix to FlowProducer in flow provider ([#&#8203;1327](https://github.com/felixmosh/bull-board/issues/1327)) (Kasper Wissendorf) [`db46a6e`](https://github.com/felixmosh/bull-board/pull/1327)
+
+##### Dependency Updates
+
+- bump fast-uri in /examples/with-fastify-visibility-guard ([#&#8203;1318](https://github.com/felixmosh/bull-board/issues/1318)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`4103287`](https://github.com/felixmosh/bull-board/pull/1318)
+- bump fast-uri from 3.1.3 to 3.1.5 in /examples/with-sails ([#&#8203;1325](https://github.com/felixmosh/bull-board/issues/1325)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`a170ead`](https://github.com/felixmosh/bull-board/pull/1325)
+- bump fast-uri from 3.1.4 to 3.1.5 ([#&#8203;1324](https://github.com/felixmosh/bull-board/issues/1324)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`5a53e29`](https://github.com/felixmosh/bull-board/pull/1324)
+- bump undici in /examples/with-express-csrf ([#&#8203;1319](https://github.com/felixmosh/bull-board/issues/1319)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`efb68cc`](https://github.com/felixmosh/bull-board/pull/1319)
+- bump undici in /examples/with-fastify-auth ([#&#8203;1320](https://github.com/felixmosh/bull-board/issues/1320)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`0c162e9`](https://github.com/felixmosh/bull-board/pull/1320)
+- bump ip-address from 10.2.0 to 10.4.0 ([#&#8203;1323](https://github.com/felixmosh/bull-board/issues/1323)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`13777cc`](https://github.com/felixmosh/bull-board/pull/1323)
+- bump hono from 4.12.31 to 4.12.34 ([#&#8203;1321](https://github.com/felixmosh/bull-board/issues/1321)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`cc1cf54`](https://github.com/felixmosh/bull-board/pull/1321)
+- bump socket.io-parser from 4.2.6 to 4.2.7 ([#&#8203;1322](https://github.com/felixmosh/bull-board/issues/1322)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`9d4265b`](https://github.com/felixmosh/bull-board/pull/1322)
+- bump fast-uri from 2.4.0 to 2.4.4 in /examples/with-fastify ([#&#8203;1317](https://github.com/felixmosh/bull-board/issues/1317)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`a2fa5a0`](https://github.com/felixmosh/bull-board/pull/1317)
+- bump ts-jest from 29.4.11 to 29.4.12 ([#&#8203;1314](https://github.com/felixmosh/bull-board/issues/1314)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`9271ac4`](https://github.com/felixmosh/bull-board/pull/1314)
+- bump brace-expansion in /examples/with-elysia ([#&#8203;1308](https://github.com/felixmosh/bull-board/issues/1308)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`0221456`](https://github.com/felixmosh/bull-board/pull/1308)
+- bump brace-expansion in /examples/with-fastify ([#&#8203;1311](https://github.com/felixmosh/bull-board/issues/1311)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`2db4be9`](https://github.com/felixmosh/bull-board/pull/1311)
+- bump brace-expansion in /examples/with-h3 ([#&#8203;1312](https://github.com/felixmosh/bull-board/issues/1312)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`62bd01b`](https://github.com/felixmosh/bull-board/pull/1312)
+- bump brace-expansion in /examples/with-fastify-auth ([#&#8203;1310](https://github.com/felixmosh/bull-board/issues/1310)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`be48e48`](https://github.com/felixmosh/bull-board/pull/1310)
+
+##### Chores
+
+- support ioredis v6 ([#&#8203;1309](https://github.com/felixmosh/bull-board/issues/1309)) (Vincent Le Quec) [`4e0fa10`](https://github.com/felixmosh/bull-board/pull/1309)
+
+##### [v8.5.0](https://github.com/felixmosh/bull-board/compare/v8.4.0...v8.5.0)
+
+> 2026-07-31
+
+##### Features
+
+- job latency histograms with wait, run and queue-age ([#&#8203;1295](https://github.com/felixmosh/bull-board/issues/1295)) (Aleksander Stós) [`fd1ed1f`](https://github.com/felixmosh/bull-board/pull/1295)
+- show connected workers per queue ([#&#8203;1294](https://github.com/felixmosh/bull-board/issues/1294)) (Aleksander Stós) [`8580a64`](https://github.com/felixmosh/bull-board/pull/1294)
+
+##### Refactoring
+
+- add jobSchedulerCount to each queue, instead of polling separtly, closes [#&#8203;1305](https://github.com/felixmosh/bull-board/issues/1305) (Felix Mosheev) [`c0f4d90`](https://github.com/felixmosh/bull-board/commit/c0f4d901d6d2004bb659e190d1ab0884dc136307)
+
+##### [v8.4.0](https://github.com/felixmosh/bull-board/compare/v8.3.2...v8.4.0)
+
+> 2026-07-29
+
+##### Features
+
+- schedulers view with per-scheduler edit and removal ([#&#8203;1304](https://github.com/felixmosh/bull-board/issues/1304)) (Aleksander Stós) [`5c3df08`](https://github.com/felixmosh/bull-board/pull/1304)
+
+##### Bug Fixes
+
+- test, fails due to past date. (Felix Mosheev) [`521e30a`](https://github.com/felixmosh/bull-board/commit/521e30a5d8b05c7b5babfce828cc8fbb57875dd0)
+
+##### Dependency Updates
+
+- bump qs in /examples/with-express-csrf ([#&#8203;1303](https://github.com/felixmosh/bull-board/issues/1303)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`be13d25`](https://github.com/felixmosh/bull-board/pull/1303)
+- bump hono from 4.12.25 to 4.12.27 in /examples/with-hono ([#&#8203;1298](https://github.com/felixmosh/bull-board/issues/1298)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`b6fcb51`](https://github.com/felixmosh/bull-board/pull/1298)
+
+##### [v8.3.2](https://github.com/felixmosh/bull-board/compare/v8.3.1...v8.3.2)
+
+> 2026-07-28
+
+##### Bug Fixes
+
+- comment on issues + prs on release (Felix Mosheev) [`15d8c70`](https://github.com/felixmosh/bull-board/commit/15d8c7019866d690ca391e298c4463b4254ac181)
+- Long Flows cut off, probably due to css ordering, closes [#&#8203;1285](https://github.com/felixmosh/bull-board/issues/1285) (Felix Mosheev) [`94be3f5`](https://github.com/felixmosh/bull-board/commit/94be3f58d2ddd9e7895e3b9c306745004bc2d482)
+
+##### Dependency Updates
+
+- bump ws in /examples/with-nestjs-module ([#&#8203;1302](https://github.com/felixmosh/bull-board/issues/1302)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`b5e450f`](https://github.com/felixmosh/bull-board/pull/1302)
+- bump body-parser in /examples/with-express ([#&#8203;1301](https://github.com/felixmosh/bull-board/issues/1301)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`835928e`](https://github.com/felixmosh/bull-board/pull/1301)
+- bump fast-uri in /examples/with-fastify-visibility-guard ([#&#8203;1300](https://github.com/felixmosh/bull-board/issues/1300)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`d290906`](https://github.com/felixmosh/bull-board/pull/1300)
+- bump tar from 7.5.16 to 7.5.22 in /examples/with-h3 ([#&#8203;1296](https://github.com/felixmosh/bull-board/issues/1296)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`7697438`](https://github.com/felixmosh/bull-board/pull/1296)
+- bump brace-expansion in /examples/with-elysia ([#&#8203;1297](https://github.com/felixmosh/bull-board/issues/1297)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`3770fc6`](https://github.com/felixmosh/bull-board/pull/1297)
+
+##### [v8.3.1](https://github.com/felixmosh/bull-board/compare/v8.3.0...v8.3.1)
+
+> 2026-07-28
+
+##### Features
+
+- show completed vs failed split in the metrics history queue table ([#&#8203;1289](https://github.com/felixmosh/bull-board/issues/1289)) (Aleksander Stós) [`2910700`](https://github.com/felixmosh/bull-board/pull/1289)
+
+##### Bug Fixes
+
+- update MSW to latest (Felix Mosheev) [`cc0016f`](https://github.com/felixmosh/bull-board/commit/cc0016ffb883c8f0a663f92a393075367af33deb)
+- prevent from MatricsHeader jump when colappsing (Felix Mosheev) [`a0da385`](https://github.com/felixmosh/bull-board/commit/a0da3851eb3ff915b8de413a5ce630efc1f3b626)
+- comment of release (Felix Mosheev) [`c5aae9b`](https://github.com/felixmosh/bull-board/commit/c5aae9bb3efdc932aef16ff748dbd9837056f6a9)
+- remove job scheduler runs without destroying the schedule ([#&#8203;1284](https://github.com/felixmosh/bull-board/issues/1284)) (Aleksander Stós) [`ccdb784`](https://github.com/felixmosh/bull-board/pull/1284)
+
+##### Dependency Updates
+
+- bump find-my-way ([#&#8203;1288](https://github.com/felixmosh/bull-board/issues/1288)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`8f4f405`](https://github.com/felixmosh/bull-board/pull/1288)
+- bump [@&#8203;fastify/static](https://github.com/fastify/static) from 10.1.0 to 10.1.2 ([#&#8203;1286](https://github.com/felixmosh/bull-board/issues/1286)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`296b204`](https://github.com/felixmosh/bull-board/pull/1286)
+
+##### [v8.3.0](https://github.com/felixmosh/bull-board/compare/v8.2.0...v8.3.0)
+
+> 2026-07-23
+
+##### Features
+
+- add pre-commit hook to format staged files (Felix Mosheev) [`6009d05`](https://github.com/felixmosh/bull-board/commit/6009d059cbc2041daab164cae15f22da606b9cae)
+- add a release auto comment (Felix Mosheev) [`e88e747`](https://github.com/felixmosh/bull-board/commit/e88e747a7223b8cda9c86fac98d74e921896f1fd)
+- show historical metrics in the demo, document [@&#8203;bull-board/metrics](https://github.com/bull-board/metrics) ([#&#8203;1283](https://github.com/felixmosh/bull-board/issues/1283)) (Aleksander Stós) [`b7d8e03`](https://github.com/felixmosh/bull-board/pull/1283)
+- retry all failed jobs from the overview screen ([#&#8203;1278](https://github.com/felixmosh/bull-board/issues/1278)) (Aleksander Stós) [`088e801`](https://github.com/felixmosh/bull-board/pull/1278)
+- retry all failed jobs from the overview screen ([#&#8203;1278](https://github.com/felixmosh/bull-board/issues/1278)) (Aleksander Stós) [`088e801`](https://github.com/felixmosh/bull-board/commit/088e8019ee36de7c90d4b62500e078a66ac32461)
+
+##### Bug Fixes
+
+- make sure to run test:ui locally (Felix Mosheev) [`50f43ef`](https://github.com/felixmosh/bull-board/commit/50f43efe58896386ef05d9b5568786cccfb94788)
+- restore mobile header logo contrast in light mode ([#&#8203;1282](https://github.com/felixmosh/bull-board/issues/1282)) (Aleksander Stós) [`b197c7e`](https://github.com/felixmosh/bull-board/pull/1282)
+
+##### Refactoring
+
+- replace react-toastify with the base-ui toast ([#&#8203;1281](https://github.com/felixmosh/bull-board/issues/1281)) (Aleksander Stós) [`c3e8a87`](https://github.com/felixmosh/bull-board/pull/1281)
+- share the queue test fixture and trim redundant comments ([#&#8203;1280](https://github.com/felixmosh/bull-board/issues/1280)) (Aleksander Stós) [`62eab99`](https://github.com/felixmosh/bull-board/pull/1280)
+- replace react-toastify with the base-ui toast ([#&#8203;1281](https://github.com/felixmosh/bull-board/issues/1281)) (Aleksander Stós) [`c3e8a87`](https://github.com/felixmosh/bull-board/commit/c3e8a873b27ef330279822cf25a218dd2341e870)
+
+##### [v8.2.0](https://github.com/felixmosh/bull-board/compare/v8.1.2...v8.2.0)
+
+> 2026-07-23
+
+##### Features
+
+- bump deps on examples (Felix Mosheev) [`f144648`](https://github.com/felixmosh/bull-board/commit/f1446480ba2475856c23c345b6f4ce9cbffaeefb)
+- update translations (Felix Mosheev) [`e0878d3`](https://github.com/felixmosh/bull-board/commit/e0878d397a05bca1e0526bb321d9c12c085ec21c)
+- opt-in historical job metrics (beta) ([#&#8203;1256](https://github.com/felixmosh/bull-board/issues/1256)) (Aleksander Stós) [`4db9b79`](https://github.com/felixmosh/bull-board/pull/1256)
+- per-queue job data schema for the add-job form ([#&#8203;1264](https://github.com/felixmosh/bull-board/issues/1264)) (Aleksander Stós) [`6a3e2fd`](https://github.com/felixmosh/bull-board/pull/1264)
+
+##### Bug Fixes
+
+- declare bull queue libraries as optional peers ([#&#8203;1266](https://github.com/felixmosh/bull-board/issues/1266)) (Alexander Morozov) [`df7112d`](https://github.com/felixmosh/bull-board/pull/1266)
+
+##### Dependency Updates
+
+- bump the npm_and_yarn group across 1 directory with 4 updates ([#&#8203;1275](https://github.com/felixmosh/bull-board/issues/1275)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`065c2de`](https://github.com/felixmosh/bull-board/pull/1275)
+- bump brace-expansion ([#&#8203;1274](https://github.com/felixmosh/bull-board/issues/1274)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`8022129`](https://github.com/felixmosh/bull-board/pull/1274)
+- bump oxlint from 1.72.0 to 1.73.0 ([#&#8203;1258](https://github.com/felixmosh/bull-board/issues/1258)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`164dd42`](https://github.com/felixmosh/bull-board/pull/1258)
+- bump [@&#8203;rsbuild/core](https://github.com/rsbuild/core) from 2.1.4 to 2.1.5 ([#&#8203;1259](https://github.com/felixmosh/bull-board/issues/1259)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`bbc855d`](https://github.com/felixmosh/bull-board/pull/1259)
+- bump multer ([#&#8203;1257](https://github.com/felixmosh/bull-board/issues/1257)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`aae11b0`](https://github.com/felixmosh/bull-board/pull/1257)
+- bump js-yaml ([#&#8203;1241](https://github.com/felixmosh/bull-board/issues/1241)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`b11e48d`](https://github.com/felixmosh/bull-board/pull/1241)
+
+##### Chores
+
+- deps bump (Felix Mosheev) [`6c5ccdb`](https://github.com/felixmosh/bull-board/commit/6c5ccdb650c7108997cf4625b7b40dfd82d4387a)
+
+##### Other Changes
+
+- Update Turkish translations in messages.json ([#&#8203;1271](https://github.com/felixmosh/bull-board/issues/1271)) (Berk Altıok) [`198cc19`](https://github.com/felixmosh/bull-board/pull/1271)
+
+##### [v8.1.2](https://github.com/felixmosh/bull-board/compare/v8.1.1...v8.1.2)
+
+> 2026-07-06
+
+##### Features
+
+- update yarn (Felix Mosheev) [`5e2f0c7`](https://github.com/felixmosh/bull-board/commit/5e2f0c79cfd382fcc76495e593874f5ea3736578)
+- type-check i18n keys and enforce locale completeness in CI ([#&#8203;1255](https://github.com/felixmosh/bull-board/issues/1255)) (Aleksander Stós) [`2d2a7c6`](https://github.com/felixmosh/bull-board/pull/1255)
+
+##### Bug Fixes
+
+- enable tsx type check at build, remove redandat typecheck script (Felix Mosheev) [`b235115`](https://github.com/felixmosh/bull-board/commit/b2351153b3eaffca6de5006132511ed67ad4c3e2)
+
+##### Dependency Updates
+
+- bump [@&#8203;faker-js/faker](https://github.com/faker-js/faker) from 9.9.0 to 10.5.0 ([#&#8203;1251](https://github.com/felixmosh/bull-board/issues/1251)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`bc33ef0`](https://github.com/felixmosh/bull-board/pull/1251)
+
+##### Chores
+
+- deps bump (Felix Mosheev) [`3f19578`](https://github.com/felixmosh/bull-board/commit/3f19578474acae10e6196fc5d718726250c02d4f)
+
+##### [v8.1.1](https://github.com/felixmosh/bull-board/compare/v8.1.0...v8.1.1)
+
+> 2026-07-06
+
+##### Features
+
+- migrate queue/job data layer to React Query ([#&#8203;1247](https://github.com/felixmosh/bull-board/issues/1247)) (Aleksander Stós) [`7e317b3`](https://github.com/felixmosh/bull-board/pull/1247)
+
+##### Bug Fixes
+
+- add missing queue.info messages (Felix Mosheev) [`ec64657`](https://github.com/felixmosh/bull-board/commit/ec646572329be96b563269b011583aaa14e4b5e0)
+
+##### Chores
+
+- remove dead tooling files and add CONTRIBUTING guide ([#&#8203;1250](https://github.com/felixmosh/bull-board/issues/1250)) (Aleksander Stós) [`5e6f3f2`](https://github.com/felixmosh/bull-board/pull/1250)
+
+##### Documentation
+
+- harden recipes and fix queue-adapter option docs ([#&#8203;1253](https://github.com/felixmosh/bull-board/issues/1253)) (Aleksander Stós) [`7029fce`](https://github.com/felixmosh/bull-board/pull/1253)
+- refresh README screenshots to current UI ([#&#8203;1249](https://github.com/felixmosh/bull-board/issues/1249)) (Aleksander Stós) [`6db0ed2`](https://github.com/felixmosh/bull-board/pull/1249)
+- add auto-login guidance for token-based frontends ([#&#8203;1248](https://github.com/felixmosh/bull-board/issues/1248)) (Aleksander Stós) [`aa18dfd`](https://github.com/felixmosh/bull-board/pull/1248)
+
+##### [v8.1.0](https://github.com/felixmosh/bull-board/compare/v8.0.2...v8.1.0)
+
+> 2026-07-02
+
+##### Features
+
+- transalte locales (Felix Mosheev) [`53efcf2`](https://github.com/felixmosh/bull-board/commit/53efcf20bdd8c04f30d8be9b18d3eb1d2365bcfd)
+- add grouped queue overview ([#&#8203;1245](https://github.com/felixmosh/bull-board/issues/1245)) (Aleksander Stós) [`e89b303`](https://github.com/felixmosh/bull-board/pull/1245)
+- add collapsible sidebar and search hotkey ([#&#8203;1244](https://github.com/felixmosh/bull-board/issues/1244)) (Aleksander Stós) [`bb7788c`](https://github.com/felixmosh/bull-board/pull/1244)
+- add queue default job options and info panel ([#&#8203;1243](https://github.com/felixmosh/bull-board/issues/1243)) (Aleksander Stós) [`7db0d3f`](https://github.com/felixmosh/bull-board/pull/1243)
+
+##### Bug Fixes
+
+- support queues with the same name but different prefix ([#&#8203;1246](https://github.com/felixmosh/bull-board/issues/1246)) (Aleksander Stós) [`f9ee91a`](https://github.com/felixmosh/bull-board/pull/1246)
+
+##### Dependency Updates
+
+- bump js-yaml in the npm_and_yarn group across 1 directory ([#&#8203;1240](https://github.com/felixmosh/bull-board/issues/1240)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`6b917d0`](https://github.com/felixmosh/bull-board/pull/1240)
+
+##### Chores
+
+- translate locales (Felix Mosheev) [`5698aab`](https://github.com/felixmosh/bull-board/commit/5698aabc35792fdb1e330f12bec1ed281e63ddd1)
+- update job options schemas (Felix Mosheev) [`754baee`](https://github.com/felixmosh/bull-board/commit/754baee82293559e65c40c20bc364b6530d37391)
+
+##### Refactoring
+
+- split settings modal into collapsible sections ([#&#8203;1242](https://github.com/felixmosh/bull-board/issues/1242)) (Aleksander Stós) [`4321e93`](https://github.com/felixmosh/bull-board/pull/1242)
+
+##### [v8.0.2](https://github.com/felixmosh/bull-board/compare/v8.0.1...v8.0.2)
+
+> 2026-06-30
+
+##### Bug Fixes
+
+- improve autoscroll behavior in JobLogs component ([#&#8203;1239](https://github.com/felixmosh/bull-board/issues/1239)) ([@&#8203;alex](https://github.com/alex)) [`f614f54`](https://github.com/felixmosh/bull-board/pull/1239)
+- wrap long values in CollapsibleJSON to prevent overflow ([#&#8203;1231](https://github.com/felixmosh/bull-board/issues/1231)) (Sven) [`93557fe`](https://github.com/felixmosh/bull-board/pull/1231)
+
+##### Dependency Updates
+
+- bump [@&#8203;codemirror/lint](https://github.com/codemirror/lint) from 6.9.6 to 6.9.7 ([#&#8203;1234](https://github.com/felixmosh/bull-board/issues/1234)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`0e8bae9`](https://github.com/felixmosh/bull-board/pull/1234)
+- bump axios from 1.17.0 to 1.18.0 ([#&#8203;1227](https://github.com/felixmosh/bull-board/issues/1227)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`e175100`](https://github.com/felixmosh/bull-board/pull/1227)
+- bump [@&#8203;rsbuild/core](https://github.com/rsbuild/core) from 2.0.11 to 2.0.15 ([#&#8203;1226](https://github.com/felixmosh/bull-board/issues/1226)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`0e426e9`](https://github.com/felixmosh/bull-board/pull/1226)
+
+##### Chores
+
+- update deps (Felix Mosheev) [`e1a8cd8`](https://github.com/felixmosh/bull-board/commit/e1a8cd8b4ee7ce47c91f2a02107342c50853d259)
+- enforce formatting and linting in CI, unify example formatting ([#&#8203;1225](https://github.com/felixmosh/bull-board/issues/1225)) (Aleksander Stós) [`8dcd589`](https://github.com/felixmosh/bull-board/pull/1225)
+
+##### [v8.0.1](https://github.com/felixmosh/bull-board/compare/v8.0.0...v8.0.1)
+
+> 2026-06-18
+
+##### Features
+
+- add download stats badges to package list in README.md (Felix Mosheev) [`b47565d`](https://github.com/felixmosh/bull-board/commit/b47565da731c116bd665d972e7a461abee60cbea)
+- add Next.js & Vercel examples, docs, and regression test ([#&#8203;1224](https://github.com/felixmosh/bull-board/issues/1224)) (Aleksander Stós) [`7f3885c`](https://github.com/felixmosh/bull-board/pull/1224)
+- add Next.js & Vercel examples, docs, and regression test ([#&#8203;1224](https://github.com/felixmosh/bull-board/issues/1224)) (Aleksander Stós) [`7f3885c`](https://github.com/felixmosh/bull-board/commit/7f3885c904ee9c4cdd0b679b1d16efd3ec03b88d)
+
+##### Dependency Updates
+
+- bump the npm_and_yarn group across 1 directory with 2 updates ([#&#8203;1222](https://github.com/felixmosh/bull-board/issues/1222)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`a1ec0d3`](https://github.com/felixmosh/bull-board/pull/1222)
+- bump the npm_and_yarn group across 9 directories with 5 updates ([#&#8203;1223](https://github.com/felixmosh/bull-board/issues/1223)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`95f3141`](https://github.com/felixmosh/bull-board/pull/1223)
+- bump date-fns from 3.6.0 to 4.4.0 ([#&#8203;1211](https://github.com/felixmosh/bull-board/issues/1211)) ([@&#8203;dependabot](https://github.com/dependabot)\[bot]) [`12de4da`](https://github.com/felixmosh/bull-board/pull/1211)
+
+##### Chores
+
+- reformat code (Felix Mosheev) [`565874c`](https://github.com/felixmosh/bull-board/commit/565874cfa22eee2b0f2225354ee887c228c6312a)
+
+##### Documentation
+
+- remove redundant arrow glyph from demo links ([#&#8203;1220](https://github.com/felixmosh/bull-board/issues/1220)) (Aleksander Stós) [`0735198`](https://github.com/felixmosh/bull-board/pull/1220)
+
+</details>
+
+---
+
+### Configuration
+
+📅 **Schedule**: (UTC)
+
+- Branch creation
+  - At any time (no schedule defined)
+- Automerge
+  - At any time (no schedule defined)
+
+🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.
+
+♻ **Rebasing**: Whenever PR becomes conflicted, or you tick the rebase/retry checkbox.
+
+🔕 **Ignore**: Close this PR and you won't be reminded about these updates again.
+
+---
+
+ - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box
+
+---
+
+This PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/anthony-spruyt/spruyt-labs).
+<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0NC4xMjUuMSIsInVwZGF0ZWRJblZlciI6IjQ0LjEzNC4xIiwidGFyZ2V0QnJhbmNoIjoibWFpbiIsImxhYmVscyI6WyJyZW5vdmF0ZS9ucG0iXX0=-->
