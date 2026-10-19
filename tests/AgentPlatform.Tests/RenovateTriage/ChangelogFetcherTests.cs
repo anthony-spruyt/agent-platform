@@ -134,6 +134,22 @@ public class ChangelogFetcherTests
     }
 
     [Theory]
+    [InlineData("https://redirect.github.com/upstream/dep", true)]
+    [InlineData("https://redirect.github.com/upstream/dep/", true)]
+    [InlineData("https://redirect.github.com/upstream/dep/tree/HEAD/packages/x", false)]
+    [InlineData("https://redirect.github.com/upstream/dep/tree/main/packages/x/", false)]
+    [InlineData("https://redirect.github.com/upstream/dep/blob/main/CHANGELOG.md", false)]
+    public async Task Fetch_ReadsASourceOnlyWhenItsLinkIsTheRepoRoot(string source, bool fetched)
+    {
+        var (fetcher, api) = Create();
+        var body = $"| Package | Change |\n|---|---|\n| [dep](https://example.test) ([source]({source})) | `v1.2.2` → `v1.2.3` |\n";
+
+        await fetcher.FetchAsync(Repo, RenovateBodyTable.Parse(body), Ct);
+
+        Assert.Equal(fetched, api.Calls.Count > 0);
+    }
+
+    [Theory]
     [InlineData("1.0.\uFF10")]
     [InlineData("v1.0.\u0663")]
     public async Task Fetch_SkipsAVersionWithNonAsciiDigitsWithoutFailing(string to)

@@ -29,7 +29,7 @@ public sealed partial class ChangelogFetcher(IGitHubApiClient github)
     }
 
     internal static bool IsFetchable(RenovateUpdate update) =>
-        update.SourceRepo is not null && GitHubRepoName.TryParse(update.SourceRepo, out _, out _);
+        update.SourceRepo is not null && update.SourcePath is null && GitHubRepoName.TryParse(update.SourceRepo, out _, out _);
 
     internal static IReadOnlyList<RenovateUpdate> FetchableUpdates(IEnumerable<RenovateUpdate> updates) =>
         [.. updates.Where(IsFetchable).DistinctBy(u => (u.SourceRepo!.ToUpperInvariant(), u.To.TrimStart('v', 'V')))];

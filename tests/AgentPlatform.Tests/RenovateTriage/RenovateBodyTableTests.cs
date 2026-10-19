@@ -77,15 +77,48 @@ public class RenovateBodyTableTests
     }
 
     [Theory]
-    [InlineData("https://github.com/a/b/tree/HEAD/packages/b", "a/b")]
-    [InlineData("https://redirect.github.com/a/b/tree/main/x/y/", "a/b")]
-    [InlineData("https://github.com/a/b/c/d", "a/b")]
-    [InlineData("https://github.com/a/b/", "a/b")]
-    public void Parse_ReadsTheSourceRepoOutOfARepoLinkWithAPath(string url, string source)
+    [InlineData("https://github.com/a/b/tree/HEAD/packages/b", "a/b", "tree/HEAD/packages/b")]
+    [InlineData("https://redirect.github.com/a/b/tree/main/x/y/", "a/b", "tree/main/x/y")]
+    [InlineData("https://github.com/a/b/c/d", "a/b", "c/d")]
+    [InlineData("https://github.com/a/b/blob/main/CHANGELOG.md", "a/b", "blob/main/CHANGELOG.md")]
+    [InlineData("https://github.com/a/b/", "a/b", null)]
+    [InlineData("https://github.com/a/b", "a/b", null)]
+    public void Parse_ReadsTheSourceRepoAndPathOutOfARepoLink(string url, string source, string? path)
     {
         var body = $"| Package | Change |\n|---|---|\n| [dep](https://example.test) ([source]({url})) | `1.0.0` → `1.0.1` |\n";
 
-        Assert.Equal(source, Assert.Single(RenovateBodyTable.Parse(body)).SourceRepo);
+        var update = Assert.Single(RenovateBodyTable.Parse(body));
+
+        Assert.Equal((source, path), (update.SourceRepo, update.SourcePath));
+    }
+
+    [Theory]
+    [InlineData("[`^5.2.0` → `^7.0.0`](https://renovatebot.com/diffs/npm/eslint-plugin-react-hooks/5.2.0/7.1.1)", "", "7.1.1")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/@scope%2fpkg/1.0.0/1.1.4)", "", "1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/@scope/pkg/1.0.0/1.1.4)", "", "1.1.4")]
+    [InlineData("[`v1.0.0` → `~1.1.0`](https://renovatebot.com/diffs/github-actions/a/b/v1.0.0/v1.1.4)", "", "v1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4%2Bbuild)", "", "1.1.4+build")]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.4?slim=true)", "1.1.4")]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/@scope%2fpkg/1.1.4)", "1.1.4")]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/pkg/1.1.4?slim=true)", "1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4)", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.4?slim=true)", "1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4)", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.5?slim=true)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.4?slim=true) ![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/pkg/1.1.5?slim=true)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/1.1.4)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![confidence](https://developer.mend.io/api/mc/badges/confidence/npm/pkg/1.0.0/1.1.4?slim=true)", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://evil.test/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com.evil.test/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://evil.test/?u=https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebotxcom/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://evil.test/api/mc/badges/age/npm/pkg/1.1.4)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developerxmendxio/api/mc/badges/age/npm/pkg/1.1.4)", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/1.0.0/1.1.4)", "", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "", null)]
+    public void Parse_ReadsTheResolvedNewVersionFromTheDiffsLinkOrAgeBadge(string change, string age, string? resolved)
+    {
+        var body = $"| Package | Change | Age |\n|---|---|---|\n| [dep](https://github.com/a/b) | {change} | {age} |\n";
+
+        Assert.Equal(resolved, Assert.Single(RenovateBodyTable.Parse(body)).Resolved);
     }
 
     [Theory]

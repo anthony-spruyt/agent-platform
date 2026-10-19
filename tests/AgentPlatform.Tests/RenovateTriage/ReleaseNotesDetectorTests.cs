@@ -205,6 +205,9 @@ public class ReleaseNotesDetectorTests
     [InlineData("- [@someone](https://github.com/someone) made their first contribution in [#12](https://github.com/o/r/pull/12)")]
     [InlineData("- someone made their first contribution in #12\n- other made her first contribution in #13")]
     [InlineData("- someone made his first contribution in #12")]
+    [InlineData("- Thanks @a! - @someone made their first contribution in #12")]
+    [InlineData("- ABC1234: Updated dependencies")]
+    [InlineData("- Release  dep-v1.2.3\n- sync(charts/dep):  v1.2.3\n- Full  Changelog: x\n- someone made  their  first  contribution in #12")]
     [InlineData("- Updated  dependencies")]
     [InlineData("- Updated&nbsp;dependencies")]
     [InlineData("- &#8203;Updated dependencies")]
@@ -231,6 +234,9 @@ public class ReleaseNotesDetectorTests
     [InlineData("- abc1234: fixed a crash")]
     [InlineData("- Release 2.0 adds streaming support")]
     [InlineData("- abcdef Updated dependencies in the build image")]
+    [InlineData("- Full Changelogs are now signed")]
+    [InlineData("- someone made their first contributions page")]
+    [InlineData("- aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: Updated dependencies")]
     [InlineData("- Updated dependencies\n\n## New Contributors\n\n* @someone made their first contribution in #12\n\n- fixed a crash")]
     public void Body_WithARealBulletBesideDependencyBotOrContributorLines_HasNotes(string bullets) =>
         Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + bullets))));
@@ -269,6 +275,10 @@ public class ReleaseNotesDetectorTests
     [Fact]
     public void Body_WithBulletsOnlyInTheConfigurationSection_HasNoNotes() =>
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + TitleOnly))));
+
+    [Fact]
+    public void Body_WhoseBlockClosesAfterAConfigurationHeading_DoesNotAddItAgain() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Grouped(Block(Versioned + "- fixed a crash\n\n## Configuration", "o/a (a)"))));
 
     [Fact]
     public void Body_WithAConfigurationHeadingInsideTheNotes_KeepsReadingTheBlock() =>
@@ -664,9 +674,6 @@ public class ReleaseNotesDetectorTests
     [InlineData("~1.2.0")]
     [InlineData("~>1.2")]
     [InlineData("~> 1.2")]
-    [InlineData(">=1.2,<1.3")]
-    [InlineData(">=1.2 <1.3")]
-    [InlineData("*")]
     [InlineData("1.2.3-alpine")]
     [InlineData("1.2.3-alpine-slim")]
     [InlineData("1.2")]
@@ -677,6 +684,13 @@ public class ReleaseNotesDetectorTests
 
     [Theory]
     [InlineData("1.2.4")]
+    [InlineData("^1.3.0")]
+    [InlineData("~> 1.3")]
+    [InlineData("^9.0.0")]
+    [InlineData(">=1.2,<1.3")]
+    [InlineData(">=1.2 <1.3")]
+    [InlineData("<2")]
+    [InlineData("*")]
     [InlineData("1.2.3-alpine", "1.2.4")]
     [InlineData("1.2-alpine")]
     [InlineData("1-slim")]
@@ -709,18 +723,47 @@ public class ReleaseNotesDetectorTests
     [InlineData("==1.2.3", "1.2.4", false)]
     [InlineData("1.2.3-rc.2", "1.2.3-rc.1", false)]
     [InlineData("^1.2.3", "1.2.4", true)]
-    [InlineData("^1.2.3", "0.0.1", true)]
+    [InlineData("^1.2.3", "0.0.1", false)]
+    [InlineData("^1.3.0", "1.2.6", false)]
+    [InlineData(">=1.3.0", "0.0.1", false)]
+    [InlineData("~> 0.79", "0.78.3", false)]
+    [InlineData("^9.0.0", "0.0.1", false)]
+    [InlineData("^20.0.0", "20.1.1", true)]
+    [InlineData("~> 0.81", "0.81.2", true)]
+    [InlineData("^1.2", "1.2.0", true)]
+    [InlineData("^1.2.0", "1.10.0", true)]
+    [InlineData("^1.10.0", "1.9.0", false)]
+    [InlineData("^1.02.0", "1.2.0", true)]
+    [InlineData("^1.0.0", "1.0", true)]
+    [InlineData("^1.0.1", "1.0", false)]
+    [InlineData("^1", "1.0.0", true)]
+    [InlineData("^1.0", "1.99999999999999999999", true)]
+    [InlineData("^1.99999999999999999999", "1.99999999999999999998", false)]
+    [InlineData(">= 1.2", "1.2.5", true)]
+    [InlineData("> 1", "2", true)]
+    [InlineData("^1.2.3", "1.2.3-rc.1", false)]
+    [InlineData("^1.2.3", "1.3.x", false)]
+    [InlineData("^1.2.3", "^1.2.3", false)]
+    [InlineData("^1.2.3", "", false)]
+    [InlineData("^1.2.x", "1.2.5", false)]
+    [InlineData("^1.2.3 ", "1.2.4", true)]
     [InlineData("~1.2.0", "1.2.9", true)]
     [InlineData("~>0.81", "0.81.4", true)]
     [InlineData("~> 0.81", "0.82.0", true)]
     [InlineData(">1", "2", true)]
-    [InlineData("<2", "1.9.0", true)]
-    [InlineData("*", "1.2.3", true)]
-    [InlineData(">=0.13,<0.14", "0.13.0", true)]
-    [InlineData("1.0,2.0", "2.0", true)]
-    [InlineData("1.0 - 2.0", "2.0", true)]
-    [InlineData("1.0|2.0", "2.0", true)]
-    [InlineData("1.0 || 2.0", "2.0", true)]
+    [InlineData("= 1.2", "1.2.5", true)]
+    [InlineData("= 1.3", "1.2.5", false)]
+    [InlineData("<2", "1.9.0", false)]
+    [InlineData("<=2", "1.9.0", false)]
+    [InlineData("<2.0.0", "0.0.1", false)]
+    [InlineData("*", "1.2.3", false)]
+    [InlineData(">=0.13,<0.14", "0.13.0", false)]
+    [InlineData(">=1.2 <1.3", "1.2.5", false)]
+    [InlineData("1.0,2.0", "2.0", false)]
+    [InlineData("1.0 - 2.0", "2.0", false)]
+    [InlineData("1.0|2.0", "2.0", false)]
+    [InlineData("1.0 || 2.0", "2.0", false)]
+    [InlineData("^1.0.0 || ^2.0.0", "2.1.0", false)]
     [InlineData("1.^2", "9.9.9", false)]
     [InlineData("a<b", "9.9.9", false)]
     [InlineData("a>b", "9.9.9", false)]
@@ -745,6 +788,29 @@ public class ReleaseNotesDetectorTests
     [InlineData("7", "70.0.0", false)]
     [InlineData("7", "8.0.0", false)]
     [InlineData("1.2.3", "1.2.3.9", false)]
+    [InlineData("1.2.3-rc.1", "1.2.3", false)]
+    [InlineData("1.2.3-rc1", "1.2.3", false)]
+    [InlineData("1.2.3-RC.1", "1.2.3", false)]
+    [InlineData("1.2.3-alpha", "1.2.3", false)]
+    [InlineData("1.2.3-alpha.2", "1.2.3", false)]
+    [InlineData("1.2.3-beta.2", "1.2.3", false)]
+    [InlineData("1.2.3-pre", "1.2.3", false)]
+    [InlineData("1.2.3-dev", "1.2.3", false)]
+    [InlineData("1.2.3-preview.1", "1.2.3", false)]
+    [InlineData("1.2.3-canary.5", "1.2.3", false)]
+    [InlineData("1.2.3-next.2", "1.2.3", false)]
+    [InlineData("1.2.3-rc.1.2", "1.2.3", false)]
+    [InlineData("1.2.3-beta.hotfix", "1.2.3", false)]
+    [InlineData("1.2.3-rc-alpine", "1.2.3", false)]
+    [InlineData("1.2.3-rc_x", "1.2.3", false)]
+    [InlineData("1.2.3-alpine-rc.1", "1.2.3", false)]
+    [InlineData("1.2.3-rc.1", "1.2.3-rc.1", true)]
+    [InlineData("1.2.3-slim", "1.2.3", true)]
+    [InlineData("1.2-rc.1", "1.2.0", false)]
+    [InlineData("1.2", "1.2.0-rc.1", false)]
+    [InlineData("1.2", "1.2.3+build", false)]
+    [InlineData("1.2", "1.2.x", false)]
+    [InlineData("1", "1.0.0-beta", false)]
     [InlineData("1.2.3", "1.2.3-alpine", false)]
     [InlineData("latest", "1.2.3", false)]
     [InlineData("main", "main2", false)]
@@ -759,6 +825,47 @@ public class ReleaseNotesDetectorTests
     [InlineData("a-1", "1", false)]
     public void CoversVersion_AcceptsTheNewestSectionOnlyWhenItIsTheNewVersionOrTheRangeOrTagCoversIt(string to, string newest, bool covers) =>
         Assert.Equal(covers, ReleaseNotesDetector.CoversVersion(to, newest.TrimStart('v')));
+
+    [Theory]
+    [InlineData("^1.0.0", "1.3.5", "1.3.5", true)]
+    [InlineData("^1.0.0", "v1.3.5", "1.3.5", true)]
+    [InlineData("^1.0.0", "1.3.5", "1.3.4", false)]
+    [InlineData("^1.0.0", "1.3.5", "1.4.0", false)]
+    [InlineData("^1.0.0", "1.3.5", "1.3.50", false)]
+    [InlineData("^1.0.0", "1.3.5", "1.0.0", false)]
+    [InlineData("^1.0.0", "1.3.5", "", false)]
+    [InlineData("^1.0.0", "1.3.5-rc.1", "1.3.5", false)]
+    [InlineData("~> 0.79", "0.79.2", "0.79.2", true)]
+    [InlineData("~> 0.79", "0.79.2", "0.80.0", false)]
+    [InlineData(">=0.13,<0.14", "0.13.1", "0.13.1", true)]
+    [InlineData(">=0.13,<0.14", "0.13.1", "0.13.0", false)]
+    [InlineData("<2", "1.9.0", "1.9.0", true)]
+    [InlineData("*", "1.2.3", "1.2.3", true)]
+    [InlineData("^1.0.0 || ^2.0.0", "2.1.0", "2.1.0", true)]
+    [InlineData("^1.0.0 || ^2.0.0", "2.1.0", "1.0.0", false)]
+    [InlineData("^1.2.3", "9.9.9", "1.2.3", false)]
+    public void CoversVersion_WhenTheRowShowsTheResolvedVersion_AcceptsOnlyAHeadingEqualToIt(string to, string resolved, string newest, bool covers) =>
+        Assert.Equal(covers, ReleaseNotesDetector.CoversVersion(to, newest, resolved));
+
+    [Fact]
+    public void Body_WhereTheRowShowsTheResolvedVersion_NeedsTheNewestSectionToBeThatVersion()
+    {
+        static string Linked(string resolved) =>
+            $"| [dep](https://redirect.github.com/o/r) | [`^1.0.0` → `^1.2.0`](https://renovatebot.com/diffs/npm/dep/1.0.0/{resolved}) | ![age](https://developer.mend.io/api/mc/badges/age/npm/dep/{resolved}?slim=true) |";
+
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Linked("1.2.3")], Block(Versioned + "- fixed a crash"))));
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Doc([Linked("1.2.4")], Block(Versioned + "- fixed a crash"))));
+    }
+
+    [Fact]
+    public void Body_WhereTheRowShowsOnlyAnAgeBadge_NeedsTheNewestSectionToBeThatVersion()
+    {
+        static string Badged(string resolved) =>
+            $"| [dep](https://redirect.github.com/o/r) | `>=1.0,<2.0` → `>=1.2,<2.0` | ![age](https://developer.mend.io/api/mc/badges/age/npm/dep/{resolved}?slim=true) |";
+
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Badged("1.2.3")], Block(Versioned + "- fixed a crash"))));
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Doc([Badged("1.2.4")], Block(Versioned + "- fixed a crash"))));
+    }
 
     [Fact]
     public void Body_WhereAnUpdateHasASource_MatchesItsBlockOnlyBySource() =>
@@ -907,6 +1014,15 @@ public class ReleaseNotesDetectorTests
 
         Assert.False(ReleaseNotesDetector.Found(body, ["## 1.2.3\n\n- the crash"]));
         Assert.False(ReleaseNotesDetector.Found(body, ["## 1.2.3\n\n- the crash", "## 1.2.3\n\n- the crash"]));
+    }
+
+    [Fact]
+    public void Found_WhenAnUpdateSourceIsAPathInsideARepo_NeedsTheNotesInTheBody()
+    {
+        var path = Row("a", "o/a/tree/HEAD/packages/a");
+
+        Assert.False(ReleaseNotesDetector.Found(Doc([path], Block(Versioned + TitleOnly, "o/a (a)")), ["## 1.2.3\n\n- the crash"]));
+        Assert.True(ReleaseNotesDetector.Found(Doc([path], Block(Versioned + "- fixed a crash", "o/a (a)")), null));
     }
 
     [Fact]
