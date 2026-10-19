@@ -499,6 +499,63 @@ public class RenovateTriageCodeActivitiesTests
             Assert.Contains("npm ERR! boom", all, StringComparison.Ordinal);
         }
 
+        private static async Task<string> CiLine(Rig rig)
+        {
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
+
+            return result.Context!.Sections[0].Split('\n').Single(l => l.StartsWith("CI:", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task PassingChecks_AreGreenInTheFacts()
+        {
+            Assert.Equal("CI: green", await CiLine(Create()));
+        }
+
+        [Fact]
+        public async Task FailedChecks_AreCountedInTheFacts_AndTheirNamesStayOutOfThem()
+        {
+            var rig = Create();
+            Fail(rig, 11, 900, 1, "build one");
+            Fail(rig, 12, 901, 1, "build two");
+
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, "ci-failed", Body())));
+
+            var facts = result.Context!.Sections[0];
+            Assert.Contains("\nCI: failing (2 checks)\n", facts, StringComparison.Ordinal);
+            Assert.DoesNotContain("build one", facts, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task ChecksThatHaveNotCompleted_AreCountedAsPending()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(rig.Github.Checks[0] with { Id = 2, Name = "test", Status = "in_progress", Conclusion = null });
+
+            Assert.Equal("CI: pending (1 check)", await CiLine(rig));
+        }
+
+        [Fact]
+        public async Task AQueuedSuiteWithNoRunsYet_ReadsAsPending()
+        {
+            var rig = Create();
+            rig.Github.Suites.Add(new GitHubCheckSuite(2, "queued", null, "github-actions", 0));
+
+            Assert.Equal("CI: pending", await CiLine(rig));
+            Assert.Contains($"suites:{Sha}", rig.Github.Calls);
+        }
+
+        [Fact]
+        public async Task MergifyChecks_DoNotChangeTheCiLine()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(rig.Github.Checks[0] with { Id = 2, Name = "Mergify Merge Protections", Status = "in_progress", Conclusion = null, AppSlug = "mergify" });
+            rig.Github.Checks.Add(rig.Github.Checks[0] with { Id = 3, Name = "Summary", Conclusion = "failure", AppSlug = "mergify" });
+            rig.Github.Suites.Add(new GitHubCheckSuite(2, "in_progress", null, "mergify", 2));
+
+            Assert.Equal("CI: green", await CiLine(rig));
+        }
+
         [Fact]
         public async Task TheVersionsTheHeadCommitStates_AreReturnedForCheckingTheResult()
         {

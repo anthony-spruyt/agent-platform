@@ -103,6 +103,20 @@ public class GitHubCheckRunTests
     }
 
     [Fact]
+    public async Task OurOwnOpenTriageRun_NeverShowsInTheCiSummary()
+    {
+        var (client, _, _) = Create(r => RunsAndSuites(r, Runs(
+            Run(1, "build", 15368, null),
+            Run(2, "Agent triage", OwnAppId, TriageId, "in_progress", null))));
+
+        var summary = TriageRules.SummariseChecks(
+            await client.ListCheckRunsAsync("octo/widgets", Sha, Ct),
+            await client.ListCheckSuitesAsync("octo/widgets", Sha, Ct));
+
+        Assert.Equal(new CiSummary(CiState.Passed, 0), summary);
+    }
+
+    [Fact]
     public async Task ListCheckSuites_ParsesTheAppIdAndDropsOurOwnSuites()
     {
         var (client, _, _) = Create(_ => StubHttpHandler.Json("""

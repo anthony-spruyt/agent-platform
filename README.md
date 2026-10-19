@@ -153,8 +153,9 @@ A run started after the `renovate-triage-step2-v1` patch also does the following
    Anything else is needs review with reason `ci-failed`. The CI wait itself is `CiWait`: the two hours start at the first pending pass and start over after a rerun, and the wait after a rerun uses the same two hours.
 4. When Jev finds no changelog, `FetchChangelog` fetches the release notes of each update in the body and scans each section. Jev is asked once more only when every section is `Clean`; if any section is held back, the pull request stays needs review with reason `no-changelog`.
 5. In `Live` mode only, once `Apply` has written a needs-review verdict for a reason the code cannot settle by itself (not `non-renovate-commit`, a precheck reason or `hands-on-migration`),
-   `BuildContext` builds the triage context for the Claude rung: typed facts (repository, pull request, head sha, reason, count of failing jobs, texts held back) plus the scanned pull request body, changelog sections and CI log tails (each ending at the log's last `##[error]` line, or the plain tail when there is none),
+   `BuildContext` builds the triage context for the Claude rung: typed facts (repository, pull request, head sha, reason, CI state, count of failing jobs, texts held back) plus the scanned pull request body, changelog sections and CI log tails (each ending at the log's last `##[error]` line, or the plain tail when there is none),
    each in a block with a random per-context tag. A CI job is titled `CI job <n>` in the trusted index; its name sits inside the scanned block.
+   The CI state is one fact line from the same rules `Apply` uses, over the check runs and check suites with Mergify, `renovate/stability-days` and the `Agent triage` check left out: `CI: green`, or `CI: pending` or `CI: failing` with a count of checks and no names.
    The changelogs are fetched only when the body scan is clean.
    The workflow keeps it for the `get_triage_context` query that the Claude rung's pod reads.
    Once the `renovate-triage-claude-v1` patch applies, a context that cannot be built parks the run (see Claude rung); before it, the run records the failed step and carries on.

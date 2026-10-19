@@ -107,6 +107,7 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
             }
 
             var checks = await github.ListCheckRunsAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            var suites = await github.ListCheckSuitesAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
             var failing = await FailingJobsAsync(input.Repo, checks, cancellationToken).ConfigureAwait(false);
             var jobs = await JobLogsAsync(input.Repo, failing, cancellationToken).ConfigureAwait(false);
             for (var i = 0; i < jobs.Count; i++)
@@ -115,7 +116,7 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
                 bundle.Add("ci-log", $"CI job {i + 1}", scan.Outcome, scan.Text);
             }
 
-            var facts = new TriageFacts(input.Repo, input.PrNumber, input.HeadSha, input.Reason, jobs.Count, bundle.HeldBack);
+            var facts = new TriageFacts(input.Repo, input.PrNumber, input.HeadSha, input.Reason, jobs.Count, bundle.HeldBack, TriageRules.SummariseChecks(checks, suites));
             return new BuildContextResult(false, TriageContextBuilder.Build(facts, bundle.Items), stated);
         });
 

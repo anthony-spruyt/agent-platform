@@ -25,6 +25,8 @@ public enum CiState
     Pending,
 }
 
+public sealed record CiSummary(CiState State, int Checks);
+
 public sealed record JevAnswers(double Breaking, string BumpType, double Changelog);
 
 public sealed record TriageDecision(TriageVerdict Verdict, string Reason, string? Comment);
@@ -213,6 +215,18 @@ public static partial class TriageRules
         }
 
         return considered.Any(IsFailing) ? CiState.Failed : CiState.Passed;
+    }
+
+    public static CiSummary SummariseChecks(IReadOnlyList<GitHubCheckRun> checks, IReadOnlyList<GitHubCheckSuite> suites)
+    {
+        var state = AssessChecks(checks, suites);
+        var count = state switch
+        {
+            CiState.Pending => ConsideredChecks(checks).Count(c => !IsCompleted(c.Status)),
+            CiState.Failed => FailedChecks(checks).Count,
+            _ => 0,
+        };
+        return new CiSummary(state, count);
     }
 
     public static IReadOnlyList<GitHubCheckRun> FailedChecks(IReadOnlyList<GitHubCheckRun> checks)
