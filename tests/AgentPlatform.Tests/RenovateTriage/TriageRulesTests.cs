@@ -893,6 +893,19 @@ public class TriageRulesTests
         }
 
         [Fact]
+        public void CiFailed_ListsACommitStatusByNameWithoutALink()
+        {
+            var comment = TriageRules.CiFailedDecision(
+                Repo,
+                Head,
+                [new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null), new GitHubCheckRun(11, "build", "completed", "failure", "github-actions")]).Comment!;
+
+            Assert.Equal(
+                "**Needs review:** CI failed on `0123456`. Failed: `Terraform Cloud/spruyt-labs/repo`, [`build`](https://github.com/anthony-spruyt/widgets/runs/11).",
+                comment);
+        }
+
+        [Fact]
         public void CiFailed_WithoutNamedChecks_StatesOnlyTheSha()
         {
             Assert.Equal("**Needs review:** CI failed on `0123456`.", TriageRules.CiFailedDecision(Repo, Head, []).Comment);

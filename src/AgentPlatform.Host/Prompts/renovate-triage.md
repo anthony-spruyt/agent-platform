@@ -38,19 +38,19 @@ Otherwise, analyse it yourself:
 
 ## Verdict
 
-- `SAFE`: a plain update, CI green, nothing upstream affects this repository.
+- `SAFE`: a plain update, CI not red, nothing upstream affects this repository.
 - `FIXABLE`: wanted, but needs a change here (list it in `fix`), including a CI failure this update caused that can be fixed.
 - `BLOCKED`: must not merge as it stands: a regression, an incompatibility, a broken upstream release.
 - `NEEDS_REVIEW`: the evidence does not decide it, or a human should look.
 
-CI is judged by code. The triage context gives the CI state, and its CI blocks hold the names and logs of failing checks. Don't run `gh pr checks`. Pending CI is fine, because code checks CI again before acting. Red CI is never `SAFE`. Each `fix` entry names the proper API or pattern and links the docs or upstream change; no casts, suppressions or lint ignores.
+CI is judged by code. The triage context gives the CI state, and its CI blocks hold the logs of failing GitHub Actions jobs only (at most 10). For a failing check without a block, list it with `gh api repos/{repo}/commits/{sha}/check-runs` or `.../status`. Never run `gh pr checks`. Pending CI is fine, because code checks CI again before acting. Red CI is never `SAFE`. Each `fix` entry names the proper API or pattern and links the docs or upstream change; no casts, suppressions or lint ignores.
 
 ## Result
 
 Call `mcp__agentplatform__submit_result` once with:
 
 - `status`: `success`
-- `summary`: two to five sentences: the verdict and the main evidence
+- `summary`: two to five sentences: the verdict and the main evidence. When reporting CI, use one state: green, failing <check> or pending. Never mention Mergify, `renovate/stability-days`, `Agent triage`, approvals or merge rules.
 - `data`:
   - `verdict`: `SAFE`, `FIXABLE`, `BLOCKED` or `NEEDS_REVIEW`
   - `head_sha`: the head commit above
@@ -59,5 +59,3 @@ Call `mcp__agentplatform__submit_result` once with:
   - `reasons`: short strings, the findings behind the verdict
 
 If it returns an error, fix the fields it names and call it again.
-
-Report CI as one state: green, failing <check> or pending. Never mention ignored checks, Mergify, approvals, or merge rules.

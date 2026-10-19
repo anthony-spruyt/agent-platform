@@ -116,6 +116,122 @@ public class GitHubCheckRunTests
         Assert.Equal(new CiSummary(CiState.Passed, 0), summary);
     }
 
+    private const string TerraformPlan = "Terraform Cloud/spruyt-labs/repo-id-had8Yg3LqpGw8w37";
+
+    private static string Statuses(params object[] statuses) => JsonSerializer.Serialize(new { state = "pending", total_count = statuses.Length, statuses });
+
+    private static object Status(long id, string context, string state) => new { id, context, state, target_url = "https://app.terraform.io/run" };
+
+    private static HttpResponseMessage ChecksAndStatuses(RecordedRequest request, string runs, params object[] statuses) =>
+        StubHttpHandler.Json(request.Uri.AbsolutePath switch
+        {
+            var path when path.EndsWith("/check-suites", StringComparison.Ordinal) => SuitesJson,
+            var path when path.EndsWith("/status", StringComparison.Ordinal) => Statuses(statuses),
+            _ => runs,
+        });
+
+    private static async Task<(IReadOnlyList<GitHubCheckRun> Runs, IReadOnlyList<GitHubCheckSuite> Suites)> ChecksOf(GitHubApiClient client) =>
+        (await client.ListCheckRunsAsync("octo/widgets", Sha, Ct), await client.ListCheckSuitesAsync("octo/widgets", Sha, Ct));
+
+    [Fact]
+    public async Task ListCheckRuns_AlsoReadsTheCommitStatusesAsCheckRunsWithNoRunPage()
+    {
+        var (client, handler, tokens) = Create(r => ChecksAndStatuses(
+            r,
+            Runs(Run(1, "build", 15368, null)),
+            Status(51, TerraformPlan, "success"),
+            Status(52, "plan", "pending"),
+            Status(53, "apply", "failure"),
+            Status(54, "lint", "error")));
+
+        var runs = await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
+
+        Assert.Equal(
+            [
+                new GitHubCheckRun(GitHubApiClient.CommitStatusId, TerraformPlan, "completed", "success", null),
+                new GitHubCheckRun(GitHubApiClient.CommitStatusId, "plan", "pending", null, null),
+                new GitHubCheckRun(GitHubApiClient.CommitStatusId, "apply", "completed", "failure", null),
+                new GitHubCheckRun(GitHubApiClient.CommitStatusId, "lint", "completed", "failure", null),
+            ],
+            runs.Skip(1));
+        Assert.Contains($"/repos/octo/widgets/commits/{Sha}/status", handler.Requests.Select(r => r.Uri.AbsolutePath));
+        Assert.Equal(new Dictionary<string, string> { ["statuses"] = "read" }, tokens.Requests[1]);
+    }
+
+    [Fact]
+    public async Task AFailedCommitStatus_ReadsAsFailing_AndSendsASafeVerdictToFixable()
+    {
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null)), Status(2, TerraformPlan, "failure")));
+
+        var (runs, suites) = await ChecksOf(client);
+
+        var ci = TriageRules.AssessChecks(runs, suites);
+        var summary = TriageRules.SummariseChecks(runs, suites);
+        Assert.Equal(CiState.Failed, ci);
+        Assert.Equal(new CiSummary(CiState.Failed, 1), summary);
+        Assert.Contains("\nCI: failing (1 check)", new TriageFacts("octo/widgets", 7, Sha, ci: summary).Render(), StringComparison.Ordinal);
+        Assert.Equal(SafeAction.Fixable, TriageRules.AssessSafe(ci, "renovate/dep"));
+        Assert.Equal([TerraformPlan], TriageRules.FailedChecks(runs).Select(c => c.Name));
+    }
+
+    [Fact]
+    public async Task APendingCommitStatus_HoldsTheChecksPending()
+    {
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null)), Status(2, TerraformPlan, "pending")));
+
+        var (runs, suites) = await ChecksOf(client);
+
+        var ci = TriageRules.AssessChecks(runs, suites);
+        Assert.Equal(CiState.Pending, ci);
+        Assert.Equal(new CiSummary(CiState.Pending, 1), TriageRules.SummariseChecks(runs, suites));
+        Assert.Equal(SafeAction.WaitForCi, TriageRules.AssessSafe(ci, "renovate/dep"));
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("failure")]
+    [InlineData("error")]
+    public async Task TheStabilityDaysCommitStatus_IsIgnoredWhateverItsState(string state)
+    {
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null)), Status(2, "renovate/stability-days", state), Status(3, TerraformPlan, "success")));
+
+        var (runs, suites) = await ChecksOf(client);
+
+        Assert.Equal(CiState.Passed, TriageRules.AssessChecks(runs, suites));
+        Assert.Equal(new CiSummary(CiState.Passed, 0), TriageRules.SummariseChecks(runs, suites));
+    }
+
+    [Fact]
+    public async Task ASuccessfulCommitStatusAlone_IsGreen()
+    {
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(), Status(2, TerraformPlan, "success")));
+
+        var (runs, suites) = await ChecksOf(client);
+
+        Assert.Equal(CiState.Passed, TriageRules.AssessChecks(runs, suites));
+    }
+
+    [Fact]
+    public async Task NoCommitStatuses_LeaveTheChecksAsTheyAre_WhateverTheCombinedStateSays()
+    {
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null))));
+
+        var (runs, suites) = await ChecksOf(client);
+
+        Assert.Equal([1L], runs.Select(c => c.Id));
+        Assert.Equal(CiState.Passed, TriageRules.AssessChecks(runs, suites));
+    }
+
+    [Fact]
+    public async Task ListCheckRuns_RejectsABadShaBeforeReadingAnyStatus()
+    {
+        var (client, handler, _) = Create(r => ChecksAndStatuses(r, Runs()));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.ListCheckRunsAsync("octo/widgets", "../x", Ct));
+
+        Assert.Empty(handler.Requests);
+    }
+
     [Fact]
     public async Task ListCheckSuites_ParsesTheAppIdAndDropsOurOwnSuites()
     {

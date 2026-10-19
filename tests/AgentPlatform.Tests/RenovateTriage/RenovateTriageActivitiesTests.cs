@@ -470,6 +470,28 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
+        public async Task AFailedCommitStatus_DecidesNeedsReviewNamingItWithoutALink()
+        {
+            var rig = Create();
+            var failed = new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null);
+            rig.Github.Checks.Add(failed);
+
+            var result = await Assess(rig);
+
+            Assert.Equal(new AssessResult(AssessStatus.Decided, Sha, Decision: TriageRules.CiFailedDecision(Repo, Sha, [failed])), result);
+            Assert.EndsWith(" Failed: `Terraform Cloud/spruyt-labs/repo`.", result.Decision!.Comment, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task APendingCommitStatus_HoldsTheJudgement()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "pending", null, null));
+
+            Assert.Equal(AssessStatus.Pending, (await Assess(rig)).Status);
+        }
+
+        [Fact]
         public async Task ARiskyBranch_DecidesNeedsReviewWithoutAskingJev()
         {
             var rig = Create();
@@ -1919,6 +1941,35 @@ public class RenovateTriageActivitiesTests
             Assert.Contains($"/runs/{rig.Github.Checks[0].Id}", comment, StringComparison.Ordinal);
             Assert.Null(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
             await AssertStoredAsync(rig, TriageVerdict.Fixable, TriageRules.CiFailed, result.Effective.Comment);
+        }
+
+        [Fact]
+        public async Task Safe_OnAFailedCommitStatus_BecomesFixableNamingItWithoutALink()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null));
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(TriageVerdict.Fixable, result.Effective?.Verdict);
+            Assert.Empty(rig.Github.Approvals);
+            var comment = Assert.Single(rig.Github.Comments).Body;
+            Assert.Contains("Failed: `Terraform Cloud/spruyt-labs/repo`.", comment, StringComparison.Ordinal);
+            Assert.DoesNotContain("/runs/0", comment, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Safe_OnAPendingCommitStatus_WaitsForCi()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "pending", null, null));
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason), result);
+            Assert.Empty(rig.Github.Approvals);
         }
 
         [Fact]

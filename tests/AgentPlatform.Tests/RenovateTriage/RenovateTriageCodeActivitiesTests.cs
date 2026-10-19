@@ -184,6 +184,30 @@ public class RenovateTriageCodeActivitiesTests
         }
 
         [Fact]
+        public async Task AFailedCommitStatus_HasNoJobLog_SoItIsUnsureWithoutAskingJev()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null));
+
+            var result = await Run(() => rig.Activities.ClassifyCiAsync(new CiCodeInput(Repo, 7, Sha)));
+
+            Assert.Equal(new ClassifyCiResult(false, CiFailureKind.Unsure, 0), result);
+            Assert.Empty(rig.Jev.CiLogs);
+            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("job:", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task AfterARerun_AFailedCommitStatusKeepsTheFailureAlive()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null));
+
+            var result = await Run(() => rig.Activities.ClassifyCiAsync(new CiCodeInput(Repo, 7, Sha, AfterRerun: true)));
+
+            Assert.False(result.Stale);
+        }
+
+        [Fact]
         public async Task AfterARerun_AFailureStillOnTheFirstAttempt_IsStale_WithoutAskingJev()
         {
             var rig = Create();
@@ -479,6 +503,13 @@ public class RenovateTriageCodeActivitiesTests
 
     public class ContextTests
     {
+        private static async Task<string> CiLine(Rig rig)
+        {
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
+
+            return result.Context!.Sections[0].Split('\n').Single(l => l.StartsWith("CI:", StringComparison.Ordinal));
+        }
+
         [Fact]
         public async Task ReturnsTheFactsAndEachCleanTextAsItsOwnItem()
         {
@@ -499,13 +530,6 @@ public class RenovateTriageCodeActivitiesTests
             Assert.Contains("npm ERR! boom", all, StringComparison.Ordinal);
         }
 
-        private static async Task<string> CiLine(Rig rig)
-        {
-            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, null, Body())));
-
-            return result.Context!.Sections[0].Split('\n').Single(l => l.StartsWith("CI:", StringComparison.Ordinal));
-        }
-
         [Fact]
         public async Task PassingChecks_AreGreenInTheFacts()
         {
@@ -524,6 +548,30 @@ public class RenovateTriageCodeActivitiesTests
             var facts = result.Context!.Sections[0];
             Assert.Contains("\nCI: failing (2 checks)\n", facts, StringComparison.Ordinal);
             Assert.DoesNotContain("build one", facts, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task AFailedCommitStatus_ReadsAsFailing_WithNoJobToFetchAndNoLogBlock()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null));
+
+            var result = await Run(() => rig.Activities.BuildContextAsync(new BuildContextInput(Repo, 7, Sha, "ci-failed", Body())));
+
+            var all = string.Join('\n', result.Context!.Sections);
+            Assert.Contains("\nCI: failing (1 check)\n", all, StringComparison.Ordinal);
+            Assert.DoesNotContain("Failing CI jobs", all, StringComparison.Ordinal);
+            Assert.DoesNotContain("kind=\"ci-log\"", all, StringComparison.Ordinal);
+            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("job:", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task APendingCommitStatus_ReadsAsPending()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "pending", null, null));
+
+            Assert.Equal("CI: pending (1 check)", await CiLine(rig));
         }
 
         [Fact]
@@ -777,6 +825,19 @@ public class RenovateTriageCodeActivitiesTests
 
             Assert.Equal(RerunOutcome.NothingFailed, result.Outcome);
             Assert.Empty(rig.Github.Reruns);
+        }
+
+        [Fact]
+        public async Task AFailedCommitStatus_HasNoJobToRerun()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null));
+
+            var result = await Run(() => rig.Activities.RerunFailedJobsAsync(new CiCodeInput(Repo, 7, Sha)));
+
+            Assert.Equal(RerunOutcome.NothingFailed, result.Outcome);
+            Assert.Empty(rig.Github.Reruns);
+            Assert.DoesNotContain(rig.Github.Calls, c => c.StartsWith("job:", StringComparison.Ordinal));
         }
 
         [Fact]

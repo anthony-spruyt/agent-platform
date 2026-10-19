@@ -318,7 +318,9 @@ public static partial class TriageRules
         var comment = new StringBuilder($"{NeedsReviewPrefix} CI failed on `{ShortSha(headSha)}`.");
         if (failed.Count > 0)
         {
-            var links = failed.Take(MaxListedFailedChecks).Select(c => $"[{LinkText(c.Name)}](https://github.com/{repo}/runs/{c.Id.ToString(CultureInfo.InvariantCulture)})");
+            var links = failed.Take(MaxListedFailedChecks).Select(c => c.Id == GitHubApiClient.CommitStatusId
+                ? LinkText(c.Name)
+                : $"[{LinkText(c.Name)}](https://github.com/{repo}/runs/{c.Id.ToString(CultureInfo.InvariantCulture)})");
             comment.Append(" Failed: ").Append(string.Join(", ", links));
             comment.Append(failed.Count > MaxListedFailedChecks ? $" and {failed.Count - MaxListedFailedChecks} more." : ".");
         }
