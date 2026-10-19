@@ -1,2 +1,4 @@
 # The torch index root answers 403 to link checkers; it appears as context in a recorded diff.
 exclude = ['^https://download\.pytorch\.org/']
+# Recorded pull request bodies keep their upstream links, which go stale when a project moves.
+exclude_path = ['tests/AgentPlatform.Tests/RenovateTriage/Fixtures']

@@ -13,6 +13,8 @@ public class ReleaseNotesDetectorTests
 
     private static string Block(string inner, string summary = "o/r (dep)") => $"<details>\n<summary>{summary}</summary>\n\n{inner}\n\n</details>";
 
+    private static string Raw(string summaryLine, string inner, string closer = "</details>") => $"<details>\n{summaryLine}\n\n{inner}\n\n{closer}";
+
     private static string Row(string dependency, string? source, string to = "1.2.3") =>
         $"| {(source is null ? dependency : $"[{dependency}](https://redirect.github.com/{source})")} | `1.2.2` → `{to}` |";
 
@@ -26,6 +28,15 @@ public class ReleaseNotesDetectorTests
     private static string Body(params string[] blocks) => Doc([Row("dep", "o/r")], blocks);
 
     private static string Grouped(params string[] blocks) => Doc([Row("a", "o/a"), Row("b", "o/b")], blocks);
+
+    private static string SourceDoc(int count, string bullet)
+    {
+        var sources = Enumerable.Range(1, count).Select(i => $"o/r{i}").ToArray();
+        return Doc([.. sources.Select(s => Row("dep", s))], [.. sources.Select(s => Block(Versioned + bullet, $"{s} (dep)"))]);
+    }
+
+    private static string SameSourceDoc(int count) =>
+        Doc([.. Enumerable.Range(1, count).Select(i => Row($"dep{i}", "o/r"))], Block(Versioned + TitleOnly, "o/r (dep1)"));
 
     [Fact]
     public void Body_WithAVersionSectionHoldingABullet_HasNotes() =>
@@ -83,10 +94,30 @@ public class ReleaseNotesDetectorTests
         Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "- fixed a crash")).Replace("### Release Notes", "### release notes", StringComparison.Ordinal)));
 
     [Theory]
+    [InlineData("see ### Release Notes")]
+    [InlineData("####### Release Notes")]
+    [InlineData("Release Notes")]
+    [InlineData(" Release Notes")]
+    [InlineData("###Release Notes")]
+    [InlineData("### Release Notes and more")]
+    public void Body_WhoseReleaseNotesLineIsNotAHeading_HasNoNotes(string line) =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "- fixed a crash")).Replace("### Release Notes", line, StringComparison.Ordinal)));
+
+    [Theory]
+    [InlineData("# Release Notes")]
+    [InlineData("  ### Release Notes")]
+    [InlineData("### Release Notes  ")]
+    public void Body_WhoseReleaseNotesHeadingIsIndentedOrPadded_HasNotes(string line) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "- fixed a crash")).Replace("### Release Notes", line, StringComparison.Ordinal)));
+
+    [Theory]
     [InlineData("- fixed a crash")]
     [InlineData("* fixed a crash")]
     [InlineData("+ fixed a crash")]
     [InlineData("1. fixed a crash")]
+    [InlineData("10. fixed a crash")]
+    [InlineData("-\tfixed a crash")]
+    [InlineData("- 2026")]
     [InlineData("  - fixed a crash")]
     [InlineData("- [#12](https://github.com/o/r/pull/12) fixed a crash")]
     [InlineData("- fix: a crash by @someone in https://github.com/o/r/pull/12")]
@@ -98,6 +129,11 @@ public class ReleaseNotesDetectorTests
     [InlineData("- [Full Changelog](https://github.com/o/r/compare/v1.2.2...v1.2.3)")]
     [InlineData("- https://github.com/o/r/pull/12")]
     [InlineData("- <https://github.com/o/r/pull/12>")]
+    [InlineData("- http://example.test/x")]
+    [InlineData("- [x]()")]
+    [InlineData("- [](a b)")]
+    [InlineData("- [a][]")]
+    [InlineData("- [][b]")]
     [InlineData("* [#12](https://github.com/o/r/pull/12)")]
     [InlineData("- **[v1.2.3](https://github.com/o/r/releases/tag/v1.2.3)**")]
     [InlineData("- ![x](https://example.test/x.png)")]
@@ -110,6 +146,17 @@ public class ReleaseNotesDetectorTests
     [InlineData("- ")]
     public void Body_WithOnlyLinkOnlyBullets_HasNoNotes(string bullet) =>
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + bullet))));
+
+    [Theory]
+    [InlineData("This release - fixes several crashes")]
+    [InlineData("**Full Changelog**: https://github.com/o/r/compare/v1.2.2...v1.2.3")]
+    [InlineData("*emphasised* text")]
+    [InlineData("-flag")]
+    [InlineData("+1 for this")]
+    [InlineData("1.2.3 is out")]
+    [InlineData(". fixed a crash")]
+    public void Body_WithALineThatIsNotABullet_HasNoNotes(string line) =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + line))));
 
     [Fact]
     public void Body_WithProseButNoBullets_HasNoNotes() =>
@@ -139,16 +186,29 @@ public class ReleaseNotesDetectorTests
     public void Body_WithBulletsOnlyInTheConfigurationSection_HasNoNotes() =>
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + TitleOnly))));
 
+    [Fact]
+    public void Body_WithAConfigurationHeadingInsideTheNotes_KeepsReadingTheBlock() =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "### Configuration\n\n- fixed a crash"))));
+
     [Theory]
-    [InlineData("#")]
-    [InlineData("##")]
-    [InlineData("###")]
-    public void Body_WithABlockAfterTheConfigurationSection_IgnoresIt(string level)
+    [InlineData("# Configuration", false)]
+    [InlineData("## Configuration", false)]
+    [InlineData("### Configuration", false)]
+    [InlineData("   ### Configuration", false)]
+    [InlineData("### Configuration  ", false)]
+    [InlineData("### Configuration\r", false)]
+    [InlineData("    ### Configuration", true)]
+    [InlineData("#### Configuration", true)]
+    [InlineData("###### Configuration", true)]
+    [InlineData("###Configuration", true)]
+    [InlineData("### Configuration options", true)]
+    [InlineData("see ### Configuration", true)]
+    public void Body_WithABlockAfterAConfigurationLine_ReadsItOnlyWhenTheLineIsNotThatHeading(string line, bool hasNotes)
     {
         var late = Block(Versioned + "- fixed a crash", "o/b (b)");
-        var body = Grouped(Block(Versioned + "- fixed a crash", "o/a (a)")).Replace("### Configuration", $"{level} Configuration", StringComparison.Ordinal) + "\n" + late + "\n";
+        var body = Grouped(Block(Versioned + "- fixed a crash", "o/a (a)")).Replace("### Configuration", line, StringComparison.Ordinal) + "\n" + late + "\n";
 
-        Assert.False(ReleaseNotesDetector.BodyHasNotes(body));
+        Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(body));
     }
 
     [Theory]
@@ -157,6 +217,22 @@ public class ReleaseNotesDetectorTests
     [InlineData("######")]
     public void Body_WithAVersionHeadingOfAnyLevel_HasNotes(string level) =>
         Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned.Replace("###", level, StringComparison.Ordinal) + "- fixed a crash"))));
+
+    [Theory]
+    [InlineData("see ### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("    ### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("####### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("###[`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("### [`v1.0.0`]", true)]
+    [InlineData("[`v1.0.0`](https://example.test/x)", true)]
+    [InlineData(" [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("### [`v1.0.0`](https://example.test/x y)", true)]
+    [InlineData("### [Release v1.0.0](https://example.test/x)", true)]
+    [InlineData("   ### [`v1.0.0`](https://example.test/x)", false)]
+    [InlineData("### [`V1.0.0`](https://example.test/x)", false)]
+    [InlineData("### [1.0.0](https://example.test/x)", false)]
+    public void Body_WithAnotherLineInTheNewestSection_StartsAnOlderSectionOnlyForAVersionHeading(string line, bool hasNotes) =>
+        Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + $"{line}\n\n- fixed a crash"))));
 
     [Fact]
     public void Body_WhereTheBulletIsOnlyUnderAnOlderVersionSection_HasNoNotes() =>
@@ -173,6 +249,18 @@ public class ReleaseNotesDetectorTests
     [Fact]
     public void Body_WithBulletsOnlyInsideACodeFence_HasNoNotes() =>
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "```yaml\n- fixed a crash\n```"))));
+
+    [Fact]
+    public void Body_WithSeveralBulletsInsideACodeFence_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "```yaml\n- fixed a crash\n- fixed another\n```"))));
+
+    [Fact]
+    public void Body_WithBulletsInsideAnIndentedFence_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "  ```\n- fixed a crash\n  ```"))));
+
+    [Fact]
+    public void Body_WithFenceMarkersMidLine_DoesNotStartACodeFence() =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "Use ``` to fence code\n\n- fixed a crash"))));
 
     [Fact]
     public void Body_WithBulletsOnlyInsideATildeFence_HasNoNotes() =>
@@ -237,6 +325,61 @@ public class ReleaseNotesDetectorTests
     [Fact]
     public void Body_WithBulletsAfterANestedDetailsBlockClosed_StillReadsTheOuterBlock() =>
         Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "<details>\n<summary>More</summary>\n\nprose\n\n</details>\n\n- fixed a crash"))));
+
+    [Theory]
+    [InlineData("<details>", "</details>")]
+    [InlineData("  <details>", "  </details>")]
+    [InlineData("<details open>", "</details>")]
+    [InlineData("<details>", "</details >")]
+    public void Body_WithANestedBlockBeforeTheNotes_ReadsTheNotesAfterIt(string open, string close) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + $"{open}\n<summary>More</summary>\n\nmore\n\n{close}\n\n---\n\n- fixed a crash"))));
+
+    [Theory]
+    [InlineData("Use the <details> tag")]
+    [InlineData("<detailsx>")]
+    [InlineData("see </details>")]
+    [InlineData("</details> and more")]
+    public void Body_WithATagInsideALineOfNotes_KeepsReadingTheBlock(string line) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + $"{line}\n\n---\n\n- fixed a crash"))));
+
+    [Theory]
+    [InlineData("<summary>o/r (dep)</summary>", true)]
+    [InlineData("  <summary>o/r (dep)</summary>  ", true)]
+    [InlineData("text <summary>o/r (dep)</summary>", false)]
+    [InlineData("<summary>o/r (dep)</summary> text", false)]
+    public void Body_WhoseSummaryLineHasOtherText_IsIgnored(string summaryLine, bool hasNotes) =>
+        Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Body(Raw(summaryLine, Versioned + "- fixed a crash"))));
+
+    [Theory]
+    [InlineData("o/r (dep)", true)]
+    [InlineData("o/r", true)]
+    [InlineData("Show o/r", false)]
+    [InlineData("o/r more", false)]
+    [InlineData("o/r (dep) more", false)]
+    public void Body_WhoseSummaryHasMoreThanARepoName_IsIgnored(string title, bool hasNotes) =>
+        Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "- fixed a crash", title))));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Body_WithBlankLinesBetweenDetailsAndSummary_HasNotes(string gap) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body($"<details>\n{gap}\n<summary>o/r (dep)</summary>\n\n{Versioned}- fixed a crash\n\n</details>")));
+
+    [Fact]
+    public void Body_WithASummaryButNoDetailsTag_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body("<summary>o/r (dep)</summary>\n\n" + Versioned + "- fixed a crash\n\n</details>")));
+
+    [Theory]
+    [InlineData("---", false)]
+    [InlineData("----", false)]
+    [InlineData("   ---", false)]
+    [InlineData("---   ", false)]
+    [InlineData("--", true)]
+    [InlineData("    ---", true)]
+    [InlineData("--- and more", true)]
+    [InlineData("and ---", true)]
+    public void Body_WithAClosingTagInTheNotes_EndsTheBlockOnlyWhenARuleFollows(string line, bool hasNotes) =>
+        Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + $"intro\n</details>\n\n{line}\n\n- fixed a crash"))));
 
     [Fact]
     public void Body_WhoseDetailsBlockNeverCloses_HasNoNotes() =>
@@ -329,13 +472,23 @@ public class ReleaseNotesDetectorTests
         Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", "v1.2.3")], Block(Versioned + "- fixed a crash"))));
         Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", "==1.2.3")], Block(Versioned + "- fixed a crash"))));
         Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", "1.2.3")], Block(Versioned.Replace("`v1.2.3`", "`1.2.3`", StringComparison.Ordinal) + "- fixed a crash"))));
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", "1.2.3")], Block(Versioned.Replace("`v1.2.3`", "`V1.2.3`", StringComparison.Ordinal) + "- fixed a crash"))));
     }
 
     [Fact]
-    public void Body_WithAClosingTagInsideInlineCode_StillChecksTheLaterBlocks()
-    {
-        var first = Block(Versioned + "- fixed the `</details>` tag\n\n" + Older + "- older", "o/a (a)");
+    public void Body_WhoseNewestVersionSectionDiffersFromTheNewVersionInCase_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", "1.2.3-RC1")], Block(Versioned.Replace("`v1.2.3`", "`v1.2.3-rc1`", StringComparison.Ordinal) + "- fixed a crash"))));
 
+    [Fact]
+    public void Body_WhereTheDependencyNameDiffersInCase_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Doc([Row("Dep-B", null)], Block(Versioned + "- fixed a crash", "o/b (dep-b)"))));
+
+    [Fact]
+    public void Body_WithAClosingTagInsideInlineCode_KeepsReadingTheBlock()
+    {
+        var first = Block(Versioned + "Fixed the `</details>` tag\n\n---\n\n- fixed a crash\n\n" + Older + "- older", "o/a (a)");
+
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Grouped(first, Block(Versioned + "- fixed a crash", "o/b (b)"))));
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Grouped(first, Block(Versioned + TitleOnly, "o/b (b)"))));
     }
 
@@ -362,6 +515,7 @@ public class ReleaseNotesDetectorTests
     {
         var first = Block(Versioned + "- fixed a crash\n</details>\n\n---\n\nmore notes\n\n" + Older + "- older", "o/a (a)");
 
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Grouped(first, Block(Versioned + "- fixed a crash", "o/b (b)"))));
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Grouped(first, Block(Versioned + TitleOnly, "o/b (b)"))));
     }
 
@@ -457,8 +611,37 @@ public class ReleaseNotesDetectorTests
     }
 
     [Fact]
-    public void Found_WithoutAnUpdateTable_IsFalse() =>
+    public void Body_WithAsManyUpdatesAsTheTableParserReads_HasNoNotes()
+    {
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(SourceDoc(RenovateBodyTable.MaxRows - 1, "- fixed a crash")));
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(SourceDoc(RenovateBodyTable.MaxRows, "- fixed a crash")));
+    }
+
+    [Fact]
+    public void Found_WithAsManyUpdatesAsTheTableParserReads_IsFalse()
+    {
+        var section = new[] { "## 1.2.3\n\n- the crash" };
+
+        Assert.True(ReleaseNotesDetector.Found(SameSourceDoc(RenovateBodyTable.MaxRows - 1), section));
+        Assert.False(ReleaseNotesDetector.Found(SameSourceDoc(RenovateBodyTable.MaxRows), section));
+    }
+
+    [Fact]
+    public void Found_WhenThereAreAsManyUpdatesAsTheFetcherTakes_NeedsASectionForEach()
+    {
+        var sources = Enumerable.Range(1, ChangelogFetcher.MaxDependencies).Select(i => $"o/r{i}").ToArray();
+        var body = Doc([.. sources.Select(s => Row(s, s))], Block(Versioned + TitleOnly));
+
+        Assert.True(ReleaseNotesDetector.Found(body, [.. Enumerable.Repeat("## 1.2.3\n\n- the crash", ChangelogFetcher.MaxDependencies)]));
+    }
+
+    [Fact]
+    public void Found_WithoutAnUpdateTable_IsFalse()
+    {
         Assert.False(ReleaseNotesDetector.Found("no table here", ["## 1.2.3\n\n- the crash"]));
+        Assert.False(ReleaseNotesDetector.Found("no table here", []));
+        Assert.False(ReleaseNotesDetector.Found(null, []));
+    }
 
     [Fact]
     public void Found_WithNeitherNotesNorSections_IsFalse()

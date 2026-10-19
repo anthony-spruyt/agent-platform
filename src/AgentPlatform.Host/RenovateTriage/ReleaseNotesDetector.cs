@@ -29,12 +29,12 @@ public static partial class ReleaseNotesDetector
 
     private static bool BodyCoversEveryUpdate(string? body)
     {
-        if (string.IsNullOrWhiteSpace(body))
+        if (body is null)
         {
             return false;
         }
 
-        var updates = RenovateBodyTable.Parse(body);
+        var updates = Updates(body);
         if (updates.Count == 0)
         {
             return false;
@@ -51,7 +51,7 @@ public static partial class ReleaseNotesDetector
             return false;
         }
 
-        var updates = RenovateBodyTable.Parse(body);
+        var updates = Updates(body);
         if (!updates.All(ChangelogFetcher.IsFetchable))
         {
             return false;
@@ -61,8 +61,12 @@ public static partial class ReleaseNotesDetector
         return fetchable <= ChangelogFetcher.MaxDependencies && sections.Count == fetchable && sections.All(SectionHasListItem);
     }
 
+    // A table at the row cap may hold more rows than were read, so it counts as having none.
+    private static IReadOnlyList<RenovateUpdate> Updates(string? body) =>
+        RenovateBodyTable.Parse(body) is { Count: < RenovateBodyTable.MaxRows } updates ? updates : [];
+
     private static bool SectionHasListItem(string? section) =>
-        !string.IsNullOrWhiteSpace(section) && HasListItemWithText(Clean(section));
+        section is not null && HasListItemWithText(Clean(section));
 
     private static List<Block> Blocks(List<Line> lines, IReadOnlyList<RenovateUpdate> updates)
     {
@@ -211,7 +215,7 @@ public static partial class ReleaseNotesDetector
 
     private static string Bare(string version) => version.TrimStart('=', 'v', 'V');
 
-    private static string Unquoted(string text) => text.Replace("`", string.Empty, StringComparison.Ordinal).Trim();
+    private static string Unquoted(string text) => text.Replace("`", string.Empty, StringComparison.Ordinal);
 
     private static bool HasText(string item) => LetterOrDigit().IsMatch(NonText().Replace(item, " "));
 
@@ -231,7 +235,7 @@ public static partial class ReleaseNotesDetector
 
         public bool Matches(RenovateUpdate update) =>
             update.SourceRepo is null
-                ? string.Equals(Dependency, Normalised(update.Dependency), StringComparison.OrdinalIgnoreCase)
+                ? string.Equals(Dependency, update.Dependency, StringComparison.Ordinal)
                 : string.Equals(Repo, update.SourceRepo, StringComparison.OrdinalIgnoreCase);
     }
 

@@ -219,7 +219,9 @@ In order; the first that applies decides:
 7. The code checks only the scanned body and any fetched changelog sections for release notes.
    A body has them when every update in its table has a closed `<details>` block under `### Release Notes`, matched by the block's summary to the update's source repository (or to its dependency name when it has no source; updates of one source repository and new version share a block).
    The block's first version section (a heading that starts with a link to the update's new version) must have a list item that is more than a link or URL.
-   The fetched changelog sections have them when every update the fetcher can fetch has a section with such a list item. Anything else, such as prose only, a title line only or link-only items, counts as none.
+   The fetched changelog sections have them when every update in the table can be fetched, there are at most 5 fetches (updates of one source repository and new version share one), and each has a section with such a list item.
+   If any update can't be fetched or there are more than 5, the sections never count. A table with 50 rows, the most the parser reads, counts as none, because rows past it are never checked.
+   Anything else, such as prose only, a title line only or link-only items, counts as none.
    Jev answers a breaking-change score, a bump type and a changelog score. It judges the bump type itself from the old and new versions in the diff or the body, without trusting Renovate's labels. A breaking score of 0.66 or more, or a major, calver or other type: needs review. An answer that is none of the known types: needs review, `unknown-bump`.
 8. The bump-type guard (below) checks Jev's type against the diff.
 9. A patch or minor on an allowlisted branch approves; any other needs release notes found in code, or else a changelog score of 0.7 or more from Jev, so Jev's score is the fallback. The `jev` run steps record whether the code found release notes as `notesFound`; it stays false when Jev fails. A Jev failure: needs review, `jev-error`.
