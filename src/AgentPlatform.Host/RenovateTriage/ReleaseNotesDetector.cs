@@ -1,128 +1,295 @@
+using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
 public static partial class ReleaseNotesDetector
 {
-    public static bool Found(string? body, IReadOnlyList<string>? sections) =>
-        BodyHasNotes(body) || (sections is { Count: > 0 } && sections.All(SectionHasNotes));
+    private const RegexOptions Linear = RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
 
-    public static bool BodyHasNotes(string? body)
+    public static bool Found(string? body, IReadOnlyList<string>? sections) =>
+        Guarded(() => BodyCoversEveryUpdate(body) || SectionsCoverEveryUpdate(body, sections));
+
+    public static bool BodyHasNotes(string? body) => Guarded(() => BodyCoversEveryUpdate(body));
+
+    public static bool SectionHasNotes(string? section) => Guarded(() => SectionHasListItem(section));
+
+    internal static bool Guarded(Func<bool> scan)
+    {
+        try
+        {
+            return scan();
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    private static bool BodyCoversEveryUpdate(string? body)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
             return false;
         }
 
-        var lines = Lines(body);
-        var heading = Array.FindIndex(lines, l => ReleaseNotesHeading().IsMatch(l));
-        if (heading < 0)
+        var updates = RenovateBodyTable.Parse(body);
+        if (updates.Count == 0)
         {
             return false;
         }
 
-        var blocks = new List<List<string>>();
-        List<string>? block = null;
-        var depth = 0;
-        foreach (var line in lines.Skip(heading + 1))
+        var blocks = Blocks(Clean(body), updates);
+        return updates.All(update => blocks.Exists(block => block.Covers(update)));
+    }
+
+    private static bool SectionsCoverEveryUpdate(string? body, IReadOnlyList<string>? sections)
+    {
+        if (sections is not { Count: > 0 })
         {
-            if (block is null)
+            return false;
+        }
+
+        var updates = RenovateBodyTable.Parse(body);
+        if (!updates.All(ChangelogFetcher.IsFetchable))
+        {
+            return false;
+        }
+
+        var fetchable = ChangelogFetcher.FetchableUpdates(updates).Count;
+        return fetchable <= ChangelogFetcher.MaxDependencies && sections.Count == fetchable && sections.All(SectionHasListItem);
+    }
+
+    private static bool SectionHasListItem(string? section) =>
+        !string.IsNullOrWhiteSpace(section) && HasListItemWithText(Clean(section));
+
+    private static List<Block> Blocks(List<Line> lines, IReadOnlyList<RenovateUpdate> updates)
+    {
+        var blocks = new List<Block>();
+        var heading = lines.FindIndex(l => ReleaseNotesHeading().IsMatch(l.Text));
+        if (heading < 0)
+        {
+            return blocks;
+        }
+
+        Summary? open = null;
+        var content = new List<Line>();
+        var depth = 0;
+        for (var i = heading + 1; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            if (!line.Fenced && StartOf(lines, i, updates) is { } started)
             {
-                if (DetailsOpen().IsMatch(line))
-                {
-                    block = [];
-                }
-                else if (TopHeading().IsMatch(line))
+                (open, content, depth) = (started, [], 1);
+                continue;
+            }
+
+            if (open is null)
+            {
+                if (ConfigurationHeading().IsMatch(line.Text))
                 {
                     break;
                 }
-                else
+
+                continue;
+            }
+
+            if (!line.Fenced && DetailsOpen().IsMatch(line.Text))
+            {
+                depth++;
+            }
+            else if (!line.Fenced && DetailsClose().IsMatch(line.Text) && (depth > 1 || EndsBlock(lines, i)))
+            {
+                depth--;
+                if (depth == 0)
                 {
+                    blocks.Add(Block.Of(open, content));
+                    open = null;
                     continue;
                 }
             }
 
-            block.Add(line);
-            depth += DetailsOpen().Count(line) - DetailsClose().Count(line);
-            if (depth <= 0)
-            {
-                blocks.Add(block);
-                block = null;
-                depth = 0;
-            }
+            content.Add(line);
         }
 
-        return block is null && blocks.Count > 0 && blocks.All(BlockHasNotes);
+        return blocks;
     }
 
-    public static bool SectionHasNotes(string? section) =>
-        !string.IsNullOrWhiteSpace(section) && HasListItemWithText(Lines(section));
-
-    private static bool BlockHasNotes(List<string> block)
+    private static Summary? StartOf(List<Line> lines, int index, IReadOnlyList<RenovateUpdate> updates)
     {
-        var start = block.FindIndex(IsVersionHeading);
-        if (start < 0)
+        if (!DetailsOpen().IsMatch(lines[index].Text))
         {
-            return false;
+            return null;
         }
 
-        var next = block.FindIndex(start + 1, IsVersionHeading);
-        return HasListItemWithText(block.Skip(start).Take(next < 0 ? block.Count : next - start));
+        var next = lines.FindIndex(index + 1, l => l.Text.Trim().Length > 0);
+        if (next < 0)
+        {
+            return null;
+        }
+
+        var title = SummaryLine().Match(lines[next].Text).Groups["title"].Value;
+        return Summary.Parse(title) is { } summary && updates.Any(summary.Matches) ? summary : null;
     }
 
-    private static bool HasListItemWithText(IEnumerable<string> lines)
+    private static bool EndsBlock(List<Line> lines, int closing)
     {
+        var next = lines.FindIndex(closing + 1, l => l.Text.Trim().Length > 0);
+        return next < 0 || DetailsOpen().IsMatch(lines[next].Text) || ThematicBreak().IsMatch(lines[next].Text);
+    }
+
+    private static List<Line> Clean(string text)
+    {
+        var lines = new List<Line>();
         var fenced = false;
-        foreach (var line in lines)
+        var commented = false;
+        foreach (var raw in text.Split('\n'))
         {
-            if (Fence().IsMatch(line))
+            if (!commented)
             {
-                fenced = !fenced;
+                var marker = Fence().IsMatch(raw);
+                if (marker || fenced)
+                {
+                    fenced ^= marker;
+                    lines.Add(new Line(raw, Fenced: true));
+                    continue;
+                }
             }
-            else if (!fenced && ListItem().Match(line) is { Success: true } item && HasText(item.Groups["text"].Value))
+
+            lines.Add(new Line(WithoutComments(raw, ref commented), Fenced: false));
+        }
+
+        return lines;
+    }
+
+    private static string WithoutComments(string line, ref bool commented)
+    {
+        var visible = new StringBuilder();
+        var at = 0;
+        while (at < line.Length)
+        {
+            if (commented)
             {
-                return true;
+                var close = line.IndexOf("-->", at, StringComparison.Ordinal);
+                if (close < 0)
+                {
+                    break;
+                }
+
+                commented = false;
+                at = close + "-->".Length;
+            }
+            else
+            {
+                var open = line.IndexOf("<!--", at, StringComparison.Ordinal);
+                if (open < 0)
+                {
+                    visible.Append(line, at, line.Length - at);
+                    break;
+                }
+
+                visible.Append(line, at, open - at);
+                commented = true;
+                at = open + "<!--".Length;
             }
         }
 
-        return false;
+        return visible.ToString();
     }
 
-    private static bool IsVersionHeading(string line) =>
-        VersionHeading().Match(line) is { Success: true } heading
-        && VersionText().IsMatch(heading.Groups["text"].Value.Replace("`", string.Empty, StringComparison.Ordinal).Trim());
+    private static bool HasListItemWithText(IEnumerable<Line> lines) =>
+        lines.Any(l => !l.Fenced && ListItem().Match(l.Text) is { Success: true } item && HasText(item.Groups["text"].Value));
+
+    private static bool IsVersionHeading(Line line) =>
+        !line.Fenced
+        && VersionHeading().Match(line.Text) is { Success: true } heading
+        && VersionText().IsMatch(Unquoted(heading.Groups["text"].Value));
+
+    private static string VersionOf(Line heading) =>
+        Bare(Unquoted(VersionHeading().Match(heading.Text).Groups["text"].Value));
+
+    private static string Bare(string version) => version.TrimStart('=', 'v', 'V');
+
+    private static string Unquoted(string text) => text.Replace("`", string.Empty, StringComparison.Ordinal).Trim();
 
     private static bool HasText(string item) => LetterOrDigit().IsMatch(NonText().Replace(item, " "));
 
-    private static string[] Lines(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+    private static string Normalised(string text) => WebUtility.HtmlDecode(text).Replace("\u200B", string.Empty, StringComparison.Ordinal);
 
-    [GeneratedRegex(@"^\s*#{1,6}\s+Release Notes\s*$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    private readonly record struct Line(string Text, bool Fenced);
+
+    private sealed record Summary(string Repo, string Dependency)
+    {
+        public static Summary? Parse(string title)
+        {
+            var match = SummaryTitle().Match(Normalised(title));
+            return match.Success
+                ? new Summary(match.Groups["repo"].Value, match.Groups["dep"].Success ? match.Groups["dep"].Value : match.Groups["repo"].Value)
+                : null;
+        }
+
+        public bool Matches(RenovateUpdate update) =>
+            update.SourceRepo is null
+                ? string.Equals(Dependency, Normalised(update.Dependency), StringComparison.OrdinalIgnoreCase)
+                : string.Equals(Repo, update.SourceRepo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record Block(Summary Summary, string? Newest, bool NewestHasNotes)
+    {
+        public static Block Of(Summary summary, List<Line> content)
+        {
+            var start = content.FindIndex(IsVersionHeading);
+            if (start < 0)
+            {
+                return new Block(summary, null, false);
+            }
+
+            var next = content.FindIndex(start + 1, IsVersionHeading);
+            var section = content.Skip(start + 1).Take(next < 0 ? content.Count : next - start - 1);
+            return new Block(summary, VersionOf(content[start]), HasListItemWithText(section));
+        }
+
+        public bool Covers(RenovateUpdate update) =>
+            NewestHasNotes && Summary.Matches(update) && string.Equals(Newest, Bare(update.To), StringComparison.Ordinal);
+    }
+
+    [GeneratedRegex(@"^\s*#{1,6}\s+Release Notes\s*$", Linear | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ReleaseNotesHeading();
 
-    [GeneratedRegex(@"^\s{0,3}#{1,3}\s", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex TopHeading();
+    [GeneratedRegex(@"^\s{0,3}#{1,3}\s+Configuration\s*$", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex ConfigurationHeading();
 
-    [GeneratedRegex(@"<details(?:\s[^>]*)?>", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*<details(?:\s[^>]*)?>", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex DetailsOpen();
 
-    [GeneratedRegex(@"</details\s*>", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*</details\s*>\s*$", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex DetailsClose();
 
-    [GeneratedRegex(@"^\s{0,3}#{1,6}\s+\[(?<text>[^\]]+)\]\([^)\s]*\)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*<summary>(?<title>.*)</summary>\s*$", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex SummaryLine();
+
+    [GeneratedRegex(@"^(?<repo>\S+)(?: \((?<dep>.+)\))?$", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex SummaryTitle();
+
+    [GeneratedRegex(@"^\s{0,3}-{3,}\s*$", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex ThematicBreak();
+
+    [GeneratedRegex(@"^\s{0,3}#{1,6}\s+\[(?<text>[^\]]+)\]\([^)\s]*\)", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex VersionHeading();
 
-    [GeneratedRegex(@"^[vV]?\d+(?:\.\d+)*", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^[vV]?\d+(?:\.\d+)*", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex VersionText();
 
-    [GeneratedRegex(@"^\s*(?:```|~~~)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*(?:```|~~~)", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Fence();
 
-    [GeneratedRegex(@"^\s*(?:[-*+]|\d+\.)(?:[ \t]+(?<text>.*))?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*(?:[-*+]|\d+\.)[ \t]+(?<text>.*)$", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ListItem();
 
-    [GeneratedRegex(@"!?\[[^\]]*\]\([^)]*\)|\[[^\]]*\]\[[^\]]*\]|<!--.*?-->|<[^>]*>|https?://\S+", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"\[[^\]]*\]\([^)]*\)|\[[^\]]*\]\[[^\]]*\]|<[^>]*>|https?://\S+", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex NonText();
 
-    [GeneratedRegex(@"[\p{L}\p{N}]", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"[\p{L}\p{N}]", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LetterOrDigit();
 }

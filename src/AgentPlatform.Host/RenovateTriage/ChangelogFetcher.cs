@@ -17,11 +17,7 @@ public sealed partial class ChangelogFetcher(IGitHubApiClient github)
     {
         ArgumentNullException.ThrowIfNull(updates);
         var sections = new List<ChangelogSection>();
-        var distinct = updates
-            .Where(u => u.SourceRepo is not null && GitHubRepoName.TryParse(u.SourceRepo, out _, out _))
-            .DistinctBy(u => (u.SourceRepo!.ToUpperInvariant(), u.To.TrimStart('v', 'V')))
-            .Take(MaxDependencies);
-        foreach (var update in distinct)
+        foreach (var update in FetchableUpdates(updates).Take(MaxDependencies))
         {
             if (await FetchOneAsync(repo, update, cancellationToken).ConfigureAwait(false) is { } section)
             {
@@ -31,6 +27,12 @@ public sealed partial class ChangelogFetcher(IGitHubApiClient github)
 
         return sections;
     }
+
+    internal static bool IsFetchable(RenovateUpdate update) =>
+        update.SourceRepo is not null && GitHubRepoName.TryParse(update.SourceRepo, out _, out _);
+
+    internal static IReadOnlyList<RenovateUpdate> FetchableUpdates(IEnumerable<RenovateUpdate> updates) =>
+        [.. updates.Where(IsFetchable).DistinctBy(u => (u.SourceRepo!.ToUpperInvariant(), u.To.TrimStart('v', 'V')))];
 
     private async Task<ChangelogSection?> FetchOneAsync(string repo, RenovateUpdate update, CancellationToken cancellationToken)
     {

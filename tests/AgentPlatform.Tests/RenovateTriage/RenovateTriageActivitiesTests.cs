@@ -1066,6 +1066,11 @@ public class RenovateTriageActivitiesTests
 
     public class JudgeTests
     {
+        private const string Table = "| Package | Change |\n|---|---|\n| [dep](https://redirect.github.com/o/r) | `1.0.0` → `1.0.1` |\n\n---\n\n";
+        private const string BodyWithNotes = Table + "### Release Notes\n\n<details>\n<summary>o/r (dep)</summary>\n\n### [`v1.0.1`](https://example.test/v1.0.1)\n\n- fixed a crash\n\n</details>\n\n---\n\n### Configuration\n";
+        private const string BodyWithoutNotes = Table + "### Release Notes\n\n<details>\n<summary>o/r (dep)</summary>\n\n### [`v1.0.1`](https://example.test/v1.0.1)\n\nPython 1.0.1\n\n</details>\n\n---\n\n### Configuration\n";
+        private const string BodyOfTwoUpdates = "| Package | Change |\n|---|---|\n| [a](https://redirect.github.com/o/a) | `1.0.0` → `1.0.1` |\n| [b](https://redirect.github.com/o/b) | `1.0.0` → `1.0.1` |\n\n---\n\n### Release Notes\n\n<details>\n<summary>o/a (a)</summary>\n\n### [`v1.0.1`](https://example.test/v1.0.1)\n\nPython 1.0.1\n\n</details>\n\n---\n\n### Configuration\n";
+
         [Fact]
         public async Task JevGetsExactlyTheScannedBody_EvenWhenThePrBodyChangedAfterTheScan()
         {
@@ -1129,9 +1134,6 @@ public class RenovateTriageActivitiesTests
             Assert.Null(result.JevError);
         }
 
-        private const string BodyWithNotes = "### Release Notes\n\n<details>\n<summary>o/r (dep)</summary>\n\n### [`v1.0.1`](https://example.test/v1.0.1)\n\n- fixed a crash\n\n</details>\n\n---\n\n### Configuration\n";
-        private const string BodyWithoutNotes = "### Release Notes\n\n<details>\n<summary>o/r (dep)</summary>\n\n### [`v1.0.1`](https://example.test/v1.0.1)\n\nPython 1.0.1\n\n</details>\n\n---\n\n### Configuration\n";
-
         [Fact]
         public async Task ReleaseNotesInTheScannedBody_DecideBeforeJevsChangelogScore()
         {
@@ -1146,7 +1148,7 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task ReleaseNotesInTheLiveBody_DecideWhenThereIsNoScannedBody()
+        public async Task WithoutAScannedBody_OnlyJevsChangelogScoreDecides_EvenWhenTheLiveBodyHasNotes()
         {
             var rig = Create();
             rig.Github.PullRequest = FakeGitHubApi.Renovate(body: BodyWithNotes);
@@ -1154,8 +1156,9 @@ public class RenovateTriageActivitiesTests
 
             var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
 
-            Assert.True(result.NotesFound);
-            Assert.Equal(TriageRules.ChangelogPresent, result.Decision!.Reason);
+            Assert.False(result.NotesFound);
+            Assert.Equal(TriageRules.NoChangelog, result.Decision!.Reason);
+            Assert.Equal([BodyWithNotes], rig.Jev.Bodies);
         }
 
         [Fact]
@@ -1192,7 +1195,19 @@ public class RenovateTriageActivitiesTests
             var rig = Create();
             rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
 
-            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash"), ScannedText.Create("## 2.0.0\n\nprose only")])));
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\nprose only")])));
+
+            Assert.False(result.NotesFound);
+            Assert.Equal(TriageRules.NoChangelog, result.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task AnUpdateWithoutNotesInTheBodyOrAFetchedSection_LeavesTheDecisionToJev()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyOfTwoUpdates), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash")])));
 
             Assert.False(result.NotesFound);
             Assert.Equal(TriageRules.NoChangelog, result.Decision!.Reason);
