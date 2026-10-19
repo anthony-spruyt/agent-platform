@@ -43,7 +43,7 @@ Otherwise, analyse it yourself:
 - `BLOCKED`: must not merge as it stands: a regression, an incompatibility, a broken upstream release.
 - `NEEDS_REVIEW`: the evidence does not decide it, or a human should look.
 
-CI is judged by code. The triage context gives the CI state, and its CI blocks hold the logs of failing GitHub Actions jobs only (at most 10). For a failing check without a block, list it with `gh api repos/{repo}/commits/{sha}/check-runs` or `.../status`. Never run `gh pr checks`. Pending CI is fine, because code checks CI again before acting. Red CI is never `SAFE`. Each `fix` entry names the proper API or pattern and links the docs or upstream change; no casts, suppressions or lint ignores.
+CI is judged by code. The triage context gives the CI state, and its CI blocks hold the logs of failing GitHub Actions jobs only (at most 10). For a failing check without a block, list it with `gh api repos/{{repo}}/commits/{{head_sha}}/check-runs` or `.../status`. Never run `gh pr checks`. Pending CI is fine, because code checks CI again before acting. Red CI is never `SAFE`. Each `fix` entry names the proper API or pattern and links the docs or upstream change; no casts, suppressions or lint ignores.
 
 ## Result
 

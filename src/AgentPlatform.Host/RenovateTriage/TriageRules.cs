@@ -235,6 +235,12 @@ public static partial class TriageRules
         return [.. ConsideredChecks(checks).Where(c => IsCompleted(c.Status) && IsFailing(c))];
     }
 
+    public static bool HasPendingCommitStatus(IReadOnlyList<GitHubCheckRun> checks)
+    {
+        ArgumentNullException.ThrowIfNull(checks);
+        return ConsideredChecks(checks).Any(c => c.Id == GitHubApiClient.CommitStatusId && !IsCompleted(c.Status));
+    }
+
     public static bool AreAllRenovateCommits(IReadOnlyList<GitHubCommit> commits, int prCommitCount)
     {
         ArgumentNullException.ThrowIfNull(commits);

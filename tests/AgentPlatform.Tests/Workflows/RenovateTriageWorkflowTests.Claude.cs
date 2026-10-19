@@ -178,6 +178,34 @@ public partial class RenovateTriageWorkflowTests
         Assert.NotNull(row.AppliedAt);
     }
 
+    [Fact]
+    public async Task ASafeAnswer_WhoseCommitStatusRestartsBeforeTheApply_IsApprovedOnTheStatusPoll_WithoutASignal()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = Answers(env, during: () =>
+        {
+            rig.Github.Checks.Add(CommitStatus("pending", null));
+            return Task.CompletedTask;
+        });
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
+            Assert.Empty(rig.Github.Approvals);
+            rig.Github.Checks[1] = CommitStatus("completed", "success");
+            return await RunToResultAsync(handle, "renovate-triage-ci-race-status-poll");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, "claude-safe", TriageVerdict.Safe), result);
+        Assert.Equal([ShaA], rig.Github.Approvals.Select(a => a.CommitId));
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+        var applies = (await StepsAsync(rig)).Where(s => s.Name == "apply").ToList();
+        Assert.Equal(["Aborted", "Applied"], applies.Select(s => s.StopReason));
+        Assert.True(applies[1].StartedAt - applies[0].StartedAt < RenovateTriageWorkflow.CiTimeout, $"Applied after {applies[1].StartedAt - applies[0].StartedAt}.");
+    }
+
     [Theory]
     [InlineData("FIXABLE", TriageVerdict.Fixable, "claude-fixable", TriageRules.FixableLabel)]
     [InlineData("BLOCKED", TriageVerdict.Blocked, "claude-blocked", TriageRules.BlockedLabel)]

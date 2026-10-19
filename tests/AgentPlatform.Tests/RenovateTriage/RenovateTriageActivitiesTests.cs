@@ -488,7 +488,37 @@ public class RenovateTriageActivitiesTests
             var rig = Create();
             rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "pending", null, null));
 
-            Assert.Equal(AssessStatus.Pending, (await Assess(rig)).Status);
+            Assert.Equal(new AssessResult(AssessStatus.Pending, Sha, StatusPending: true), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task ACommitStatusAmongPendingActionsRuns_StillAsksForAStatusPoll()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "pending", null, null));
+
+            Assert.Equal(new AssessResult(AssessStatus.Pending, Sha, StatusPending: true), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task PendingActionsRunsNextToACompletedCommitStatus_DoNotAskForAStatusPoll()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "success", null));
+
+            Assert.Equal(new AssessResult(AssessStatus.Pending, Sha), await Assess(rig));
+        }
+
+        [Fact]
+        public async Task AnIgnoredPendingCommitStatus_NeverAsksForAStatusPoll()
+        {
+            var rig = Create();
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            rig.Github.Checks.Add(new GitHubCheckRun(GitHubApiClient.CommitStatusId, "renovate/stability-days", "pending", null, null));
+
+            Assert.Equal(new AssessResult(AssessStatus.Pending, Sha), await Assess(rig));
         }
 
         [Fact]
@@ -1968,7 +1998,7 @@ public class RenovateTriageActivitiesTests
 
             var result = await Apply(rig, _safe);
 
-            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason), result);
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason, StatusPending: true), result);
             Assert.Empty(rig.Github.Approvals);
         }
 
