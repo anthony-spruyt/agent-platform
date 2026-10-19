@@ -70,13 +70,15 @@ public static partial class RenovateBodyTable
             Resolved(row));
     }
 
+    internal static string Bare(string version) => version.TrimStart('=', 'v', 'V');
+
     private static string? Resolved(List<string> row)
     {
         var versions = Link().Matches(string.Join(' ', row))
             .Select(l => ResolvedVersion().Match(l.Groups["url"].Value))
             .Where(m => m.Success)
             .Select(m => Uri.UnescapeDataString(m.Groups["version"].Value))
-            .Distinct(StringComparer.Ordinal)
+            .DistinctBy(Bare, StringComparer.Ordinal)
             .ToList();
         return versions.Count == 1 ? versions[0] : null;
     }

@@ -295,19 +295,17 @@ public static partial class ReleaseNotesDetector
 
     private static bool IsVersionHeading(Line line) => !line.Code && VersionHeading().IsMatch(line.Text);
 
-    private static string VersionOf(Line heading) => Bare(VersionHeading().Match(heading.Text).Groups["version"].Value);
-
-    private static string Bare(string version) => version.TrimStart('=', 'v', 'V');
+    private static string VersionOf(Line heading) => RenovateBodyTable.Bare(VersionHeading().Match(heading.Text).Groups["version"].Value);
 
     internal static bool CoversVersion(string to, string newest, string? resolved = null)
     {
         var range = to.Trim();
         if (RangeOrFloating().IsMatch(range))
         {
-            return resolved is null ? AtLeastLowerBound(range, newest) : string.Equals(Bare(resolved), newest, StringComparison.Ordinal);
+            return resolved is null ? SatisfiesLowerBound(range, newest) : string.Equals(RenovateBodyTable.Bare(resolved), newest, StringComparison.Ordinal);
         }
 
-        var target = Bare(range);
+        var target = RenovateBodyTable.Bare(range);
         if (string.Equals(target, newest, StringComparison.Ordinal))
         {
             return true;
@@ -331,25 +329,36 @@ public static partial class ReleaseNotesDetector
             && newest.StartsWith(core.Value + ".", StringComparison.Ordinal);
     }
 
-    private static bool AtLeastLowerBound(string range, string newest)
+    private static bool SatisfiesLowerBound(string range, string newest)
     {
         if (LowerBound().Match(range) is not { Success: true } bound || !DottedNumbers().IsMatch(newest))
         {
             return false;
         }
 
-        var floor = bound.Groups["version"].Value.Split('.');
-        var found = newest.Split('.');
-        for (var i = 0; i < Math.Max(floor.Length, found.Length); i++)
+        var order = CompareVersions(bound.Groups["version"].Value, newest);
+        return bound.Groups["op"].Value switch
         {
-            var order = ComparePart(i < floor.Length ? floor[i] : "0", i < found.Length ? found[i] : "0");
+            ">" => order < 0,
+            "=" => order == 0,
+            _ => order <= 0,
+        };
+    }
+
+    private static int CompareVersions(string left, string right)
+    {
+        var a = left.Split('.');
+        var b = right.Split('.');
+        for (var i = 0; i < Math.Max(a.Length, b.Length); i++)
+        {
+            var order = ComparePart(i < a.Length ? a[i] : "0", i < b.Length ? b[i] : "0");
             if (order != 0)
             {
-                return order < 0;
+                return order;
             }
         }
 
-        return true;
+        return 0;
     }
 
     private static int ComparePart(string left, string right)
@@ -442,13 +451,13 @@ public static partial class ReleaseNotesDetector
     [GeneratedRegex(@"^[\^~<>*]|[\s,|]", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex RangeOrFloating();
 
-    [GeneratedRegex(@"^(?:~>|>=|[\^~>=])\s*(?<version>[0-9]+(?:\.[0-9]+)*)$", Linear, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^(?<op>~>|>=|[\^~>=])\s*(?<version>[0-9]+(?:\.[0-9]+)*)$", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LowerBound();
 
     [GeneratedRegex(@"^[0-9]+(?:\.[0-9]+)*$", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex DottedNumbers();
 
-    [GeneratedRegex(@"-(?:rc|alpha|beta|pre|dev|canary|next)", Linear | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"-(?:rc|alpha|beta|pre|dev|canary|next|snapshot|nightly)|[-.](?:m\d|ea(?:[^A-Za-z0-9]|$))", Linear | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Prerelease();
 
     [GeneratedRegex(@"^\d+(?:\.\d+)*", Linear, matchTimeoutMilliseconds: 1000)]

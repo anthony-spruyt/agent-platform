@@ -751,8 +751,21 @@ public class ReleaseNotesDetectorTests
     [InlineData("~>0.81", "0.81.4", true)]
     [InlineData("~> 0.81", "0.82.0", true)]
     [InlineData(">1", "2", true)]
-    [InlineData("= 1.2", "1.2.5", true)]
+    [InlineData("= 1.2", "1.2.5", false)]
     [InlineData("= 1.3", "1.2.5", false)]
+    [InlineData(">1.2.3", "1.2.3", false)]
+    [InlineData(">1.2.3", "1.2.3.0", false)]
+    [InlineData(">1.2.3", "1.2.2", false)]
+    [InlineData(">1.2.3", "1.2.4", true)]
+    [InlineData("> 1.2.3", "1.3.0", true)]
+    [InlineData("= 1.2.0", "1.2.5", false)]
+    [InlineData("= 1.2.0", "1.1.9", false)]
+    [InlineData("= 1.2.0", "1.2.0", true)]
+    [InlineData("= 1.2", "1.2", true)]
+    [InlineData(">=1.2.3", "1.2.3", true)]
+    [InlineData(">=1.2.3", "1.2.2", false)]
+    [InlineData("~1.2.0", "1.2.0", true)]
+    [InlineData("~> 0.81", "0.81.0", true)]
     [InlineData("<2", "1.9.0", false)]
     [InlineData("<=2", "1.9.0", false)]
     [InlineData("<2.0.0", "0.0.1", false)]
@@ -803,6 +816,20 @@ public class ReleaseNotesDetectorTests
     [InlineData("1.2.3-beta.hotfix", "1.2.3", false)]
     [InlineData("1.2.3-rc-alpine", "1.2.3", false)]
     [InlineData("1.2.3-rc_x", "1.2.3", false)]
+    [InlineData("1.2.3-SNAPSHOT", "1.2.3", false)]
+    [InlineData("1.2.3-M1", "1.2.3", false)]
+    [InlineData("1.2.3-nightly", "1.2.3", false)]
+    [InlineData("21-ea", "21", false)]
+    [InlineData("1.2.3-alpine-ea", "1.2.3", false)]
+    [InlineData("1.2.3-ea.1", "1.2.3", false)]
+    [InlineData("1.2.3-alpine-M2", "1.2.3", false)]
+    [InlineData("1.2.3-alpine.ea", "1.2.3", false)]
+    [InlineData("1.2.3-alpine.M1", "1.2.3", false)]
+    [InlineData("21-EA", "21", false)]
+    [InlineData("1.2.3-bookworm", "1.2.3", true)]
+    [InlineData("1.2.3-early", "1.2.3", true)]
+    [InlineData("1.2.3-tea", "1.2.3", true)]
+    [InlineData("1.2.3-arm64", "1.2.3", true)]
     [InlineData("1.2.3-alpine-rc.1", "1.2.3", false)]
     [InlineData("1.2.3-rc.1", "1.2.3-rc.1", true)]
     [InlineData("1.2.3-slim", "1.2.3", true)]
@@ -846,6 +873,16 @@ public class ReleaseNotesDetectorTests
     [InlineData("^1.2.3", "9.9.9", "1.2.3", false)]
     public void CoversVersion_WhenTheRowShowsTheResolvedVersion_AcceptsOnlyAHeadingEqualToIt(string to, string resolved, string newest, bool covers) =>
         Assert.Equal(covers, ReleaseNotesDetector.CoversVersion(to, newest, resolved));
+
+    [Fact]
+    public void Body_WhereTheDiffsLinkAndTheBadgeDifferOnlyByAVPrefix_NeedsTheNewestSectionToBeThatVersion()
+    {
+        static string Linked() =>
+            "| [dep](https://redirect.github.com/o/r) | [`^1.0.0` → `^1.2.0`](https://renovatebot.com/diffs/npm/dep/1.0.0/v1.2.3) | ![age](https://developer.mend.io/api/mc/badges/age/npm/dep/1.2.3?slim=true) |";
+
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Linked()], Block(Versioned + "- fixed a crash"))));
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Doc([Linked()], Block(Versioned.Replace("v1.2.3", "v1.2.4", StringComparison.Ordinal) + "- fixed a crash"))));
+    }
 
     [Fact]
     public void Body_WhereTheRowShowsTheResolvedVersion_NeedsTheNewestSectionToBeThatVersion()
