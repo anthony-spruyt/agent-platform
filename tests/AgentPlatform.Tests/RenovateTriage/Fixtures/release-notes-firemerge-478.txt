@@ -1,0 +1,216 @@
+This PR contains the following updates:
+
+| Package | Change | [Age](https://docs.renovatebot.com/merge-confidence/) | [Adoption](https://docs.renovatebot.com/merge-confidence/) | [Passing](https://docs.renovatebot.com/merge-confidence/) | [Confidence](https://docs.renovatebot.com/merge-confidence/) |
+|---|---|---|---|---|---|
+| [react-dropzone](https://redirect.github.com/react-dropzone/react-dropzone) | [`^15.0.0` → `^20.0.0`](https://renovatebot.com/diffs/npm/react-dropzone/15.0.0/20.1.1) | ![age](https://developer.mend.io/api/mc/badges/age/npm/react-dropzone/20.1.1?slim=true) | ![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/react-dropzone/20.1.1?slim=true) | ![passing](https://developer.mend.io/api/mc/badges/compatibility/npm/react-dropzone/15.0.0/20.1.1?slim=true) | ![confidence](https://developer.mend.io/api/mc/badges/confidence/npm/react-dropzone/15.0.0/20.1.1?slim=true) |
+
+---
+
+### Release Notes
+
+<details>
+<summary>react-dropzone/react-dropzone (react-dropzone)</summary>
+
+### [`v20.1.1`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v20.1.1)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v20.1.0...v20.1.1)
+
+##### Bug Fixes
+
+- **docs:** pin waku to beta.8 to fix white-screen (closes [#&#8203;1512](https://redirect.github.com/react-dropzone/react-dropzone/issues/1512)) ([b9f8605](https://redirect.github.com/react-dropzone/react-dropzone/commit/b9f86057173948c7ad2f05fe99f2a8c1bb1a3b88))
+
+### [`v20.1.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v20.1.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v20.0.0...v20.1.0)
+
+##### Features
+
+- expose drag file rejections ([01d967c](https://redirect.github.com/react-dropzone/react-dropzone/commit/01d967c1357208037b3f57f93426646755e4e0dd))
+
+### [`v20.0.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v20.0.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v19.3.0...v20.0.0)
+
+- feat!: drop Node 20, upgrade jsdom to v30 ([01fc05c](https://redirect.github.com/react-dropzone/react-dropzone/commit/01fc05c5996bf615caf812627f7491375e647c7d))
+
+##### BREAKING CHANGES
+
+- minimum supported Node.js is now 22
+
+### [`v19.3.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v19.3.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v19.2.0...v19.3.0)
+
+##### Features
+
+- group MIME types in accept (closes [#&#8203;1189](https://redirect.github.com/react-dropzone/react-dropzone/issues/1189)) ([02e7886](https://redirect.github.com/react-dropzone/react-dropzone/commit/02e7886871eb61855875b103db1a1ffbd75287a1))
+
+### [`v19.2.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v19.2.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v19.1.1...v19.2.0)
+
+##### Features
+
+- add paste-to-upload support (closes [#&#8203;1210](https://redirect.github.com/react-dropzone/react-dropzone/issues/1210)) ([18fc412](https://redirect.github.com/react-dropzone/react-dropzone/commit/18fc4126338c805615ccfa797570d3dd78c3b66a))
+
+### [`v19.1.1`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v19.1.1)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v19.1.0...v19.1.1)
+
+##### Bug Fixes
+
+- ignore drops on the dropzone while the file dialog is open (closes [#&#8203;1455](https://redirect.github.com/react-dropzone/react-dropzone/issues/1455)) ([4599a84](https://redirect.github.com/react-dropzone/react-dropzone/commit/4599a84cfe483aa5ac38753882cfee9639fb35ba))
+
+### [`v19.1.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v19.1.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v19.0.2...v19.1.0)
+
+##### Features
+
+- support async validator ([ec2af85](https://redirect.github.com/react-dropzone/react-dropzone/commit/ec2af85ee2dbfd637092366ecd371f00fa946012))
+
+### [`v19.0.2`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v19.0.2)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v19.0.1...v19.0.2)
+
+##### Bug Fixes
+
+- detect dragged files via items kind when types omit Files ([#&#8203;1409](https://redirect.github.com/react-dropzone/react-dropzone/issues/1409)) ([c678d38](https://redirect.github.com/react-dropzone/react-dropzone/commit/c678d3894b29bb7596ca7d9745ca8aa38efe07d5))
+
+### [`v19.0.1`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v19.0.1)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v19.0.0...v19.0.1)
+
+##### Bug Fixes
+
+- hide file input in-flow to prevent scroll jump (fixes [#&#8203;1413](https://redirect.github.com/react-dropzone/react-dropzone/issues/1413)) ([d1d290c](https://redirect.github.com/react-dropzone/react-dropzone/commit/d1d290c013b66f971e75d3759081efe70402f0d1))
+
+### [`v19.0.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v19.0.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.3.0...v19.0.0)
+
+- fix!: accept files up to the limit instead of rejecting the batch ([696d47c](https://redirect.github.com/react-dropzone/react-dropzone/commit/696d47cec0cff84b3fc150bdf468f6dd0a178204)), closes [#&#8203;1355](https://redirect.github.com/react-dropzone/react-dropzone/issues/1355) [#&#8203;1358](https://redirect.github.com/react-dropzone/react-dropzone/issues/1358)
+
+##### BREAKING CHANGES
+
+- acceptedFiles/onDropAccepted now returns the in-limit
+  files that were previously rejected wholesale.
+
+### [`v18.3.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.3.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.2.2...v18.3.0)
+
+##### Features
+
+- add isDragUnknown state and skip validator during drag (closes [#&#8203;1408](https://redirect.github.com/react-dropzone/react-dropzone/issues/1408), closes [#&#8203;1244](https://redirect.github.com/react-dropzone/react-dropzone/issues/1244)) ([03f0f6e](https://redirect.github.com/react-dropzone/react-dropzone/commit/03f0f6ee83edee992ac3ed401386de9124370650))
+
+### [`v18.2.2`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.2.2)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.2.1...v18.2.2)
+
+##### Bug Fixes
+
+- prevent browser opening files dropped on disabled/noDrag dropzone (fixes [#&#8203;1362](https://redirect.github.com/react-dropzone/react-dropzone/issues/1362)) ([2b8dcfb](https://redirect.github.com/react-dropzone/react-dropzone/commit/2b8dcfb5af9d71cdbdcd60871c9e5b96c28e4f41))
+
+### [`v18.2.1`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.2.1)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.2.0...v18.2.1)
+
+##### Bug Fixes
+
+- fall back to native input when the file picker is blocked (closes [#&#8203;1429](https://redirect.github.com/react-dropzone/react-dropzone/issues/1429)) ([e8242fd](https://redirect.github.com/react-dropzone/react-dropzone/commit/e8242fd92178c1c9e9e9e503e46d94668784436e))
+
+### [`v18.2.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.2.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.1.0...v18.2.0)
+
+##### Features
+
+- add getErrorMessage prop to override rejection messages ([485eb8c](https://redirect.github.com/react-dropzone/react-dropzone/commit/485eb8c3e80aacb4e9dea273de201bd648ad1278)), closes [#&#8203;1304](https://redirect.github.com/react-dropzone/react-dropzone/issues/1304) [#&#8203;1289](https://redirect.github.com/react-dropzone/react-dropzone/issues/1289) [#&#8203;1260](https://redirect.github.com/react-dropzone/react-dropzone/issues/1260)
+
+### [`v18.1.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.1.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.0.2...v18.1.0)
+
+##### Features
+
+- format file size errors as human-readable units ([58bd949](https://redirect.github.com/react-dropzone/react-dropzone/commit/58bd949eb46f7903a719f0b80e6e81fd601920ef))
+
+### [`v18.0.2`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.0.2)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.0.1...v18.0.2)
+
+##### Bug Fixes
+
+- **a11y:** add aria-disabled to root when disabled (closes [#&#8203;1453](https://redirect.github.com/react-dropzone/react-dropzone/issues/1453), closes [#&#8203;1452](https://redirect.github.com/react-dropzone/react-dropzone/issues/1452)) ([4a7c92b](https://redirect.github.com/react-dropzone/react-dropzone/commit/4a7c92b69fc6498edaeff27c36631519a93ab5d3))
+- **a11y:** label hidden file input (closes [#&#8203;1458](https://redirect.github.com/react-dropzone/react-dropzone/issues/1458), closes [#&#8203;1430](https://redirect.github.com/react-dropzone/react-dropzone/issues/1430)) ([bbfd483](https://redirect.github.com/react-dropzone/react-dropzone/commit/bbfd48345086ed67820c7517a827c01149836188))
+- **build:** add [@&#8203;types/react](https://redirect.github.com/types/react) as optional peer dependency (closes [#&#8203;1461](https://redirect.github.com/react-dropzone/react-dropzone/issues/1461), closes [#&#8203;1454](https://redirect.github.com/react-dropzone/react-dropzone/issues/1454)) ([51e9af2](https://redirect.github.com/react-dropzone/react-dropzone/commit/51e9af23b3d5ffb595fcba8b6b0952e2bdd805d7))
+- **types:** keep drop callback events event-shaped (closes [#&#8203;1460](https://redirect.github.com/react-dropzone/react-dropzone/issues/1460), closes [#&#8203;1419](https://redirect.github.com/react-dropzone/react-dropzone/issues/1419)) ([26680e1](https://redirect.github.com/react-dropzone/react-dropzone/commit/26680e1df638b75c00aff1d41331d4946602157c))
+
+### [`v18.0.1`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.0.1)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v18.0.0...v18.0.1)
+
+##### Bug Fixes
+
+- enforce extensions paired with wildcard MIME types, closes [#&#8203;1220](https://redirect.github.com/react-dropzone/react-dropzone/issues/1220) ([e130754](https://redirect.github.com/react-dropzone/react-dropzone/commit/e1307540a0caa4c9226958440faed2e03dbe82a7))
+
+### [`v18.0.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v18.0.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v17.0.0...v18.0.0)
+
+- feat!: upgrade file-selector to v4 ([f90eb4a](https://redirect.github.com/react-dropzone/react-dropzone/commit/f90eb4a5d66743386bf5f1ab32cf7ebdc197ea35))
+
+##### BREAKING CHANGES
+
+- FileWithPath now requires `path`/`relativePath`, so a plain File is no longer assignable — type onDrop handlers as `File[]`. The full extension-to-MIME table is no longer bundled; pass COMMON\_MIME\_TYPES from `file-selector/mime` via getFilesFromEvent to restore it.
+
+### [`v17.0.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v17.0.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v16.0.0...v17.0.0)
+
+- refactor!: migrate source to TypeScript, drop prop-types & defaultProps ([db262aa](https://redirect.github.com/react-dropzone/react-dropzone/commit/db262aac6ca25d80ef1b7f9028be468dcb7e210c))
+
+##### BREAKING CHANGES
+
+- Requires React >= 18. prop-types and defaultProps are
+  removed in favor of TypeScript types and default parameter values; the
+  hand-written typings are replaced by declarations generated from source.
+
+### [`v16.0.0`](https://redirect.github.com/react-dropzone/react-dropzone/releases/tag/v16.0.0)
+
+[Compare Source](https://redirect.github.com/react-dropzone/react-dropzone/compare/v15.0.0...v16.0.0)
+
+- chore!: adopt oxc toolchain (tsdown/oxlint/oxfmt/vitest) + Vocs docs ([ac5c085](https://redirect.github.com/react-dropzone/react-dropzone/commit/ac5c085778823025e982a27302909512dab27d67))
+
+##### BREAKING CHANGES
+
+- drops the UMD build and dist/es/; the package is now ESM + CJS (dist/index.js / dist/index.cjs) with "type": "module" and an exports map. CDN/script-tag consumers and deep imports of the old paths must migrate. Requires Node >= 20 to build.
+
+</details>
+
+---
+
+### Configuration
+
+📅 **Schedule**: (UTC)
+
+- Branch creation
+  - At any time (no schedule defined)
+- Automerge
+  - At any time (no schedule defined)
+
+🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.
+
+♻ **Rebasing**: Whenever PR becomes conflicted, or you tick the rebase/retry checkbox.
+
+🔕 **Ignore**: Close this PR and you won't be reminded about this update again.
+
+---
+
+ - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box
+
+---
+
+This PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/anthony-spruyt/firemerge).
+<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0NC40Ni4wIiwidXBkYXRlZEluVmVyIjoiNDQuNDYuMCIsInRhcmdldEJyYW5jaCI6Im1haW4iLCJsYWJlbHMiOlsicmVub3ZhdGUvbnBtIl19-->

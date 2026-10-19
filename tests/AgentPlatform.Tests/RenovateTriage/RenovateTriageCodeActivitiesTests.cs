@@ -130,6 +130,18 @@ public class RenovateTriageCodeActivitiesTests
         }
 
         [Fact]
+        public async Task ADependencyWhoseVersionsAreARange_StillGoesToTheOwner()
+        {
+            var rig = Create();
+            const string RangeBody = "| Package | Change |\n|---|---|\n| [siderolabs/talos](https://redirect.github.com/siderolabs/talos) | `~> 1.9` -> `~> 1.10` |\n";
+
+            var result = await Run(() => rig.Activities.DetectMigrationAsync(new DetectMigrationInput(Repo, 7, Sha, ScannedText.Create(RangeBody))));
+
+            Assert.Equal(MigrationDetector.Reason, result.Decision?.Reason);
+            Assert.Contains("siderolabs/talos", result.Decision?.Comment, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task AnOrdinaryUpdate_IsNotAMigration()
         {
             var rig = Create();

@@ -63,7 +63,10 @@ public class RenovateBodyTableTests
     [InlineData("https://evil.test/github.com/a/b")]
     [InlineData("http://github.com/a/b")]
     [InlineData("https://github.com/a")]
-    [InlineData("https://github.com/a/b/c/d")]
+    [InlineData("https://github.com.evil.test/a/b/tree/HEAD/x")]
+    [InlineData("https://evil.test/github.com/a/b/tree/HEAD/x")]
+    [InlineData("http://github.com/a/b/tree/HEAD/x")]
+    [InlineData("https://github.com/a#b/c")]
     [InlineData("https://github.com/a/b?x=1")]
     [InlineData("https://github.com/a/b%2Fc")]
     public void Parse_OnlyTrustsAnHttpsGitHubRepoLinkAsTheSource(string url)
@@ -71,6 +74,44 @@ public class RenovateBodyTableTests
         var body = $"| Package | Change |\n|---|---|\n| [dep]({url}) | `1.0.0` → `1.0.1` |\n";
 
         Assert.Null(Assert.Single(RenovateBodyTable.Parse(body)).SourceRepo);
+    }
+
+    [Theory]
+    [InlineData("https://github.com/a/b/tree/HEAD/packages/b", "a/b")]
+    [InlineData("https://redirect.github.com/a/b/tree/main/x/y/", "a/b")]
+    [InlineData("https://github.com/a/b/c/d", "a/b")]
+    [InlineData("https://github.com/a/b/", "a/b")]
+    public void Parse_ReadsTheSourceRepoOutOfARepoLinkWithAPath(string url, string source)
+    {
+        var body = $"| Package | Change |\n|---|---|\n| [dep](https://example.test) ([source]({url})) | `1.0.0` → `1.0.1` |\n";
+
+        Assert.Equal(source, Assert.Single(RenovateBodyTable.Parse(body)).SourceRepo);
+    }
+
+    [Theory]
+    [InlineData("~> 0.76", "~> 0.78")]
+    [InlineData(">= 1.2, < 2", ">= 1.3, < 2")]
+    [InlineData("1.2.3-alpine", "1.2.4-alpine")]
+    [InlineData("^1.0.0", "^1.1.0")]
+    public void Parse_ReadsAChangeWhoseVersionsHoldSpacesOrOperators(string from, string to)
+    {
+        var body = $"| Package | Change |\n|---|---|\n| [dep](https://github.com/a/b) | `{from}` → `{to}` |\n";
+
+        var update = Assert.Single(RenovateBodyTable.Parse(body));
+
+        Assert.Equal((from, to), (update.From, update.To));
+    }
+
+    [Fact]
+    public void Parse_ReadsTheRowsOfARealTerraformAndAMonorepoBody()
+    {
+        var terraform = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "RenovateTriage", "Fixtures", "release-notes-spruyt-labs-2188.txt"));
+        var monorepo = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "RenovateTriage", "Fixtures", "release-notes-spruyt-labs-2536.txt"));
+
+        Assert.Equal([new RenovateUpdate("tfe", "hashicorp/terraform-provider-tfe", "~> 0.76", "~> 0.78")], RenovateBodyTable.Parse(terraform));
+        Assert.Equal(
+            [("@vitest/coverage-v8", "vitest-dev/vitest", "4.1.11"), ("vitest", "vitest-dev/vitest", "4.1.11")],
+            RenovateBodyTable.Parse(monorepo).Select(u => (u.Dependency, u.SourceRepo, u.To)));
     }
 
     [Theory]

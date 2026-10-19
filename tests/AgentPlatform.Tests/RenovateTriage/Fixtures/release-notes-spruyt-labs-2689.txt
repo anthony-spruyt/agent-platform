@@ -1,0 +1,102 @@
+This PR contains the following updates:
+
+| Package | Update | Change |
+|---|---|---|
+| [vpa-gitrepo](https://redirect.github.com/kubernetes/autoscaler) | minor | `vertical-pod-autoscaler-1.6.0` → `vertical-pod-autoscaler-1.7.1` |
+
+---
+
+> [!WARNING]
+> Some dependencies could not be looked up. Check the [Dependency Dashboard](../issues/9) for more information.
+
+---
+
+### Release Notes
+
+<details>
+<summary>kubernetes/autoscaler (vpa-gitrepo)</summary>
+
+### [`vertical-pod-autoscaler-1.7.1`](https://redirect.github.com/kubernetes/autoscaler/releases/tag/vertical-pod-autoscaler-1.7.1)
+
+[Compare Source](https://redirect.github.com/kubernetes/autoscaler/compare/vertical-pod-autoscaler-1.7.0...vertical-pod-autoscaler-1.7.1)
+
+#### Changes by Kind
+
+##### Regression
+
+- Fixed the VPA recommender ignoring the --history-cpu-metric and --history-memory-metric flags when using the Prometheus history provider, which caused the historical queries to omit the configured metric name. ([#&#8203;9753](https://redirect.github.com/kubernetes/autoscaler/pull/9753), [@&#8203;ulascansenturk](https://redirect.github.com/ulascansenturk))
+- Fixed VPA checkpoint loading to prevent recommendations from restarting from scratch ([#&#8203;10052](https://redirect.github.com/kubernetes/autoscaler/pull/10052), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+
+##### Bug
+
+- Fix bug where VPA Checkpoint GC error message wasn't logging correctly ([#&#8203;9886](https://redirect.github.com/kubernetes/autoscaler/pull/9886), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+- Add reasons to in-place update deferred log messages ([#&#8203;9964](https://redirect.github.com/kubernetes/autoscaler/pull/9964), [@&#8203;omerap12](https://redirect.github.com/omerap12))
+
+##### Other (Cleanup or Flake)
+
+- \[vpa-release-1.7] Bump the actions group across 3 directories with 1 update by [@&#8203;k8s-infra-cherrypick-robot](https://redirect.github.com/k8s-infra-cherrypick-robot) in [#&#8203;9735](https://redirect.github.com/kubernetes/autoscaler/pull/9735)
+- Bump the patch-updates group across 2 directories with 19 updates by [@&#8203;dependabot](https://redirect.github.com/dependabot)\[bot] in [#&#8203;9776](https://redirect.github.com/kubernetes/autoscaler/pull/9776)
+- Bump the patch-updates group across 2 directories with 37 updates by [@&#8203;dependabot](https://redirect.github.com/dependabot)\[bot] in [#&#8203;9938](https://redirect.github.com/kubernetes/autoscaler/pull/9938)
+- Bump the actions group across 3 directories with 1 update by [@&#8203;dependabot](https://redirect.github.com/dependabot)\[bot] in [#&#8203;9979](https://redirect.github.com/kubernetes/autoscaler/pull/9979)
+- Bump the patch-updates group across 2 directories with 3 updates by [@&#8203;dependabot](https://redirect.github.com/dependabot)\[bot] in [#&#8203;9982](https://redirect.github.com/kubernetes/autoscaler/pull/9982)
+- Bump to k8s 1.36.3 patch versions by [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey) in [#&#8203;10046](https://redirect.github.com/kubernetes/autoscaler/pull/10046)
+- Bump VPA to 1.7.1 by [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey) in [#&#8203;10053](https://redirect.github.com/kubernetes/autoscaler/pull/10053)
+- Bump to VPA 1.7.1 by [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey) in [#&#8203;10058](https://redirect.github.com/kubernetes/autoscaler/pull/10058)
+
+**Full Changelog**: <https://github.com/kubernetes/autoscaler/compare/vertical-pod-autoscaler-1.7.0...vertical-pod-autoscaler-1.7.1>
+
+### [`vertical-pod-autoscaler-1.7.0`](https://redirect.github.com/kubernetes/autoscaler/releases/tag/vertical-pod-autoscaler-1.7.0)
+
+[Compare Source](https://redirect.github.com/kubernetes/autoscaler/compare/vertical-pod-autoscaler-1.6.0...vertical-pod-autoscaler-1.7.0)
+
+#### Changes by Kind
+
+##### API Change
+
+- Added MemoryAggregationIntervalSeconds for the VPA object ([#&#8203;9317](https://redirect.github.com/kubernetes/autoscaler/pull/9317), [@&#8203;omerap12](https://redirect.github.com/omerap12))
+- EvictAfterOOMThreshold is now per vpa ([#&#8203;9071](https://redirect.github.com/kubernetes/autoscaler/pull/9071), [@&#8203;omerap12](https://redirect.github.com/omerap12))
+- The VPA support InPlace update mode. VPA will not evict any pods and only try to resize pods inplace. ([#&#8203;8888](https://redirect.github.com/kubernetes/autoscaler/pull/8888), [@&#8203;omerap12](https://redirect.github.com/omerap12))
+- Users can configure a startupBoost policy in the VPA spec. ([#&#8203;9141](https://redirect.github.com/kubernetes/autoscaler/pull/9141), [@&#8203;kamarabbas99](https://redirect.github.com/kamarabbas99))
+- VPA now stores a observedGeneration in both status and condition fields. ([#&#8203;9524](https://redirect.github.com/kubernetes/autoscaler/pull/9524), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+
+##### Bug or Regression
+
+- Fix bug where VPA admission-controller could write a webhook with an empty cert for a brief period. ([#&#8203;9599](https://redirect.github.com/kubernetes/autoscaler/pull/9599), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+- Fixed OOM detection for pods with `restartPolicy: Never` ([#&#8203;7955](https://redirect.github.com/kubernetes/autoscaler/pull/7955), [@&#8203;tkukushkin](https://redirect.github.com/tkukushkin))
+- Fixed a bug where the presence of a LimitRange object with CPU constraints in the cluster prevented VPA from recreating Pods managed by the targeted controllers. The updated code section, which proportionally reduces resource requests and limits, could result in the loss of sub-millicore values. ([#&#8203;8946](https://redirect.github.com/kubernetes/autoscaler/pull/8946), [@&#8203;iamzili](https://redirect.github.com/iamzili))
+- Fixed a bug where users could use alpha (off-by-default) features by updating an existing VPA resource, bypassing the feature gate check. ([#&#8203;9557](https://redirect.github.com/kubernetes/autoscaler/pull/9557), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+
+##### Other (Cleanup or Flake)
+
+- Bump Kubernetes dependencies to 1.36.0 ([#&#8203;9547](https://redirect.github.com/kubernetes/autoscaler/pull/9547), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+- Reduce VPA memory usage by stripping away unnecessary managed fields from informer cache ([#&#8203;9634](https://redirect.github.com/kubernetes/autoscaler/pull/9634), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+- Update flag in-place-skip-disruption-budget is now beta ([#&#8203;9655](https://redirect.github.com/kubernetes/autoscaler/pull/9655), [@&#8203;omerap12](https://redirect.github.com/omerap12))
+- Improved VPA validation error messages now pinpoint exactly which fields are invalid, making it faster to diagnose and resolve configuration issues in your VerticalPodAutoscaler specs. ([#&#8203;9591](https://redirect.github.com/kubernetes/autoscaler/pull/9591), [@&#8203;adrianmoisey](https://redirect.github.com/adrianmoisey))
+
+</details>
+
+---
+
+### Configuration
+
+📅 **Schedule**: (UTC)
+
+- Branch creation
+  - At any time (no schedule defined)
+- Automerge
+  - At any time (no schedule defined)
+
+🚦 **Automerge**: Disabled by config. Please merge this manually once you are satisfied.
+
+♻ **Rebasing**: Whenever PR becomes conflicted, or you tick the rebase/retry checkbox.
+
+🔕 **Ignore**: Close this PR and you won't be reminded about this update again.
+
+---
+
+ - [ ] <!-- rebase-check -->If you want to rebase/retry this PR, check this box
+
+---
+
+This PR was generated by [Mend Renovate](https://mend.io/renovate/). View the [repository job log](https://developer.mend.io/github/anthony-spruyt/spruyt-labs).
+<!--renovate-debug:eyJjcmVhdGVkSW5WZXIiOiI0NC40OS4wIiwidXBkYXRlZEluVmVyIjoiNDQuNDkuMCIsInRhcmdldEJyYW5jaCI6Im1haW4iLCJsYWJlbHMiOlsicmVub3ZhdGUvZmx1eCJdfQ==-->

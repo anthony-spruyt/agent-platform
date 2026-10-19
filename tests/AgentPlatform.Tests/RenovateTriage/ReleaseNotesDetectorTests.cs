@@ -25,6 +25,9 @@ public class ReleaseNotesDetectorTests
         + string.Join("\n\n", blocks)
         + "\n\n---\n\n### Configuration\n\n- Branch creation\n  - At any time (no schedule defined)\n- Automerge\n  - At any time (no schedule defined)\n";
 
+    private static string Unclosed(string inner) =>
+        $"| Package | Change |\n|---|---|\n{Row("dep", "o/r")}\n\n---\n\n### Release Notes\n\n<details>\n<summary>o/r (dep)</summary>\n\n{inner}";
+
     private static string Body(params string[] blocks) => Doc([Row("dep", "o/r")], blocks);
 
     private static string Grouped(params string[] blocks) => Doc([Row("a", "o/a"), Row("b", "o/b")], blocks);
@@ -59,6 +62,10 @@ public class ReleaseNotesDetectorTests
     [Fact]
     public void Body_WithoutAReleaseNotesSection_HasNoNotes() =>
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Fixture("repo-operator-926")));
+
+    [Fact]
+    public void Body_WhoseNotesUseDotBullets_HasNotes() =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Fixture("container-images-186")));
 
     [Fact]
     public void Body_WhereTwoImagesShareOneBlockOfTheirSourceRepo_HasNotes() =>
@@ -116,6 +123,10 @@ public class ReleaseNotesDetectorTests
     [InlineData("+ fixed a crash")]
     [InlineData("1. fixed a crash")]
     [InlineData("10. fixed a crash")]
+    [InlineData("• fixed a crash")]
+    [InlineData("•\tfixed a crash")]
+    [InlineData("1) fixed a crash")]
+    [InlineData("10) fixed a crash")]
     [InlineData("-\tfixed a crash")]
     [InlineData("- 2026")]
     [InlineData("  - fixed a crash")]
@@ -155,8 +166,81 @@ public class ReleaseNotesDetectorTests
     [InlineData("+1 for this")]
     [InlineData("1.2.3 is out")]
     [InlineData(". fixed a crash")]
+    [InlineData(") fixed a crash")]
+    [InlineData("•fixed a crash")]
+    [InlineData("1)fixed a crash")]
+    [InlineData("a) fixed a crash")]
     public void Body_WithALineThatIsNotABullet_HasNoNotes(string line) =>
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + line))));
+
+    [Theory]
+    [InlineData("firemerge-334")]
+    [InlineData("firemerge-385")]
+    [InlineData("spruyt-labs-425")]
+    [InlineData("spruyt-labs-3206")]
+    public void Body_WhoseNewestNotesAreOnlyDependencyOrReleaseBotBullets_HasNoNotes(string name) =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Fixture(name)));
+
+    [Theory]
+    [InlineData("- Updated dependencies")]
+    [InlineData("- Updated dependencies \\[]:")]
+    [InlineData("- updated dependencies [abc1234]:")]
+    [InlineData("- Updated dependencies [[`abc1234`](https://github.com/o/r/commit/abc1234)]:")]
+    [InlineData("- abc1234: Updated dependencies")]
+    [InlineData("- [`abc1234`](https://github.com/o/r/commit/abc1234): Updated dependencies")]
+    [InlineData("- Thanks @someone! - Updated dependencies")]
+    [InlineData("- [#12](https://github.com/o/r/pull/12) [`abc1234`](https://github.com/o/r/commit/abc1234) Thanks [@someone](https://github.com/someone)! - Updated dependencies")]
+    [InlineData("- Updated dependencies \\[]:\n  - [@&#8203;o/core](https://github.com/o/core)@&#8203;1.2.3")]
+    [InlineData("- Updated dependencies:\n\t- o/core@1.2.3\n    - o/deep@1.2.3")]
+    [InlineData("- Updated dependencies\n\n  - o/core@1.2.3\n\n  more text")]
+    [InlineData("  - Updated dependencies\n\t- o/core@1.2.3")]
+    [InlineData("- Updated dependencies for the new TLS stack")]
+    [InlineData("- Release dep-v1.2.3 by [@bot](https://github.com/bot) in [#12](https://github.com/o/r/pull/12)")]
+    [InlineData("- Release dep-1.2.3")]
+    [InlineData("* sync(charts/dep): v1.2.3 by [@bot](https://github.com/bot) in [#12](https://github.com/o/r/pull/12)")]
+    [InlineData("- sync(charts/dep): 1.2.3")]
+    [InlineData("* **Full Changelog**: https://github.com/o/r/compare/v1.2.2...v1.2.3")]
+    [InlineData("- Full Changelog: <https://github.com/o/r/compare/v1.2.2...v1.2.3>")]
+    [InlineData("* @someone made their first contribution in https://github.com/o/r/pull/12")]
+    [InlineData("- [@someone](https://github.com/someone) made their first contribution in [#12](https://github.com/o/r/pull/12)")]
+    [InlineData("- someone made their first contribution in #12\n- other made her first contribution in #13")]
+    [InlineData("- someone made his first contribution in #12")]
+    [InlineData("- Updated  dependencies")]
+    [InlineData("- Updated&nbsp;dependencies")]
+    [InlineData("- &#8203;Updated dependencies")]
+    [InlineData("- Updated dependencies\n- Release dep-v1.2.3\n- sync(charts/dep): v1.2.3\n- **Full Changelog**: https://github.com/o/r/compare/a...b")]
+    public void Body_WhoseOnlyBulletsAreDependencyBotOrContributorLines_HasNoNotes(string bullets) =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + bullets))));
+
+    [Theory]
+    [InlineData("- fixed a crash\n- Updated dependencies\n  - o/core@1.2.3")]
+    [InlineData("- Updated dependencies\n  - o/core@1.2.3\n- fixed a crash")]
+    [InlineData("- Updated dependencies\n  - o/core@1.2.3\n\nSee the migration guide.\n\n- fixed a crash")]
+    [InlineData("  - Updated dependencies\n  - fixed a crash")]
+    [InlineData("- Updated dependencies\n  - o/core@1.2.3\n- Updated dependencies\n- fixed a crash")]
+    [InlineData("- Release notes are now generated from commits")]
+    [InlineData("- Released the embedded client")]
+    [InlineData("- Release dep v1.2.3")]
+    [InlineData("- sync(charts/dep): fix drift in the values")]
+    [InlineData("- sync the cache on startup")]
+    [InlineData("- Full changes are listed in the guide")]
+    [InlineData("- Several contributors made their first contribution to the docs")]
+    [InlineData("- @someone made a contribution in #12")]
+    [InlineData("- Thanks @someone! - fixed a crash")]
+    [InlineData("- [#12](https://github.com/o/r/pull/12) [`abc1234`](https://github.com/o/r/commit/abc1234) - fix(core): a crash")]
+    [InlineData("- abc1234: fixed a crash")]
+    [InlineData("- Release 2.0 adds streaming support")]
+    [InlineData("- abcdef Updated dependencies in the build image")]
+    [InlineData("- Updated dependencies\n\n## New Contributors\n\n* @someone made their first contribution in #12\n\n- fixed a crash")]
+    public void Body_WithARealBulletBesideDependencyBotOrContributorLines_HasNotes(string bullets) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + bullets))));
+
+    [Fact]
+    public void Section_WithOnlyDependencyBumpBullets_HasNoNotes()
+    {
+        Assert.False(ReleaseNotesDetector.SectionHasNotes("## 1.2.3\n\n- Updated dependencies\n  - o/core@1.2.3"));
+        Assert.True(ReleaseNotesDetector.SectionHasNotes("## 1.2.3\n\n- Updated dependencies\n  - o/core@1.2.3\n- the crash"));
+    }
 
     [Fact]
     public void Body_WithProseButNoBullets_HasNoNotes() =>
@@ -214,24 +298,49 @@ public class ReleaseNotesDetectorTests
     [Theory]
     [InlineData("#")]
     [InlineData("##")]
+    [InlineData("####")]
     [InlineData("######")]
-    public void Body_WithAVersionHeadingOfAnyLevel_HasNotes(string level) =>
-        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned.Replace("###", level, StringComparison.Ordinal) + "- fixed a crash"))));
+    public void Body_WhoseOnlyVersionHeadingIsNotRenovatesLevel_HasNoNotes(string level) =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned.Replace("###", level, StringComparison.Ordinal) + "- fixed a crash"))));
+
+    [Fact]
+    public void Body_WhoseVersionHeadingIsNotAVersionNumber_HasNotes() =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Fixture("spruyt-labs-2689")));
 
     [Theory]
-    [InlineData("see ### [`v1.0.0`](https://example.test/x)", true)]
-    [InlineData("    ### [`v1.0.0`](https://example.test/x)", true)]
-    [InlineData("####### [`v1.0.0`](https://example.test/x)", true)]
-    [InlineData("###[`v1.0.0`](https://example.test/x)", true)]
-    [InlineData("### [`v1.0.0`]", true)]
-    [InlineData("[`v1.0.0`](https://example.test/x)", true)]
-    [InlineData(" [`v1.0.0`](https://example.test/x)", true)]
-    [InlineData("### [`v1.0.0`](https://example.test/x y)", true)]
-    [InlineData("### [Release v1.0.0](https://example.test/x)", true)]
-    [InlineData("   ### [`v1.0.0`](https://example.test/x)", false)]
+    [InlineData("vertical-pod-autoscaler-1.2.3", "vertical-pod-autoscaler-1.2.3", true)]
+    [InlineData("vertical-pod-autoscaler-1.2.3", "vertical-pod-autoscaler-1.2.2", false)]
+    [InlineData("release-1.2.3", "v1.2.3", false)]
+    [InlineData("1.2.3", "release-1.2.3", false)]
+    public void Body_WhoseVersionHeadingHoldsAWordAndAVersion_IsTheNewVersionOnlyWhenItIsTheSameText(string to, string heading, bool hasNotes) =>
+        Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", to)], Block(Versioned.Replace("v1.2.3", heading, StringComparison.Ordinal) + "- fixed a crash"))));
+
+    [Theory]
+    [InlineData("### [`v1.0.0`](https://example.test/x)", false)]
+    [InlineData("### [`1.0.0`](https://example.test/x)", false)]
     [InlineData("### [`V1.0.0`](https://example.test/x)", false)]
-    [InlineData("### [1.0.0](https://example.test/x)", false)]
-    public void Body_WithAnotherLineInTheNewestSection_StartsAnOlderSectionOnlyForAVersionHeading(string line, bool hasNotes) =>
+    [InlineData("### [`vertical-pod-1.0.0`](https://example.test/x)", false)]
+    [InlineData("### [`v1.0.0`](https://example.test/x): Some release name", false)]
+    [InlineData("### [`v1.0.0`](https://example.test/x y)", false)]
+    [InlineData("### [`v1.0.0`](", false)]
+    [InlineData("### [`stable`](https://example.test/x)", false)]
+    [InlineData("#### [1.0.0](https://example.test/x)", true)]
+    [InlineData("#### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("## [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("####### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("### [1.0.0](https://example.test/x)", true)]
+    [InlineData("### [v1.0.0](https://example.test/x)", true)]
+    [InlineData("### [``](https://example.test/x)", true)]
+    [InlineData("###  [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("###[`v1.0.0`](https://example.test/x)", true)]
+    [InlineData(" ### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("   ### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("see ### [`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("### [`v1.0.0`]", true)]
+    [InlineData("### [`v1.0.0`] (https://example.test/x)", true)]
+    [InlineData("[`v1.0.0`](https://example.test/x)", true)]
+    [InlineData("### [Release v1.0.0](https://example.test/x)", true)]
+    public void Body_WithAnotherLineInTheNewestSection_StartsAnOlderSectionOnlyForRenovatesHeading(string line, bool hasNotes) =>
         Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + $"{line}\n\n- fixed a crash"))));
 
     [Fact]
@@ -273,6 +382,51 @@ public class ReleaseNotesDetectorTests
     [Fact]
     public void Body_WithBulletsInsideAMultiLineComment_HasNoNotes() =>
         Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "<!--\n- fixed a crash\n-->"))));
+
+    [Theory]
+    [InlineData("Run this:\n\n    - fixed a crash")]
+    [InlineData("Run this:\n\n    - fixed a crash\n    - fixed another")]
+    [InlineData("Run this:\n\n\t- fixed a crash")]
+    [InlineData("Run this:\n\n  \t- fixed a crash")]
+    [InlineData("    - fixed a crash")]
+    [InlineData("Run this:\n\n    echo hi\n    - fixed a crash")]
+    [InlineData("Run this:\n\n    echo hi\n\n    - fixed a crash")]
+    [InlineData("Run this:\n\n     - fixed a crash")]
+    [InlineData("Run this:\n\n    1. fixed a crash")]
+    [InlineData("Run this:\n```\necho hi\n```\n    - fixed a crash")]
+    [InlineData("- Updated dependencies\n\nSee the migration guide.\n\n    - fixed a crash")]
+    public void Body_WithBulletsOnlyInsideAnIndentedCodeBlock_HasNoNotes(string notes) =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + notes))));
+
+    [Theory]
+    [InlineData("Run this:\n    - fixed a crash")]
+    [InlineData("Run this:\n\n   - fixed a crash")]
+    [InlineData("    echo hi\n\n- fixed a crash")]
+    [InlineData("    echo hi\n\nUse it.\n\n- fixed a crash")]
+    [InlineData("    echo hi\n- fixed a crash")]
+    [InlineData("- [Full Changelog](https://github.com/o/r/compare/v1.2.2...v1.2.3)\n\n    - fixed a crash")]
+    [InlineData("- [Full Changelog](https://github.com/o/r/compare/v1.2.2...v1.2.3)\n    continued\n\n    - fixed a crash")]
+    [InlineData("1. [Full Changelog](https://github.com/o/r/compare/v1.2.2...v1.2.3)\n\n    * fixed a crash")]
+    [InlineData("- <br>\n\n    - fixed a crash")]
+    [InlineData("Run this:\n\n  - [Full Changelog](https://github.com/o/r/compare/v1.2.2...v1.2.3)\n\n      - fixed a crash")]
+    [InlineData("- [link](https://x.y)\n    - Updated dependencies\n   \t- o/core@1.2.3")]
+    public void Body_WithABulletThatIsNotInAnIndentedCodeBlock_HasNotes(string notes) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + notes))));
+
+    [Fact]
+    public void Body_WithAnIndentedCodeBlockAfterAList_ReadsTheListBeforeIt() =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "- fixed a crash\n\nRun this:\n\n    - not a bullet"))));
+
+    [Fact]
+    public void Section_WithBulletsOnlyInsideAnIndentedCodeBlock_HasNoNotes()
+    {
+        Assert.False(ReleaseNotesDetector.SectionHasNotes("## 1.2.3\n\nRun this:\n\n    - the crash"));
+        Assert.True(ReleaseNotesDetector.SectionHasNotes("## 1.2.3\n\nRun this:\n\n    - the crash\n\n- the other crash"));
+    }
+
+    [Fact]
+    public void Section_StartingWithAnIndentedBullet_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.SectionHasNotes("    - the crash"));
 
     [Fact]
     public void Body_WithBulletsAfterAMultiLineComment_HasNotes() =>
@@ -382,8 +536,71 @@ public class ReleaseNotesDetectorTests
         Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + $"intro\n</details>\n\n{line}\n\n- fixed a crash"))));
 
     [Fact]
+    public void Body_WhoseDetailsBlockNeverClosesBeforeTheConfigurationFooter_HasNotes() =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "- fixed a crash")[..^"</details>".Length])));
+
+    [Fact]
     public void Body_WhoseDetailsBlockNeverCloses_HasNoNotes() =>
-        Assert.False(ReleaseNotesDetector.BodyHasNotes(Body(Block(Versioned + "- fixed a crash")[..^"</details>".Length])));
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Unclosed(Versioned + "- fixed a crash")));
+
+    [Theory]
+    [InlineData("container-images-1567")]
+    [InlineData("container-images-506")]
+    public void Body_CutOffByRenovateInsideNestedNotes_HasNotes(string name) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Fixture(name)));
+
+    [Theory]
+    [InlineData("> PR body was truncated to here.")]
+    [InlineData("> \u2702 PR body was truncated to here.")]
+    [InlineData("> \u2702\uFE0F PR body was truncated to here.")]
+    [InlineData("PR body was truncated to here")]
+    [InlineData("   >   PR body was truncated to here.   ")]
+    [InlineData("> PR body was truncated to here.\r")]
+    public void Body_CutOffAtARenovateTruncationMarker_KeepsTheNotesBeforeIt(string marker) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Unclosed(Versioned + $"- fixed a crash\n\n<details><summary>3 commits</summary>\n\n- more\n\n```\ncode\n\n{marker}\n\n</details>")));
+
+    [Theory]
+    [InlineData("> PR body was truncated to here and more")]
+    [InlineData("> the PR body was truncated to here.")]
+    [InlineData("> PR body was truncated.")]
+    [InlineData("- PR body was truncated to here.")]
+    [InlineData("> pr body was truncated to here.")]
+    public void Body_CutOffAtALineThatIsNotTheTruncationMarker_HasNoNotes(string line) =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Unclosed(Versioned + $"- fixed a crash\n\n<details><summary>3 commits</summary>\n\n{line}\n\n</details>")));
+
+    [Theory]
+    [InlineData("### Configuration", true)]
+    [InlineData("## Configuration", true)]
+    [InlineData("# Configuration", true)]
+    [InlineData("   ### Configuration  ", true)]
+    [InlineData("    ### Configuration", false)]
+    [InlineData("#### Configuration", false)]
+    [InlineData("### Configuration options", false)]
+    [InlineData("see ### Configuration", false)]
+    public void Body_CutOffAtAConfigurationHeading_KeepsTheNotesBeforeItOnlyForThatHeading(string line, bool hasNotes) =>
+        Assert.Equal(hasNotes, ReleaseNotesDetector.BodyHasNotes(Unclosed(Versioned + $"- fixed a crash\n\n```\ncode\n\n<details><summary>3 commits</summary>\n\n{line}\n\n- never read")));
+
+    [Fact]
+    public void Body_CutOffInsideAnOpenFence_KeepsTheNotesBeforeTheConfigurationHeading() =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Unclosed(Versioned + "- fixed a crash\n\n```\ncode\n\n---\n\n### Configuration\n")));
+
+    [Fact]
+    public void Body_CutOffBeforeAnyNotes_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Unclosed(Versioned + "intro\n\n> PR body was truncated to here.\n\n- listed after the cut")));
+
+    [Fact]
+    public void Body_CutOffTwice_ReadsOnlyUpToTheFirstCut() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Unclosed(Versioned + "intro\n\n### Configuration\n\n- listed after the cut\n\n> PR body was truncated to here.")));
+
+    [Fact]
+    public void Body_WhereACutOffBlockIsFollowedByAnotherThatNeverCloses_HasNoNotes()
+    {
+        var first = $"<details>\n<summary>o/a (a)</summary>\n\n{Versioned}- fixed a crash\n\n### Configuration\n\nmore";
+        var second = $"<details>\n<summary>o/b (b)</summary>\n\n{Versioned}- fixed a crash";
+        var table = Grouped().Split("### Release Notes", 2)[0];
+
+        Assert.False(ReleaseNotesDetector.BodyHasNotes($"{table}### Release Notes\n\n{first}\n\n{second}"));
+    }
 
     [Fact]
     public void Body_WhereABlockIsCutOffByTheNextOne_HasNoNotes()
@@ -443,12 +660,105 @@ public class ReleaseNotesDetectorTests
     }
 
     [Theory]
-    [InlineData("^1.2.3")]
+    [InlineData("^1.0.0")]
+    [InlineData("~1.2.0")]
     [InlineData("~>1.2")]
+    [InlineData("~> 1.2")]
     [InlineData(">=1.2,<1.3")]
+    [InlineData(">=1.2 <1.3")]
+    [InlineData("*")]
     [InlineData("1.2.3-alpine")]
-    public void Body_WhereTheNewVersionIsNotAPlainVersion_HasNoNotes(string to) =>
-        Assert.False(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", to)], Block(Versioned + "- fixed a crash"))));
+    [InlineData("1.2.3-alpine-slim")]
+    [InlineData("1.2")]
+    [InlineData("1")]
+    [InlineData("v1")]
+    public void Body_WhereTheNewVersionIsARangeOrAFloatingTagThatCoversTheNewestSection_HasNotes(string to) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", to)], Block(Versioned + "- fixed a crash"))));
+
+    [Theory]
+    [InlineData("1.2.4")]
+    [InlineData("1.2.3-alpine", "1.2.4")]
+    [InlineData("1.2-alpine")]
+    [InlineData("1-slim")]
+    [InlineData("1.3")]
+    [InlineData("10")]
+    [InlineData("latest")]
+    [InlineData("stable")]
+    public void Body_WhereTheNewVersionIsNotCoveredByTheNewestSection_HasNoNotes(string to, string heading = "1.2.3") =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Doc([Row("dep", "o/r", to)], Block(Versioned.Replace("v1.2.3", heading, StringComparison.Ordinal) + "- fixed a crash"))));
+
+    [Theory]
+    [InlineData("firemerge-478")]
+    [InlineData("SunGather-423")]
+    [InlineData("spruyt-labs-3291")]
+    [InlineData("spruyt-labs-2233")]
+    public void Body_WhoseNewVersionIsARangeFloatingOrSuffixedTag_HasNotes(string name) =>
+        Assert.True(ReleaseNotesDetector.BodyHasNotes(Fixture(name)));
+
+    [Fact]
+    public void Body_WhoseNotesSkipTheNewVersion_HasNoNotes() =>
+        Assert.False(ReleaseNotesDetector.BodyHasNotes(Fixture("container-images-443")));
+
+    [Theory]
+    [InlineData("1.2.3", "1.2.3", true)]
+    [InlineData("v1.2.3", "1.2.3", true)]
+    [InlineData("=1.2.3", "1.2.3", true)]
+    [InlineData("==1.2.3", "1.2.3", true)]
+    [InlineData("1.2.3", "1.2.4", false)]
+    [InlineData("=1.2.3", "1.2.4", false)]
+    [InlineData("==1.2.3", "1.2.4", false)]
+    [InlineData("1.2.3-rc.2", "1.2.3-rc.1", false)]
+    [InlineData("^1.2.3", "1.2.4", true)]
+    [InlineData("^1.2.3", "0.0.1", true)]
+    [InlineData("~1.2.0", "1.2.9", true)]
+    [InlineData("~>0.81", "0.81.4", true)]
+    [InlineData("~> 0.81", "0.82.0", true)]
+    [InlineData(">1", "2", true)]
+    [InlineData("<2", "1.9.0", true)]
+    [InlineData("*", "1.2.3", true)]
+    [InlineData(">=0.13,<0.14", "0.13.0", true)]
+    [InlineData("1.0,2.0", "2.0", true)]
+    [InlineData("1.0 - 2.0", "2.0", true)]
+    [InlineData("1.0|2.0", "2.0", true)]
+    [InlineData("1.0 || 2.0", "2.0", true)]
+    [InlineData("1.^2", "9.9.9", false)]
+    [InlineData("a<b", "9.9.9", false)]
+    [InlineData("a>b", "9.9.9", false)]
+    [InlineData("a~b", "9.9.9", false)]
+    [InlineData("a*b", "9.9.9", false)]
+    [InlineData("1.2.3-alpine", "1.2.3", true)]
+    [InlineData("10.0.13-noble-chiseled", "10.0.13", true)]
+    [InlineData("1.2.3-alpine", "1.2.4", false)]
+    [InlineData("1.2.3-alpine", "1.2.3-alpine", true)]
+    [InlineData("1.2.3-alpine", "1.2.3.1", false)]
+    [InlineData("1.2.3+build", "1.2.3", false)]
+    [InlineData("24-slim", "24.15.0", false)]
+    [InlineData("1.2-alpine", "1.2.0", false)]
+    [InlineData("1.2-alpine", "1.2", true)]
+    [InlineData("3.15", "3.15.0", true)]
+    [InlineData("3.15", "3.15.7", true)]
+    [InlineData("3.15", "3.15", true)]
+    [InlineData("v7", "7.0.0", true)]
+    [InlineData("7", "7.1.2", true)]
+    [InlineData("3.15", "3.150.0", false)]
+    [InlineData("3.15", "3.16.0", false)]
+    [InlineData("7", "70.0.0", false)]
+    [InlineData("7", "8.0.0", false)]
+    [InlineData("1.2.3", "1.2.3.9", false)]
+    [InlineData("1.2.3", "1.2.3-alpine", false)]
+    [InlineData("latest", "1.2.3", false)]
+    [InlineData("main", "main2", false)]
+    [InlineData("abc1234", "1.2.3", false)]
+    [InlineData("vertical-1.2.3", "vertical-1.2.3", true)]
+    [InlineData("vertical-1.2.3", "vertical-1.2.4", false)]
+    [InlineData(" 1.2.3 ", "1.2.4", false)]
+    [InlineData("1.2.3 ", "1.2.3", true)]
+    [InlineData("1_beta", "1.5.0", false)]
+    [InlineData("  ", ".5", false)]
+    [InlineData("1.0.0-dev", "1.0.0-dev", true)]
+    [InlineData("a-1", "1", false)]
+    public void CoversVersion_AcceptsTheNewestSectionOnlyWhenItIsTheNewVersionOrTheRangeOrTagCoversIt(string to, string newest, bool covers) =>
+        Assert.Equal(covers, ReleaseNotesDetector.CoversVersion(to, newest.TrimStart('v')));
 
     [Fact]
     public void Body_WhereAnUpdateHasASource_MatchesItsBlockOnlyBySource() =>
@@ -597,6 +907,14 @@ public class ReleaseNotesDetectorTests
 
         Assert.False(ReleaseNotesDetector.Found(body, ["## 1.2.3\n\n- the crash"]));
         Assert.False(ReleaseNotesDetector.Found(body, ["## 1.2.3\n\n- the crash", "## 1.2.3\n\n- the crash"]));
+    }
+
+    [Fact]
+    public void Found_WhenAnUpdateHasARangeTheFetcherCannotRead_IsFalse()
+    {
+        var body = Doc([Row("a", "o/a"), Row("b", "o/b", "~> 1.2")], Block(Versioned + TitleOnly, "o/a (a)"));
+
+        Assert.False(ReleaseNotesDetector.Found(body, ["## 1.2.3\n\n- the crash"]));
     }
 
     [Fact]

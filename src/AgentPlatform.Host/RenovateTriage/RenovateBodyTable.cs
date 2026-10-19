@@ -96,9 +96,9 @@ public static partial class RenovateBodyTable
     [GeneratedRegex(@"\[(?<text>[^\]]+)\]\((?<url>[^)\s]+)\)", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Link();
 
-    [GeneratedRegex(@"^https://(?:redirect\.)?github\.com/(?<owner>[\w.-]+)/(?<repo>[\w.-]+)/?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^https://(?:redirect\.)?github\.com/(?<owner>[\w.-]+)/(?<repo>[\w.-]+)(?:/.*)?$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex GitHubSource();
 
-    [GeneratedRegex(@"`(?<from>[^`\s]+)`\s*(?:→|->)\s*`(?<to>[^`\s]+)`", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"`(?<from>[^`]+)`\s*(?:→|->)\s*`(?<to>[^`]+)`", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Change();
 }

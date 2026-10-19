@@ -121,6 +121,18 @@ public class ChangelogFetcherTests
         Assert.Empty(api.Calls);
     }
 
+    [Fact]
+    public async Task Fetch_ReadsNothingForARangeTheTableParserKeeps()
+    {
+        var (fetcher, api) = Create();
+        const string Body = "| Package | Change |\n|---|---|\n| [tfe](https://registry.terraform.io/providers/hashicorp/tfe) ([source](https://redirect.github.com/hashicorp/terraform-provider-tfe)) | `~> 0.76` → `~> 0.78` |\n";
+
+        var sections = await fetcher.FetchAsync(Repo, RenovateBodyTable.Parse(Body), Ct);
+
+        Assert.Empty(sections);
+        Assert.Empty(api.Calls);
+    }
+
     [Theory]
     [InlineData("1.0.\uFF10")]
     [InlineData("v1.0.\u0663")]

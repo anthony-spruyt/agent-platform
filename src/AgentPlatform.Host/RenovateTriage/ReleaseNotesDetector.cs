@@ -7,6 +7,7 @@ namespace AgentPlatform.Host.RenovateTriage;
 public static partial class ReleaseNotesDetector
 {
     private const RegexOptions Linear = RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
+    private const int IndentedCodeWidth = 4;
 
     public static bool Found(string? body, IReadOnlyList<string>? sections) =>
         Guarded(() => BodyCoversEveryUpdate(body) || SectionsCoverEveryUpdate(body, sections));
@@ -80,12 +81,13 @@ public static partial class ReleaseNotesDetector
         Summary? open = null;
         var content = new List<Line>();
         var depth = 0;
+        int? cut = null;
         for (var i = heading + 1; i < lines.Count; i++)
         {
             var line = lines[i];
             if (!line.Fenced && StartOf(lines, i, updates) is { } started)
             {
-                (open, content, depth) = (started, [], 1);
+                (open, content, depth, cut) = (started, [], 1, null);
                 continue;
             }
 
@@ -97,6 +99,11 @@ public static partial class ReleaseNotesDetector
                 }
 
                 continue;
+            }
+
+            if (cut is null && (TruncationMarker().IsMatch(line.Text) || ConfigurationHeading().IsMatch(line.Text)))
+            {
+                cut = content.Count;
             }
 
             if (!line.Fenced && DetailsOpen().IsMatch(line.Text))
@@ -115,6 +122,11 @@ public static partial class ReleaseNotesDetector
             }
 
             content.Add(line);
+        }
+
+        if (open is not null && cut is { } end)
+        {
+            blocks.Add(Block.Of(open, content[..end]));
         }
 
         return blocks;
@@ -148,6 +160,9 @@ public static partial class ReleaseNotesDetector
         var lines = new List<Line>();
         var fenced = false;
         var commented = false;
+        var afterBlank = true;
+        var indentedCode = false;
+        var inList = false;
         foreach (var raw in text.Split('\n'))
         {
             if (!commented)
@@ -156,12 +171,24 @@ public static partial class ReleaseNotesDetector
                 if (marker || fenced)
                 {
                     fenced ^= marker;
+                    afterBlank = true;
                     lines.Add(new Line(raw, Fenced: true));
                     continue;
                 }
             }
 
-            lines.Add(new Line(WithoutComments(raw, ref commented), Fenced: false));
+            var visible = WithoutComments(raw, ref commented);
+            if (visible.Trim().Length == 0)
+            {
+                afterBlank = true;
+                lines.Add(new Line(visible, Fenced: false));
+                continue;
+            }
+
+            indentedCode = !inList && Indent(visible) >= IndentedCodeWidth && (afterBlank || indentedCode);
+            inList = !indentedCode && (ListItem().IsMatch(visible) || (inList && Indent(visible) > 0));
+            afterBlank = false;
+            lines.Add(new Line(visible, Fenced: indentedCode));
         }
 
         return lines;
@@ -202,20 +229,94 @@ public static partial class ReleaseNotesDetector
         return visible.ToString();
     }
 
-    private static bool HasListItemWithText(IEnumerable<Line> lines) =>
-        lines.Any(l => !l.Fenced && ListItem().Match(l.Text) is { Success: true } item && HasText(item.Groups["text"].Value));
+    private static bool HasListItemWithText(IEnumerable<Line> lines)
+    {
+        var parentIndent = -1;
+        foreach (var line in lines.Where(l => !l.Fenced && l.Text.Trim().Length > 0))
+        {
+            var indent = Indent(line.Text);
+            if (indent <= parentIndent)
+            {
+                parentIndent = -1;
+            }
 
-    private static bool IsVersionHeading(Line line) =>
-        !line.Fenced
-        && VersionHeading().Match(line.Text) is { Success: true } heading
-        && VersionText().IsMatch(Unquoted(heading.Groups["text"].Value));
+            if (ListItem().Match(line.Text) is not { Success: true } item || parentIndent >= 0)
+            {
+                continue;
+            }
 
-    private static string VersionOf(Line heading) =>
-        Bare(Unquoted(VersionHeading().Match(heading.Text).Groups["text"].Value));
+            var text = item.Groups["text"].Value;
+            if (!HasText(text))
+            {
+                continue;
+            }
+
+            if (IsBookkeeping(text))
+            {
+                parentIndent = indent;
+            }
+            else
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int Indent(string line)
+    {
+        var width = 0;
+        foreach (var c in line)
+        {
+            if (c == ' ')
+            {
+                width++;
+            }
+            else if (c == '\t')
+            {
+                width += 4 - width % 4;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return width;
+    }
+
+    private static bool IsBookkeeping(string item) =>
+        Bookkeeping().IsMatch(Attribution().Replace(Whitespace().Replace(NonText().Replace(Normalised(item), " "), " "), string.Empty));
+
+    private static bool IsVersionHeading(Line line) => !line.Fenced && VersionHeading().IsMatch(line.Text);
+
+    private static string VersionOf(Line heading) => Bare(VersionHeading().Match(heading.Text).Groups["version"].Value);
 
     private static string Bare(string version) => version.TrimStart('=', 'v', 'V');
 
-    private static string Unquoted(string text) => text.Replace("`", string.Empty, StringComparison.Ordinal);
+    internal static bool CoversVersion(string to, string newest)
+    {
+        var target = Bare(to.Trim());
+        if (string.Equals(target, newest, StringComparison.Ordinal) || RangeOrFloating().IsMatch(to.Trim()))
+        {
+            return true;
+        }
+
+        var core = Core().Match(target);
+        if (!core.Success)
+        {
+            return false;
+        }
+
+        var rest = target[core.Length..];
+        if (rest.StartsWith('-'))
+        {
+            return string.Equals(newest, core.Value, StringComparison.Ordinal);
+        }
+
+        return rest.Length == 0 && core.Value.Count(c => c == '.') < 2 && newest.StartsWith(core.Value + ".", StringComparison.Ordinal);
+    }
 
     private static bool HasText(string item) => LetterOrDigit().IsMatch(NonText().Replace(item, " "));
 
@@ -255,7 +356,7 @@ public static partial class ReleaseNotesDetector
         }
 
         public bool Covers(RenovateUpdate update) =>
-            NewestHasNotes && Summary.Matches(update) && string.Equals(Newest, Bare(update.To), StringComparison.Ordinal);
+            NewestHasNotes && Summary.Matches(update) && CoversVersion(update.To, Newest!);
     }
 
     [GeneratedRegex(@"^\s*#{1,6}\s+Release Notes\s*$", Linear | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
@@ -263,6 +364,9 @@ public static partial class ReleaseNotesDetector
 
     [GeneratedRegex(@"^\s{0,3}#{1,3}\s+Configuration\s*$", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ConfigurationHeading();
+
+    [GeneratedRegex(@"^[\s>\u2702\uFE0F]*PR body was truncated to here\.?\s*$", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex TruncationMarker();
 
     [GeneratedRegex(@"^\s*<details(?:\s[^>]*)?>", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex DetailsOpen();
@@ -279,16 +383,13 @@ public static partial class ReleaseNotesDetector
     [GeneratedRegex(@"^\s{0,3}-{3,}\s*$", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ThematicBreak();
 
-    [GeneratedRegex(@"^\s{0,3}#{1,6}\s+\[(?<text>[^\]]+)\]\([^)\s]*\)", Linear, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^### \[`v?(?<version>[^`]+)`\]\(", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex VersionHeading();
-
-    [GeneratedRegex(@"^[vV]?\d+(?:\.\d+)*", Linear, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex VersionText();
 
     [GeneratedRegex(@"^\s*(?:```|~~~)", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Fence();
 
-    [GeneratedRegex(@"^\s*(?:[-*+]|\d+\.)[ \t]+(?<text>.*)$", Linear, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*(?:[-*+•]|\d+[.)])[ \t]+(?<text>.*)$", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ListItem();
 
     [GeneratedRegex(@"\[[^\]]*\]\([^)]*\)|\[[^\]]*\]\[[^\]]*\]|<[^>]*>|https?://\S+", Linear, matchTimeoutMilliseconds: 1000)]
@@ -296,4 +397,19 @@ public static partial class ReleaseNotesDetector
 
     [GeneratedRegex(@"[\p{L}\p{N}]", Linear, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LetterOrDigit();
+
+    [GeneratedRegex(@"^[\^~<>*]|[\s,|]", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex RangeOrFloating();
+
+    [GeneratedRegex(@"^\d+(?:\.\d+)*", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex Core();
+
+    [GeneratedRegex(@"\s+", Linear, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex Whitespace();
+
+    [GeneratedRegex(@"^\W*(?:[0-9a-f]{7,40}\W+)?(?:Thanks\s+(?:@[\w-]+\s*)?!\s*-\s*)?", Linear | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex Attribution();
+
+    [GeneratedRegex(@"^(?:Updated dependencies|Release \S+-v?\d|sync\(.+\): v?\d|Full Changelog\b|(?:@?[\w-]+\s+)?made (?:their|his|her) first contribution\b)", Linear | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex Bookkeeping();
 }
