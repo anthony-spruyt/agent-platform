@@ -398,7 +398,15 @@ public static partial class TriageRules
     }
 
     private static List<GitHubCheckRun> ConsideredChecks(IReadOnlyList<GitHubCheckRun> checks) =>
-        [.. checks.Where(c => !StartsWithAny(c.Name, _ignoredCheckPrefixes) && !string.Equals(c.AppSlug, MergifyApp, StringComparison.Ordinal))];
+        [.. checks
+            .Where(c => !StartsWithAny(c.Name, _ignoredCheckPrefixes) && !string.Equals(c.AppSlug, MergifyApp, StringComparison.Ordinal))
+            .GroupBy(c => (c.AppId, c.AppSlug, c.Name))
+            .SelectMany(g => g.Where(c => !IsSupersededCancellation(c, g)))];
+
+    private static bool IsSupersededCancellation(GitHubCheckRun run, IEnumerable<GitHubCheckRun> sameCheck) =>
+        string.Equals(run.Conclusion, "cancelled", StringComparison.OrdinalIgnoreCase)
+        && run.CheckSuiteId is { } suite
+        && sameCheck.Any(other => other.Id > run.Id && other.CheckSuiteId is { } otherSuite && otherSuite != suite);
 
     private static bool IsFailing(GitHubCheckRun check) => !StartsWithAny(check.Name, _notFailingCheckPrefixes) && !PassingConclusion(check.Conclusion);
 
