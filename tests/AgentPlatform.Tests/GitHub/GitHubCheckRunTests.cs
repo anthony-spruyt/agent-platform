@@ -37,21 +37,21 @@ public class GitHubCheckRunTests
 
     private static string Runs(params object[] runs) => JsonSerializer.Serialize(new { total_count = runs.Length, check_runs = runs });
 
-    private static object Run(long id, string name, long appId, string? externalId, string status = "completed", string? conclusion = "success") =>
-        new { id, name, status, conclusion, external_id = externalId, app = new { id = appId, slug = "skynet-rw" } };
+    private static object Run(long id, string name, long appId, string? externalId, string status = "completed", string? conclusion = "success", long suiteId = 500) =>
+        new { id, name, status, conclusion, external_id = externalId, app = new { id = appId, slug = "skynet-rw" }, check_suite = new { id = suiteId } };
 
     private static GitHubCheckRunWrite Write(string status = "in_progress", string? conclusion = null) =>
         new("Agent triage", Sha, TriageId, status, conclusion, "Agent triage", "Waiting for CI");
 
     [Fact]
-    public async Task ListCheckRuns_ParsesTheAppIdAndTheExternalId()
+    public async Task ListCheckRuns_ParsesTheAppIdTheExternalIdAndTheCheckSuiteId()
     {
-        var (client, _, _) = Create(_ => StubHttpHandler.Json(Runs(Run(1, "build", 15368, "ci-1"), new { id = 2, name = "scan", status = "queued", app = (object?)null })));
+        var (client, _, _) = Create(_ => StubHttpHandler.Json(Runs(Run(1, "build", 15368, "ci-1", suiteId: 105344778159), new { id = 2, name = "scan", status = "queued", app = (object?)null })));
 
         var runs = await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
 
-        Assert.Equal(new GitHubCheckRun(1, "build", "completed", "success", "skynet-rw", 15368, "ci-1"), runs[0]);
-        Assert.Equal(new GitHubCheckRun(2, "scan", "queued", null, null, null, null), runs[1]);
+        Assert.Equal(new GitHubCheckRun(1, "build", "completed", "success", "skynet-rw", 15368, "ci-1", 105344778159), runs[0]);
+        Assert.Equal(new GitHubCheckRun(2, "scan", "queued", null, null, null, null, null), runs[1]);
     }
 
     [Fact]
