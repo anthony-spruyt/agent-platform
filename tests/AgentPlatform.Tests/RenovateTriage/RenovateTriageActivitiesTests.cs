@@ -1129,6 +1129,75 @@ public class RenovateTriageActivitiesTests
             Assert.Null(result.JevError);
         }
 
+        private const string BodyWithNotes = "### Release Notes\n\n<details>\n<summary>o/r (dep)</summary>\n\n### [`v1.0.1`](https://example.test/v1.0.1)\n\n- fixed a crash\n\n</details>\n\n---\n\n### Configuration\n";
+        private const string BodyWithoutNotes = "### Release Notes\n\n<details>\n<summary>o/r (dep)</summary>\n\n### [`v1.0.1`](https://example.test/v1.0.1)\n\nPython 1.0.1\n\n</details>\n\n---\n\n### Configuration\n";
+
+        [Fact]
+        public async Task ReleaseNotesInTheScannedBody_DecideBeforeJevsChangelogScore()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithNotes))));
+
+            Assert.True(result.NotesFound);
+            Assert.Equal(TriageRules.ChangelogPresent, result.Decision!.Reason);
+            Assert.Equal(rig.Jev.Answers, result.Jev);
+        }
+
+        [Fact]
+        public async Task ReleaseNotesInTheLiveBody_DecideWhenThereIsNoScannedBody()
+        {
+            var rig = Create();
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(body: BodyWithNotes);
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha)));
+
+            Assert.True(result.NotesFound);
+            Assert.Equal(TriageRules.ChangelogPresent, result.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task WithoutReleaseNotesInCode_JevsChangelogScoreDecides()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.3);
+
+            var low = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes))));
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.8);
+            var high = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes))));
+
+            Assert.False(low.NotesFound);
+            Assert.Equal(TriageRules.NoChangelog, low.Decision!.Reason);
+            Assert.False(high.NotesFound);
+            Assert.Equal(TriageRules.ChangelogPresent, high.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task FetchedChangelogSectionsWithBullets_CountAsNotesWhenTheBodyHasNone()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash")])));
+
+            Assert.True(result.NotesFound);
+            Assert.Equal(TriageRules.ChangelogPresent, result.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task AFetchedChangelogSectionWithoutBullets_LeavesTheDecisionToJev()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash"), ScannedText.Create("## 2.0.0\n\nprose only")])));
+
+            Assert.False(result.NotesFound);
+            Assert.Equal(TriageRules.NoChangelog, result.Decision!.Reason);
+        }
+
         [Fact]
         public async Task ABreakingBumpIsFlaggedWithTheBreakingComment()
         {

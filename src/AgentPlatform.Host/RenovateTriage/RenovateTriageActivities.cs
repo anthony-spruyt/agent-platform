@@ -127,6 +127,7 @@ public sealed partial class RenovateTriageActivities(
             var diff = PrDiff.Build(files, JevClient.MaxPrDiffBytes);
             var facts = BumpAnalyzer.Analyze(files);
             var jevBody = JevBody(input, pr.Body);
+            var notesFound = ReleaseNotesFound(input, pr.Body);
 
             JevAnswers answers;
             try
@@ -146,7 +147,7 @@ public sealed partial class RenovateTriageActivities(
                 throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
             }
 
-            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers, facts), answers);
+            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers, facts, notesFound), answers, NotesFound: notesFound);
         });
 
     [Activity(RecordVerdictName)]
@@ -418,6 +419,11 @@ public sealed partial class RenovateTriageActivities(
 
         return string.Join("\n\n---\n\n", texts.Select(t => t.Text));
     }
+
+    private static bool ReleaseNotesFound(JudgeInput input, string? liveBody) =>
+        input.Body is null
+            ? ReleaseNotesDetector.Found(liveBody, null)
+            : ReleaseNotesDetector.Found(input.Body.Text, input.Changelogs?.Select(c => c.Text).ToList());
 
     private static void Validate(string repo, int prNumber)
     {

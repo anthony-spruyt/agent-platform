@@ -19,7 +19,8 @@ public class TriageRulesTests
     private static GitHubCheckSuite Suite(string app = "github-actions", string status = "completed", int runs = 1) =>
         new(1, status, status == "completed" ? "success" : null, app, runs);
 
-    private static TriageDecision Decide(string branch, JevAnswers jev, BumpFacts? facts = null) => TriageRules.DecideFromJev(branch, jev, facts ?? new BumpFacts(true, []));
+    private static TriageDecision Decide(string branch, JevAnswers jev, BumpFacts? facts = null, bool notesFound = false) =>
+        TriageRules.DecideFromJev(branch, jev, facts ?? new BumpFacts(true, []), notesFound);
 
     private static BumpFacts Versions(params (string Old, string New, string Kind)[] changes) =>
         new(false, [.. changes.Select(c => new VersionChange(c.Old, c.New, c.Kind))]);
@@ -1009,6 +1010,57 @@ public class TriageRulesTests
             var decision = Decide("renovate/foo", Jev(bump, changelog: 0.699));
 
             Assert.Equal(new TriageDecision(TriageVerdict.NeedsReview, TriageRules.NoChangelog, "**Needs review:** no changelog found for this bump."), decision);
+        }
+
+        [Theory]
+        [InlineData("patch")]
+        [InlineData("minor")]
+        public void PatchAndMinor_WithReleaseNotesFoundInCode_AreApprovedWhateverJevScoredTheChangelog(string bump)
+        {
+            var decision = Decide("renovate/foo", Jev(bump, changelog: 0.1), notesFound: true);
+
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, $"**Auto-approved:** {bump} bump with changelog."), decision);
+        }
+
+        [Fact]
+        public void PatchAndMinor_WithoutNotesInCode_FallBackToJevsChangelogScore()
+        {
+            Assert.Equal(TriageRules.ChangelogPresent, Decide("renovate/foo", Jev("patch", changelog: 0.8), notesFound: false).Reason);
+            Assert.Equal(TriageRules.NoChangelog, Decide("renovate/foo", Jev("patch", changelog: 0.3), notesFound: false).Reason);
+        }
+
+        [Fact]
+        public void ReleaseNotesFoundInCode_DoNotOverrideABreakingAnswer()
+        {
+            var decision = Decide("renovate/foo", Jev("minor", breaking: 0.9, changelog: 0.1), notesFound: true);
+
+            Assert.Equal(TriageRules.Breaking, decision.Reason);
+        }
+
+        [Theory]
+        [InlineData("major", TriageRules.MajorBump)]
+        [InlineData("calver", TriageRules.CalverBump)]
+        [InlineData("other", TriageRules.OtherBump)]
+        [InlineData("digest", TriageRules.DigestMismatch)]
+        [InlineData("bogus", TriageRules.UnknownBump)]
+        public void ReleaseNotesFoundInCode_DoNotChangeTheOtherBumpTypes(string bump, string reason)
+        {
+            var decision = Decide("renovate/foo", Jev(bump, changelog: 0.1), new BumpFacts(false, []), notesFound: true);
+
+            Assert.Equal(reason, decision.Reason);
+        }
+
+        [Fact]
+        public void ReleaseNotesFoundInCode_DoNotOverrideTheBumpMismatchChecks()
+        {
+            Assert.Equal(TriageRules.BumpTypeMismatch, Decide("renovate/foo", Jev("patch", changelog: 0.1), Versions(("1.0.0", "2.0.0", "major")), notesFound: true).Reason);
+            Assert.Equal(TriageRules.BumpTypeMismatch, Decide("renovate/foo", Jev("patch", changelog: 0.1), new BumpFacts(false, [], UnpairedVersions: true), notesFound: true).Reason);
+        }
+
+        [Fact]
+        public void ReleaseNotesFoundInCode_LeaveAnAllowlistedBranchAllowlisted()
+        {
+            Assert.Equal(TriageRules.Allowlisted, Decide("renovate/pin-dependencies", Jev("patch", changelog: 0.1), notesFound: true).Reason);
         }
 
         [Fact]

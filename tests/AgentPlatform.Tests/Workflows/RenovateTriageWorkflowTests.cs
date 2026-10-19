@@ -1308,7 +1308,7 @@ public partial class RenovateTriageWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
         rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
-        rig.Github.Releases["upstream/dep:v1.2.3"] = new GitHubRelease("v1.2.3", null, "- fixed the crash");
+        rig.Github.Releases["upstream/dep:v1.2.3"] = new GitHubRelease("v1.2.3", null, "A release without a list of changes.");
         rig.Github.PullRequest = FakeGitHubApi.Renovate(body: "This PR contains the following updates:\n\n| Package | Change |\n|---|---|\n| [dep](https://redirect.github.com/upstream/dep) | `v1.2.2` -> `v1.2.3` |\n");
 
         var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal()), "renovate-triage-changelog-retry"));
@@ -1317,6 +1317,23 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal(2, rig.Jev.Bodies.Count);
         var steps = await StepsAsync(rig);
         Assert.Contains(steps, s => s.Name == "changelog");
+        Assert.Contains(steps, s => s.Name == "jev-changelog");
+    }
+
+    [Fact]
+    public async Task WhenAFetchedChangelogSectionListsTheChanges_TheAskAgainIsDecidedByTheNotesFoundInCode()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+        rig.Github.Releases["upstream/dep:v1.2.3"] = new GitHubRelease("v1.2.3", null, "- fixed the crash");
+        rig.Github.PullRequest = FakeGitHubApi.Renovate(body: "This PR contains the following updates:\n\n| Package | Change |\n|---|---|\n| [dep](https://redirect.github.com/upstream/dep) | `v1.2.2` -> `v1.2.3` |\n");
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal()), "renovate-triage-changelog-notes"));
+
+        Assert.Equal(TriageVerdict.Approve, result.Verdict);
+        Assert.Equal(TriageRules.ChangelogPresent, result.Reason);
+        var steps = await StepsAsync(rig);
         Assert.Contains(steps, s => s.Name == "jev-changelog");
     }
 
