@@ -37,7 +37,7 @@ public sealed record RenovateTriageInput(string Repo, int PrNumber);
 
 public sealed record AssessInput(string Repo, int PrNumber, bool Step2 = false, string? PrecheckedSha = null, bool Claude = false);
 
-public sealed record AssessResult(AssessStatus Status, string HeadSha, string? Reason = null, TriageDecision? Decision = null, TriageMode Mode = TriageMode.Shadow, bool Stored = false);
+public sealed record AssessResult(AssessStatus Status, string HeadSha, string? Reason = null, TriageDecision? Decision = null, TriageMode Mode = TriageMode.Shadow, bool Stored = false, bool StatusPending = false);
 
 [JsonConverter(typeof(JsonStringEnumConverter<PrecheckVerdict>))]
 public enum PrecheckVerdict
@@ -76,7 +76,7 @@ public enum ApplyOutcome
     Refused,
 }
 
-public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null, TriageDecision? Effective = null);
+public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null, TriageDecision? Effective = null, bool StatusPending = false);
 
 public sealed record RenovateTriageResult(RenovateTriageOutcome Outcome, string HeadSha, string? Reason, TriageVerdict? Verdict);
 

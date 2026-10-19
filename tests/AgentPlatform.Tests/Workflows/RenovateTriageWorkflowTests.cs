@@ -318,6 +318,59 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
+    public async Task ACommitStatusThatCompletesWithoutASignal_IsJudgedOnTheStatusPoll_NotWhenTheTwoHoursEnd()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.Checks.Add(CommitStatus("pending", null));
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForStepAsync(rig, "assess", "Pending");
+            rig.Github.Checks[1] = CommitStatus("completed", "success");
+            return await RunToResultAsync(handle, "renovate-triage-status-poll");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), result);
+        var steps = await StepsAsync(rig);
+        var waitedAt = steps.First(s => s is { Name: "assess", StopReason: "Pending" }).StartedAt;
+        var judgedAt = steps.Last(s => s.Name == "assess").StartedAt;
+        Assert.True(judgedAt - waitedAt < RenovateTriageWorkflow.CiTimeout, $"Judged after {judgedAt - waitedAt}.");
+    }
+
+    [Fact]
+    public async Task ACommitStatusThatStaysPending_IsPolledEveryFiveMinutes_UntilTheTwoHoursEnd()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.Checks.Add(CommitStatus("pending", null));
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(TriageRules.CiTimeout, result.Reason);
+        var pending = (await StepsAsync(rig)).Where(s => s is { Name: "assess", StopReason: "Pending" }).ToList();
+        Assert.Equal((int)(RenovateTriageWorkflow.CiTimeout / RenovateTriageWorkflow.StatusPollInterval) + 1, pending.Count);
+        Assert.True(pending[^1].StartedAt - pending[0].StartedAt >= RenovateTriageWorkflow.CiTimeout);
+    }
+
+    [Fact]
+    public async Task ActionsStillRunning_NextToACompletedStatus_StaysSignalOnlyUntilTheTwoHoursEnd()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "queued", null, "github-actions"));
+        rig.Github.Checks.Add(CommitStatus("completed", "success"));
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(TriageRules.CiTimeout, result.Reason);
+        var pending = (await StepsAsync(rig)).Where(s => s is { Name: "assess", StopReason: "Pending" }).ToList();
+        Assert.Equal(2, pending.Count);
+        Assert.True(pending[1].StartedAt - pending[0].StartedAt >= RenovateTriageWorkflow.CiTimeout);
+    }
+
+    [Fact]
     public async Task APrApprovedWhileWaiting_IsSkippedWhenTheTwoHoursEnd()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
@@ -718,6 +771,9 @@ public partial class RenovateTriageWorkflowTests
         rig.Github.Jobs[2] = new GitHubJob(2, 900, attempt, "build", "failure");
         rig.Github.JobLogs[2] = "npm ERR! network timeout";
     }
+
+    private static GitHubCheckRun CommitStatus(string status, string? conclusion) =>
+        new(GitHubApiClient.CommitStatusId, "Terraform Cloud/anthony-spruyt/widgets", status, conclusion, null);
 
     private static void PassCi(Rig rig)
     {

@@ -655,6 +655,63 @@ public class TriageRulesTests
         }
     }
 
+    public class CiSummaries
+    {
+        private static CiSummary Summarise(GitHubCheckRun[] runs, params GitHubCheckSuite[] suites) =>
+            TriageRules.SummariseChecks(runs, suites);
+
+        [Fact]
+        public void PassingChecks_AreGreenWithNoCount()
+        {
+            Assert.Equal(new CiSummary(CiState.Passed, 0), Summarise([Run("build"), Run("test")], Suite()));
+        }
+
+        [Fact]
+        public void FailedChecks_AreCounted()
+        {
+            Assert.Equal(new CiSummary(CiState.Failed, 2), Summarise([Run("build"), Run("test", conclusion: "failure"), Run("lint", conclusion: "cancelled")], Suite()));
+        }
+
+        [Fact]
+        public void ChecksThatHaveNotCompleted_AreCountedAsPending()
+        {
+            Assert.Equal(new CiSummary(CiState.Pending, 2), Summarise([Run("build"), Run("test", "queued", null), Run("lint", "in_progress", null)], Suite()));
+        }
+
+        [Fact]
+        public void PendingWinsOverFailed_AndCountsOnlyThePendingChecks()
+        {
+            Assert.Equal(new CiSummary(CiState.Pending, 1), Summarise([Run("test", conclusion: "failure"), Run("build", "in_progress", null)], Suite()));
+        }
+
+        [Fact]
+        public void AQueuedSuiteWithNoRunsYet_IsPendingWithNothingToCount()
+        {
+            Assert.Equal(new CiSummary(CiState.Pending, 0), Summarise([Run("build")], Suite(status: "queued", runs: 0)));
+        }
+
+        [Fact]
+        public void NoChecksAtAll_ArePendingWithNothingToCount()
+        {
+            Assert.Equal(new CiSummary(CiState.Pending, 0), Summarise([]));
+        }
+
+        [Fact]
+        public void MergifyAndStabilityChecks_AreNeverCounted()
+        {
+            var runs = new[]
+            {
+                Run("build"),
+                Run("Mergify Merge Protections", conclusion: "failure"),
+                Run("Summary", "in_progress", null, "mergify"),
+                Run("renovate/stability-days", "in_progress", null),
+            };
+
+            Assert.Equal(new CiSummary(CiState.Passed, 0), Summarise(runs, Suite(), Suite("mergify", "in_progress", 3)));
+            Assert.Equal(new CiSummary(CiState.Failed, 1), Summarise([.. runs, Run("test", conclusion: "failure")], Suite()));
+        }
+    }
+
     public class RiskyBranches
     {
         [Theory]
@@ -976,6 +1033,19 @@ public class TriageRulesTests
             Assert.Equal(
                 "**Needs review:** CI failed on `0123456`. Failed: [`build`](https://github.com/anthony-spruyt/widgets/runs/11), [`test (x)`](https://github.com/anthony-spruyt/widgets/runs/12).",
                 decision.Comment);
+        }
+
+        [Fact]
+        public void CiFailed_ListsACommitStatusByNameWithoutALink()
+        {
+            var comment = TriageRules.CiFailedDecision(
+                Repo,
+                Head,
+                [new GitHubCheckRun(GitHubApiClient.CommitStatusId, "Terraform Cloud/spruyt-labs/repo", "completed", "failure", null), new GitHubCheckRun(11, "build", "completed", "failure", "github-actions")]).Comment!;
+
+            Assert.Equal(
+                "**Needs review:** CI failed on `0123456`. Failed: `Terraform Cloud/spruyt-labs/repo`, [`build`](https://github.com/anthony-spruyt/widgets/runs/11).",
+                comment);
         }
 
         [Fact]
