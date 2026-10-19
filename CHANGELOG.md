@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.15.2...v1.16.0) (2026-10-19)
+
+
+### Features
+
+* **triage:** give the model the CI state instead of raw checks ([#113](https://github.com/anthony-spruyt/agent-platform/issues/113)) ([7d44ae6](https://github.com/anthony-spruyt/agent-platform/commit/7d44ae64cc4ddb1e348b1e492b0e1fe5352e9f9d))
+
 ## [1.15.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.15.1...v1.15.2) (2026-10-19)
 
 
