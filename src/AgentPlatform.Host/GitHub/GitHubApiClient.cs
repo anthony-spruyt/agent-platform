@@ -24,7 +24,7 @@ public sealed record GitHubPullRequest(
     int Commits,
     int ChangedFiles = 0);
 
-public sealed record GitHubCheckRun(long Id, string Name, string Status, string? Conclusion, string? AppSlug, long? AppId = null, string? ExternalId = null);
+public sealed record GitHubCheckRun(long Id, string Name, string Status, string? Conclusion, string? AppSlug, long? AppId = null, string? ExternalId = null, long? CheckSuiteId = null);
 
 public sealed record GitHubCheckSuite(long Id, string Status, string? Conclusion, string? AppSlug, int CheckRunCount, long? AppId = null);
 
@@ -154,7 +154,9 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
 
     private sealed record CheckRunsPage(List<CheckRunDto>? CheckRuns);
 
-    private sealed record CheckRunDto(long Id, string? Name, string? Status, string? Conclusion, AppDto? App, string? ExternalId);
+    private sealed record CheckRunDto(long Id, string? Name, string? Status, string? Conclusion, AppDto? App, string? ExternalId, CheckSuiteRefDto? CheckSuite);
+
+    private sealed record CheckSuiteRefDto(long? Id);
 
     private sealed record AppDto(long? Id, string? Slug);
 
@@ -244,7 +246,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             page => page.CheckRuns,
             cancellationToken).ConfigureAwait(false);
 
-        return [.. runs.Select(r => new GitHubCheckRun(r.Id, r.Name ?? string.Empty, r.Status ?? string.Empty, r.Conclusion, r.App?.Slug, r.App?.Id, r.ExternalId))];
+        return [.. runs.Select(r => new GitHubCheckRun(r.Id, r.Name ?? string.Empty, r.Status ?? string.Empty, r.Conclusion, r.App?.Slug, r.App?.Id, r.ExternalId, r.CheckSuite?.Id))];
     }
 
     private bool IsOwnTriageRun(GitHubCheckRun run) =>

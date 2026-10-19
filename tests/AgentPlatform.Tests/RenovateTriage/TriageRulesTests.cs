@@ -463,6 +463,149 @@ public class TriageRulesTests
         }
 
         [Fact]
+        public void ANewerRunInAnotherSuite_SupersedesAnOlderCancelledRunOfTheSameCheck()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(116880220225, "Guard Linter Removals", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 105344778159),
+                new(116880225845, "Guard Linter Removals", "completed", "success", "github-actions", 15368, CheckSuiteId: 105344780965),
+            ];
+
+            Assert.Equal(CiState.Passed, Assess(runs));
+            Assert.Empty(TriageRules.FailedChecks(runs));
+        }
+
+        [Fact]
+        public void ANewerSkippedRunInTheSameSuite_DoesNotHideAnOlderFailedRunOfTheSameName()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(116880952156, "image / llm-guard / Test", "completed", "failure", "github-actions", 15368, CheckSuiteId: 105344781445),
+                new(116880952323, "image / llm-guard / Test", "completed", "skipped", "github-actions", 15368, CheckSuiteId: 105344781445),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([116880952156L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void ANewerCancelledRunInAnotherSuite_StillFailsOverAnOlderSuccess()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "success", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, "build", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 20),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([2L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void AnOlderFailedRun_IsNeverSupersededByANewerRunInAnotherSuite()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "failure", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, "build", "completed", "success", "github-actions", 15368, CheckSuiteId: 20),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([1L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void ANewerRunInTheSameSuite_NeverSupersedesACancelledRun()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, "build", "completed", "success", "github-actions", 15368, CheckSuiteId: 10),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([1L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Theory]
+        [InlineData(null, 20L)]
+        [InlineData(10L, null)]
+        [InlineData(null, null)]
+        public void AMissingSuiteId_NeverLetsOneRunSupersedeAnother(long? cancelledSuite, long? newerSuite)
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: cancelledSuite),
+                new(2, "build", "completed", "success", "github-actions", 15368, CheckSuiteId: newerSuite),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([1L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void ANewerRunInAnotherSuiteOfAnotherApp_DoesNotSupersedeACancelledRun()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, "build", "completed", "success", "other-app", 99, CheckSuiteId: 20),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([1L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void ANewerPendingRunInAnotherSuite_SupersedesAnOlderCancelledRunButHoldsTheJudgement()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, "build", "in_progress", null, "github-actions", 15368, CheckSuiteId: 20),
+            ];
+
+            Assert.Equal(CiState.Pending, Assess(runs));
+            Assert.Empty(TriageRules.FailedChecks(runs));
+        }
+
+        [Fact]
+        public void AnOlderSuccessInAnotherSuite_DoesNotHideANewerFailedRun()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(2, "build", "completed", "failure", "github-actions", 15368, CheckSuiteId: 20),
+                new(1, "build", "completed", "success", "github-actions", 15368, CheckSuiteId: 10),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([2L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void ALoneCancelledRun_StillFails()
+        {
+            GitHubCheckRun[] runs = [new(1, "build", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 10)];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Single(TriageRules.FailedChecks(runs));
+        }
+
+        [Fact]
+        public void TheSameCheckNameFromTwoApps_BothCount()
+        {
+            GitHubCheckRun[] runs =
+            [
+                new(1, "build", "completed", "failure", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, "build", "completed", "success", "other-app", 99, CheckSuiteId: 20),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs));
+            Assert.Equal([1L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+            Assert.Equal(CiState.Pending, Assess([runs[0], new(3, "build", "in_progress", null, "other-app", 99, CheckSuiteId: 30)]));
+        }
+
+        [Fact]
         public void SkynetChecks_DoNotFailButStillHoldTheJudgementWhilePending()
         {
             Assert.Equal(CiState.Passed, Assess([Run("test"), Run("skynet/triage", conclusion: "failure")]));

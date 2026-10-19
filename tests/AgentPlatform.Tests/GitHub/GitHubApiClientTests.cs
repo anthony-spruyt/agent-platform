@@ -145,13 +145,13 @@ public class GitHubApiClientTests
     {
         var (client, _, _) = Create(_ => StubHttpHandler.Json("""
             {"total_count":2,"check_runs":[
-              {"id":1,"name":"build","status":"completed","conclusion":"success","head_sha":"abc","app":{"slug":"github-actions"}},
+              {"id":1,"name":"build","status":"completed","conclusion":"success","head_sha":"abc","app":{"slug":"github-actions"},"check_suite":{"id":77}},
               {"id":2,"name":"scan","status":"in_progress","conclusion":null,"head_sha":"abc","app":null}]}
             """));
 
         var runs = await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
 
-        Assert.Equal(new GitHubCheckRun(1, "build", "completed", "success", "github-actions"), runs[0]);
+        Assert.Equal(new GitHubCheckRun(1, "build", "completed", "success", "github-actions", CheckSuiteId: 77), runs[0]);
         Assert.Equal(new GitHubCheckRun(2, "scan", "in_progress", null, null), runs[1]);
     }
 
