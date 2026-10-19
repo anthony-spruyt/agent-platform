@@ -63,7 +63,10 @@ public class RenovateBodyTableTests
     [InlineData("https://evil.test/github.com/a/b")]
     [InlineData("http://github.com/a/b")]
     [InlineData("https://github.com/a")]
-    [InlineData("https://github.com/a/b/c/d")]
+    [InlineData("https://github.com.evil.test/a/b/tree/HEAD/x")]
+    [InlineData("https://evil.test/github.com/a/b/tree/HEAD/x")]
+    [InlineData("http://github.com/a/b/tree/HEAD/x")]
+    [InlineData("https://github.com/a#b/c")]
     [InlineData("https://github.com/a/b?x=1")]
     [InlineData("https://github.com/a/b%2Fc")]
     public void Parse_OnlyTrustsAnHttpsGitHubRepoLinkAsTheSource(string url)
@@ -71,6 +74,80 @@ public class RenovateBodyTableTests
         var body = $"| Package | Change |\n|---|---|\n| [dep]({url}) | `1.0.0` → `1.0.1` |\n";
 
         Assert.Null(Assert.Single(RenovateBodyTable.Parse(body)).SourceRepo);
+    }
+
+    [Theory]
+    [InlineData("https://github.com/a/b/tree/HEAD/packages/b", "a/b", "tree/HEAD/packages/b")]
+    [InlineData("https://redirect.github.com/a/b/tree/main/x/y/", "a/b", "tree/main/x/y")]
+    [InlineData("https://github.com/a/b/c/d", "a/b", "c/d")]
+    [InlineData("https://github.com/a/b/blob/main/CHANGELOG.md", "a/b", "blob/main/CHANGELOG.md")]
+    [InlineData("https://github.com/a/b/", "a/b", null)]
+    [InlineData("https://github.com/a/b", "a/b", null)]
+    public void Parse_ReadsTheSourceRepoAndPathOutOfARepoLink(string url, string source, string? path)
+    {
+        var body = $"| Package | Change |\n|---|---|\n| [dep](https://example.test) ([source]({url})) | `1.0.0` → `1.0.1` |\n";
+
+        var update = Assert.Single(RenovateBodyTable.Parse(body));
+
+        Assert.Equal((source, path), (update.SourceRepo, update.SourcePath));
+    }
+
+    [Theory]
+    [InlineData("[`^5.2.0` → `^7.0.0`](https://renovatebot.com/diffs/npm/eslint-plugin-react-hooks/5.2.0/7.1.1)", "", "7.1.1")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/@scope%2fpkg/1.0.0/1.1.4)", "", "1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/@scope/pkg/1.0.0/1.1.4)", "", "1.1.4")]
+    [InlineData("[`v1.0.0` → `~1.1.0`](https://renovatebot.com/diffs/github-actions/a/b/v1.0.0/v1.1.4)", "", "v1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4%2Bbuild)", "", "1.1.4+build")]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.4?slim=true)", "1.1.4")]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/@scope%2fpkg/1.1.4)", "1.1.4")]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/pkg/1.1.4?slim=true)", "1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4)", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.4?slim=true)", "1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4)", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.5?slim=true)", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/v1.1.4)", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.4?slim=true)", "v1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4)", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/v1.1.4?slim=true)", "1.1.4")]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/pkg/1.0.0/v1.1.4)", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.5?slim=true)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/pkg/1.1.4?slim=true) ![adoption](https://developer.mend.io/api/mc/badges/adoption/npm/pkg/1.1.5?slim=true)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developer.mend.io/api/mc/badges/age/npm/1.1.4)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![confidence](https://developer.mend.io/api/mc/badges/confidence/npm/pkg/1.0.0/1.1.4?slim=true)", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://evil.test/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com.evil.test/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://evil.test/?u=https://renovatebot.com/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebotxcom/diffs/npm/pkg/1.0.0/1.1.4)", "", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://evil.test/api/mc/badges/age/npm/pkg/1.1.4)", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "![age](https://developerxmendxio/api/mc/badges/age/npm/pkg/1.1.4)", null)]
+    [InlineData("[`^1.0.0` → `^1.1.0`](https://renovatebot.com/diffs/npm/1.0.0/1.1.4)", "", null)]
+    [InlineData("`^1.0.0` → `^1.1.0`", "", null)]
+    public void Parse_ReadsTheResolvedNewVersionFromTheDiffsLinkOrAgeBadge(string change, string age, string? resolved)
+    {
+        var body = $"| Package | Change | Age |\n|---|---|---|\n| [dep](https://github.com/a/b) | {change} | {age} |\n";
+
+        Assert.Equal(resolved, Assert.Single(RenovateBodyTable.Parse(body)).Resolved);
+    }
+
+    [Theory]
+    [InlineData("~> 0.76", "~> 0.78")]
+    [InlineData(">= 1.2, < 2", ">= 1.3, < 2")]
+    [InlineData("1.2.3-alpine", "1.2.4-alpine")]
+    [InlineData("^1.0.0", "^1.1.0")]
+    public void Parse_ReadsAChangeWhoseVersionsHoldSpacesOrOperators(string from, string to)
+    {
+        var body = $"| Package | Change |\n|---|---|\n| [dep](https://github.com/a/b) | `{from}` → `{to}` |\n";
+
+        var update = Assert.Single(RenovateBodyTable.Parse(body));
+
+        Assert.Equal((from, to), (update.From, update.To));
+    }
+
+    [Fact]
+    public void Parse_ReadsTheRowsOfARealTerraformAndAMonorepoBody()
+    {
+        var terraform = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "RenovateTriage", "Fixtures", "release-notes-spruyt-labs-2188.txt"));
+        var monorepo = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "RenovateTriage", "Fixtures", "release-notes-spruyt-labs-2536.txt"));
+
+        Assert.Equal([new RenovateUpdate("tfe", "hashicorp/terraform-provider-tfe", "~> 0.76", "~> 0.78")], RenovateBodyTable.Parse(terraform));
+        Assert.Equal(
+            [("@vitest/coverage-v8", "vitest-dev/vitest", "4.1.11"), ("vitest", "vitest-dev/vitest", "4.1.11")],
+            RenovateBodyTable.Parse(monorepo).Select(u => (u.Dependency, u.SourceRepo, u.To)));
     }
 
     [Theory]
