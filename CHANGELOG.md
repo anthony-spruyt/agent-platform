@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.16.0...v1.17.0) (2026-10-19)
+
+
+### Features
+
+* **triage:** detect release notes in code before Jev ([#117](https://github.com/anthony-spruyt/agent-platform/issues/117)) ([5365c78](https://github.com/anthony-spruyt/agent-platform/commit/5365c78217233fa8018be0cc1e26c02723e47d89))
+
 ## [1.16.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.15.2...v1.16.0) (2026-10-19)
 
 
