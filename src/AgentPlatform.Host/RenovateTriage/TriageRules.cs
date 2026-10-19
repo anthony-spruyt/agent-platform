@@ -25,6 +25,8 @@ public enum CiState
     Pending,
 }
 
+public sealed record CiSummary(CiState State, int Checks);
+
 public sealed record JevAnswers(double Breaking, string BumpType, double Changelog);
 
 public sealed record TriageDecision(TriageVerdict Verdict, string Reason, string? Comment);
@@ -215,10 +217,28 @@ public static partial class TriageRules
         return considered.Any(IsFailing) ? CiState.Failed : CiState.Passed;
     }
 
+    public static CiSummary SummariseChecks(IReadOnlyList<GitHubCheckRun> checks, IReadOnlyList<GitHubCheckSuite> suites)
+    {
+        var state = AssessChecks(checks, suites);
+        var count = state switch
+        {
+            CiState.Pending => ConsideredChecks(checks).Count(c => !IsCompleted(c.Status)),
+            CiState.Failed => FailedChecks(checks).Count,
+            _ => 0,
+        };
+        return new CiSummary(state, count);
+    }
+
     public static IReadOnlyList<GitHubCheckRun> FailedChecks(IReadOnlyList<GitHubCheckRun> checks)
     {
         ArgumentNullException.ThrowIfNull(checks);
         return [.. ConsideredChecks(checks).Where(c => IsCompleted(c.Status) && IsFailing(c))];
+    }
+
+    public static bool HasPendingCommitStatus(IReadOnlyList<GitHubCheckRun> checks)
+    {
+        ArgumentNullException.ThrowIfNull(checks);
+        return ConsideredChecks(checks).Any(c => c.Id == GitHubApiClient.CommitStatusId && !IsCompleted(c.Status));
     }
 
     public static bool AreAllRenovateCommits(IReadOnlyList<GitHubCommit> commits, int prCommitCount)
@@ -304,7 +324,9 @@ public static partial class TriageRules
         var comment = new StringBuilder($"{NeedsReviewPrefix} CI failed on `{ShortSha(headSha)}`.");
         if (failed.Count > 0)
         {
-            var links = failed.Take(MaxListedFailedChecks).Select(c => $"[{LinkText(c.Name)}](https://github.com/{repo}/runs/{c.Id.ToString(CultureInfo.InvariantCulture)})");
+            var links = failed.Take(MaxListedFailedChecks).Select(c => c.Id == GitHubApiClient.CommitStatusId
+                ? LinkText(c.Name)
+                : $"[{LinkText(c.Name)}](https://github.com/{repo}/runs/{c.Id.ToString(CultureInfo.InvariantCulture)})");
             comment.Append(" Failed: ").Append(string.Join(", ", links));
             comment.Append(failed.Count > MaxListedFailedChecks ? $" and {failed.Count - MaxListedFailedChecks} more." : ".");
         }

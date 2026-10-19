@@ -46,6 +46,9 @@ public class GitHubApiClientTests
             }),
         });
 
+    private static List<RecordedRequest> CheckRunRequests(StubHttpHandler handler) =>
+        [.. handler.Requests.Where(r => r.Uri.AbsolutePath == $"/repos/octo/widgets/commits/{Sha}/check-runs")];
+
     private static HttpResponseMessage Page(RecordedRequest request, int total, Func<int, int, string> render)
     {
         var query = System.Web.HttpUtility.ParseQueryString(request.Uri.Query);
@@ -121,12 +124,32 @@ public class GitHubApiClientTests
 
         Assert.Equal(205, runs.Count);
         Assert.Equal(Enumerable.Range(1, 205), runs.Select(r => (int)r.Id));
-        Assert.Equal(3, handler.Requests.Count);
-        Assert.All(handler.Requests, r => Assert.Equal($"/repos/octo/widgets/commits/{Sha}/check-runs", r.Uri.AbsolutePath));
-        Assert.All(handler.Requests, r => Assert.Contains("per_page=100", r.Uri.Query, StringComparison.Ordinal));
-        Assert.Equal(["1", "2", "3"], handler.Requests.Select(r => System.Web.HttpUtility.ParseQueryString(r.Uri.Query)["page"]));
-        var (_, permissions) = Assert.Single(tokens.Requests.DistinctBy(r => string.Join(',', r.Permissions)));
-        Assert.Equal(new Dictionary<string, string> { ["checks"] = "read" }, permissions);
+        var requests = CheckRunRequests(handler);
+        Assert.Equal(3, requests.Count);
+        Assert.All(requests, r => Assert.Contains("per_page=100", r.Uri.Query, StringComparison.Ordinal));
+        Assert.Equal(["1", "2", "3"], requests.Select(r => System.Web.HttpUtility.ParseQueryString(r.Uri.Query)["page"]));
+        Assert.Equal(new Dictionary<string, string> { ["checks"] = "read" }, tokens.Requests[0].Permissions);
+    }
+
+    [Fact]
+    public async Task ListCheckRuns_ReadsEveryPageOfTheCommitStatuses()
+    {
+        var (client, handler, tokens) = Create(request => request.Uri.AbsolutePath.EndsWith("/status", StringComparison.Ordinal)
+            ? Page(request, 130, (from, count) => JsonSerializer.Serialize(new
+            {
+                state = "failure",
+                total_count = 130,
+                statuses = Enumerable.Range(from, count).Select(i => new { id = i, context = $"status-{i}", state = "success" }),
+            }))
+            : StubHttpHandler.Json("""{"total_count":0,"check_runs":[]}"""));
+
+        var runs = await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
+
+        Assert.Equal(Enumerable.Range(1, 130).Select(i => $"status-{i}"), runs.Select(r => r.Name));
+        var requests = handler.Requests.Where(r => r.Uri.AbsolutePath == $"/repos/octo/widgets/commits/{Sha}/status").ToList();
+        Assert.Equal(["1", "2"], requests.Select(r => System.Web.HttpUtility.ParseQueryString(r.Uri.Query)["page"]));
+        Assert.All(requests, r => Assert.Contains("per_page=100", r.Uri.Query, StringComparison.Ordinal));
+        Assert.Equal(new Dictionary<string, string> { ["statuses"] = "read" }, tokens.Requests[1].Permissions);
     }
 
     [Fact]
@@ -137,7 +160,7 @@ public class GitHubApiClientTests
         var runs = await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
 
         Assert.Equal(100, runs.Count);
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(2, CheckRunRequests(handler).Count);
     }
 
     [Fact]
@@ -161,7 +184,7 @@ public class GitHubApiClientTests
         var (client, handler, _) = Create(_ => StubHttpHandler.Json("""{"total_count":0,"check_runs":[]}"""));
 
         Assert.Empty(await client.ListCheckRunsAsync("octo/widgets", Sha, Ct));
-        Assert.Single(handler.Requests);
+        Assert.Equal([$"/repos/octo/widgets/commits/{Sha}/check-runs", $"/repos/octo/widgets/commits/{Sha}/status"], handler.Requests.Select(r => r.Uri.AbsolutePath));
     }
 
     [Fact]
@@ -460,6 +483,8 @@ public class GitHubApiClientTests
     {
         var (client, handler, _) = Create(request => request.Uri.AbsolutePath.EndsWith("check-runs", StringComparison.Ordinal)
             ? StubHttpHandler.Json("""{"total_count":0,"check_runs":[]}""")
+            : request.Uri.AbsolutePath.EndsWith("/status", StringComparison.Ordinal)
+            ? StubHttpHandler.Json("""{"state":"pending","total_count":0,"statuses":[]}""")
             : request.Uri.AbsolutePath.EndsWith("check-suites", StringComparison.Ordinal)
             ? StubHttpHandler.Json("""{"total_count":0,"check_suites":[]}""")
             : request.Uri.AbsolutePath.EndsWith("/pulls/7", StringComparison.Ordinal)
@@ -474,7 +499,7 @@ public class GitHubApiClientTests
         await client.ListCheckSuitesAsync("octo/widgets", Sha, Ct);
         await client.ListPullRequestFilesAsync("octo/widgets", 7, Ct);
 
-        Assert.Equal(7, handler.Requests.Count);
+        Assert.Equal(8, handler.Requests.Count);
         Assert.All(handler.Requests, r => Assert.Equal(HttpMethod.Get, r.Method));
     }
 

@@ -96,7 +96,7 @@ public sealed partial class RenovateTriageActivities(
             var ci = TriageRules.AssessChecks(checks, suites);
             if (ci == CiState.Pending)
             {
-                return new AssessResult(AssessStatus.Pending, sha, Mode: mode);
+                return new AssessResult(AssessStatus.Pending, sha, Mode: mode, StatusPending: TriageRules.HasPendingCommitStatus(checks));
             }
 
             if (ci == CiState.Failed)
@@ -289,7 +289,7 @@ public sealed partial class RenovateTriageActivities(
         {
             SafeAction.Fixable => new Gate(TriageRules.SafeOnRedHeadDecision(input.Repo, input.HeadSha, TriageRules.FailedChecks(checks))),
             SafeAction.WaitForCi when input.CiWaitOver => new Gate(TriageRules.CiTimeoutDecision()),
-            SafeAction.WaitForCi => new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason)),
+            SafeAction.WaitForCi => new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason, StatusPending: TriageRules.HasPendingCommitStatus(checks))),
             SafeAction.CommentOnly => new Gate(input.Decision, HighRiskTerm: TriageRules.RiskyTerm(pr.HeadRef)),
             _ => new Gate(input.Decision),
         };

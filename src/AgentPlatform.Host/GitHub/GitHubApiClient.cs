@@ -111,6 +111,8 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
 
     public const int CompareFileLimit = 300;
 
+    public const long CommitStatusId = 0;
+
     public const string TriageCheckExternalIdPrefix = "renovate-triage/";
 
     private const int PageSize = 100;
@@ -121,6 +123,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private static readonly Dictionary<string, string> _pullRequestsWrite = new() { ["pull_requests"] = "write" };
     private static readonly Dictionary<string, string> _checksRead = new() { ["checks"] = "read" };
     private static readonly Dictionary<string, string> _checksWrite = new() { ["checks"] = "write" };
+    private static readonly Dictionary<string, string> _statusesRead = new() { ["statuses"] = "read" };
     private static readonly Dictionary<string, string> _contentsRead = new() { ["contents"] = "read" };
     private static readonly Dictionary<string, string> _actionsRead = new() { ["actions"] = "read" };
     private static readonly Dictionary<string, string> _actionsWrite = new() { ["actions"] = "write" };
@@ -157,6 +160,10 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     private sealed record CheckRunDto(long Id, string? Name, string? Status, string? Conclusion, AppDto? App, string? ExternalId, CheckSuiteRefDto? CheckSuite);
 
     private sealed record CheckSuiteRefDto(long? Id);
+
+    private sealed record CommitStatusPage(List<CommitStatusDto>? Statuses);
+
+    private sealed record CommitStatusDto(string? State, string? Context);
 
     private sealed record AppDto(long? Id, string? Slug);
 
@@ -227,7 +234,38 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
     public async Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
     {
         var runs = await ReadCheckRunsAsync(repo, sha, allRuns: false, cancellationToken).ConfigureAwait(false);
-        return [.. runs.Where(r => !IsOwnTriageRun(r))];
+        var statuses = await ReadCommitStatusesAsync(repo, sha, cancellationToken).ConfigureAwait(false);
+        return [.. runs.Where(r => !IsOwnTriageRun(r)), .. statuses];
+    }
+
+    private async Task<List<GitHubCheckRun>> ReadCommitStatusesAsync(string repo, string sha, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        if (!IsSha(sha))
+        {
+            throw new ArgumentException("The commit must be given as a hexadecimal sha.", nameof(sha));
+        }
+
+        var statuses = await GetPagesAsync<CommitStatusPage, CommitStatusDto>(
+            repo,
+            $"repos/{owner}/{name}/commits/{sha}/status",
+            _statusesRead,
+            "commit statuses list",
+            page => page.Statuses,
+            cancellationToken).ConfigureAwait(false);
+
+        return [.. statuses.Select(AsCheckRun)];
+    }
+
+    private static GitHubCheckRun AsCheckRun(CommitStatusDto status)
+    {
+        var name = status.Context ?? string.Empty;
+        return status.State switch
+        {
+            "success" => new GitHubCheckRun(CommitStatusId, name, "completed", "success", null),
+            "pending" => new GitHubCheckRun(CommitStatusId, name, "pending", null, null),
+            _ => new GitHubCheckRun(CommitStatusId, name, "completed", "failure", null),
+        };
     }
 
     private async Task<List<GitHubCheckRun>> ReadCheckRunsAsync(string repo, string sha, bool allRuns, CancellationToken cancellationToken)

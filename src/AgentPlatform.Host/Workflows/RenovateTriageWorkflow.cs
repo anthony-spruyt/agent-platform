@@ -18,8 +18,11 @@ public partial class RenovateTriageWorkflow
     private const string Step2Patch = "renovate-triage-step2-v1";
     private const string FreshCheckPatch = "renovate-triage-fresh-check-v1";
     private const string CiRacePatch = "renovate-triage-ci-race-v1";
+    private const string StatusPollPatch = "renovate-triage-status-poll-v1";
 
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
+
+    public static readonly TimeSpan StatusPollInterval = TimeSpan.FromMinutes(5);
 
     // The scanner takes up to 10 minutes per text and texts go through it one at a time.
     private static readonly ActivityOptions _scanOptions = new()
@@ -82,6 +85,7 @@ public partial class RenovateTriageWorkflow
     private string? _checkSha;
     private string? _checkSummary;
     private bool _ciRace;
+    private bool _ciRaceStatusPending;
     private bool _ciWaitOver;
     private int _applySignals;
 
@@ -209,7 +213,7 @@ public partial class RenovateTriageWorkflow
                     ciWait = ciWait.Pending(Workflow.UtcNow);
                     if (!ciWait.TimedOut)
                     {
-                        ciWait = await WaitForCiSignalAsync(ciWait, seen);
+                        ciWait = await WaitForCiSignalAsync(ciWait, seen, assess.StatusPending);
                         continue;
                     }
 
@@ -338,7 +342,7 @@ public partial class RenovateTriageWorkflow
         ciWait = ciWait.Pending(Workflow.UtcNow);
         if (!ciWait.TimedOut)
         {
-            ciWait = await WaitForCiSignalAsync(ciWait, _applySignals);
+            ciWait = await WaitForCiSignalAsync(ciWait, _applySignals, _ciRaceStatusPending);
         }
 
         _ciWaitOver = ciWait.TimedOut;
@@ -402,12 +406,18 @@ public partial class RenovateTriageWorkflow
         return new CiFailureStep(rerun.HeadMoved, !rerun.HeadMoved && rerun.Outcome != RerunOutcome.AttemptLimit, false, seq, signalsBeforeRerun);
     }
 
-    private async Task<CiWait> WaitForCiSignalAsync(CiWait wait, int signalsSeen)
+    // Only check_suite events are forwarded, so nothing signals a commit status completing: a wait on one wakes on a timer.
+    private async Task<CiWait> WaitForCiSignalAsync(CiWait wait, int signalsSeen, bool pollStatus = false)
     {
         var remaining = wait.Remaining(Workflow.UtcNow, CiTimeout);
-        return remaining > TimeSpan.Zero && await Workflow.WaitConditionAsync(() => _signalCount > signalsSeen, remaining)
-            ? wait
-            : wait with { TimedOut = true };
+        if (remaining <= TimeSpan.Zero)
+        {
+            return wait with { TimedOut = true };
+        }
+
+        var polling = pollStatus && Workflow.Patched(StatusPollPatch) && remaining > StatusPollInterval;
+        var signalled = await Workflow.WaitConditionAsync(() => _signalCount > signalsSeen, polling ? StatusPollInterval : remaining);
+        return signalled || polling ? wait : wait with { TimedOut = true };
     }
 
     private static async Task<(bool HeadMoved, TriageDecision? Decision, int Seq)> RetryWithChangelogsAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, ScannedText body)
@@ -512,6 +522,7 @@ public partial class RenovateTriageWorkflow
             if (applied is { Outcome: ApplyOutcome.Aborted, Reason: RenovateTriageActivities.CiPendingReason } && Workflow.Patched(CiRacePatch))
             {
                 _ciRace = true;
+                _ciRaceStatusPending = applied.StatusPending;
                 await ProgressAsync(input, headSha, "Waiting for CI.");
                 return null;
             }
