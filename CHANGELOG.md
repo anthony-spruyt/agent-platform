@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.15.1...v1.15.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **triage:** drop only cancelled runs superseded by a newer workflow run ([#109](https://github.com/anthony-spruyt/agent-platform/issues/109)) ([24007f6](https://github.com/anthony-spruyt/agent-platform/commit/24007f66f3897d573dde04c3b80466f161679fc6))
+
 ## [1.15.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.15.0...v1.15.1) (2026-10-18)
 
 
