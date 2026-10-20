@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.17.0...v1.17.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **triage:** reword submit_result rejection messages as plain facts ([#121](https://github.com/anthony-spruyt/agent-platform/issues/121)) ([f15d64c](https://github.com/anthony-spruyt/agent-platform/commit/f15d64c14f674a7248fbfbe5b4cb37207efa9b2a))
+
 ## [1.17.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.16.0...v1.17.0) (2026-10-19)
 
 
