@@ -54,7 +54,7 @@ public class TriageResultTests
     [Fact]
     public void TryParse_RejectsAFailureStatus()
     {
-        Assert.Contains("success", Error(Payload(Valid(), status: "failure")), StringComparison.Ordinal);
+        Assert.Equal("status is not \"success\"; a triage result needs status \"success\".", Error(Payload(Valid(), status: "failure")));
     }
 
     [Fact]
@@ -71,14 +71,18 @@ public class TriageResultTests
     [InlineData("""{"verdict":5,"head_sha":"AAAA"}""")]
     public void TryParse_RejectsAnUnknownVerdict(string data)
     {
-        Assert.Contains("verdict", Error(Payload(data.Replace("AAAA", Sha, StringComparison.Ordinal))), StringComparison.Ordinal);
+        Assert.Equal(
+            "The data.verdict is missing, not a string, or not SAFE, FIXABLE, BLOCKED or NEEDS_REVIEW.",
+            Error(Payload(data.Replace("AAAA", Sha, StringComparison.Ordinal))));
     }
 
     [Fact]
     public void TryParse_RejectsAShaThatIsNotTheRunsHead()
     {
-        Assert.Contains("head_sha", Error(Payload(Valid(sha: new string('b', 40)))), StringComparison.Ordinal);
-        Assert.Contains("head_sha", Error(Payload($$"""{"verdict":"SAFE"}""")), StringComparison.Ordinal);
+        const string expected = "data.head_sha is missing or is not the head commit given in the run facts.";
+
+        Assert.Equal(expected, Error(Payload(Valid(sha: new string('b', 40)))));
+        Assert.Equal(expected, Error(Payload($$"""{"verdict":"SAFE"}""")));
     }
 
     [Fact]
@@ -189,11 +193,35 @@ public class TriageResultTests
     }
 
     [Fact]
+    public void TryParse_WithNoTable_NamesTheVersionTheCommitSubjectStates()
+    {
+        var error = VersionsError("""[{"dep":"x","from":"8.21.0","to":"8.23.0"}]""", new StatedVersions(null, "8.22.0"));
+
+        Assert.Equal("The commit subject states 8.22.0; data.versions is expected to be empty or hold one entry with \"to\" 8.22.0.", error);
+    }
+
+    [Fact]
+    public void TryParse_WithNoTableAndNoSubjectVersion_SaysTheListIsExpectedEmpty()
+    {
+        var error = VersionsError("""[{"dep":"x","from":"8.21.0","to":"8.22.0"}]""", new StatedVersions(null, null));
+
+        Assert.Equal("The commit subject states no version; data.versions is expected to be empty.", error);
+    }
+
+    [Fact]
     public void TryParse_TellsTheAgentWhichUpdatesTheCommitStates()
     {
         var error = VersionsError("[]", Table(("a", "1.0.0", "1.1.0")));
 
-        Assert.Contains("a 1.0.0 -> 1.1.0", error, StringComparison.Ordinal);
+        Assert.Equal("The Renovate commit's table lists a 1.0.0 -> 1.1.0. data.versions does not match it.", error);
+    }
+
+    [Fact]
+    public void TryParse_WhenTheTableHasSeveralUpdates_ListsThemAllInTableOrder()
+    {
+        var error = VersionsError("[]", Table(("a", "1.0.0", "1.1.0"), ("b", "2.0.0", "2.1.0")));
+
+        Assert.Equal("The Renovate commit's table lists a 1.0.0 -> 1.1.0; b 2.0.0 -> 2.1.0. data.versions does not match it.", error);
     }
 
     [Fact]
@@ -205,7 +233,7 @@ public class TriageResultTests
 
         Assert.Contains("dep1 1.0.0", error, StringComparison.Ordinal);
         Assert.DoesNotContain($"dep{TriageResult.MaxListItems + 1} ", error, StringComparison.Ordinal);
-        Assert.Contains("and 5 more", error, StringComparison.Ordinal);
+        Assert.EndsWith(" (and 5 more). data.versions does not match it.", error, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -344,7 +344,7 @@ public sealed class AgentGatewayTests : IAsyncDisposable
     [Fact]
     public async Task WhenTheResultIsInvalid_TheAgentGetsTheReasonAsAToolErrorSoItCanResubmit()
     {
-        _submitter.Failure = new InvalidResultException("data.verdict must be one of SAFE, FIXABLE.");
+        _submitter.Failure = new InvalidResultException("The data.verdict is missing, not a string, or not SAFE or FIXABLE.");
         await using var client = await ConnectAsync(ValidToken());
 
         var result = await client.CallToolAsync(
