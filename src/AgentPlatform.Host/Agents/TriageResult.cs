@@ -43,7 +43,7 @@ public sealed record TriageResult(
         parsed = null;
         if (payload.Status != "success")
         {
-            return "status must be \"success\" for a triage result.";
+            return "status is not \"success\"; a triage result needs status \"success\".";
         }
 
         if (string.IsNullOrWhiteSpace(payload.Summary) || payload.Summary.Length > MaxSummaryLength)
@@ -59,13 +59,13 @@ public sealed record TriageResult(
         if (!data.TryGetProperty("verdict", out var verdictElement) || verdictElement.ValueKind != JsonValueKind.String
             || !_verdicts.Contains(verdictElement.GetString(), StringComparer.Ordinal))
         {
-            return $"data.verdict must be one of {string.Join(", ", _verdicts)}.";
+            return $"The data.verdict is missing, not a string, or not {string.Join(", ", _verdicts[..^1])} or {_verdicts[^1]}.";
         }
 
         if (!data.TryGetProperty("head_sha", out var shaElement) || shaElement.ValueKind != JsonValueKind.String
             || !string.Equals(shaElement.GetString(), expectedHeadSha, StringComparison.OrdinalIgnoreCase))
         {
-            return "data.head_sha must echo the head sha you were given.";
+            return "data.head_sha is missing or is not the head commit given in the run facts.";
         }
 
         var versions = new List<TriageVersion>();
@@ -114,8 +114,9 @@ public sealed record TriageResult(
         };
         return allowed
             ? null
-            : "data.versions must be empty or hold one entry whose \"to\" is the version the commit subject states"
-                + (stated.SubjectVersion is { } version ? $" ({version})." : ", and it states none.");
+            : stated.SubjectVersion is { } version
+                ? $"The commit subject states {version}; data.versions is expected to be empty or hold one entry with \"to\" {version}."
+                : "The commit subject states no version; data.versions is expected to be empty.";
     }
 
     private static string TableMismatch(IReadOnlyList<StatedVersion> rows)
@@ -127,7 +128,7 @@ public sealed record TriageResult(
 
         var listed = string.Join("; ", rows.Take(MaxListItems).Select(r => $"{r.Package} {r.From} -> {r.To}"));
         var more = rows.Count > MaxListItems ? $" (and {rows.Count - MaxListItems} more)" : string.Empty;
-        return $"data.versions must list exactly the updates in the Renovate commit's table: {listed}{more}.";
+        return $"The Renovate commit's table lists {listed}{more}. data.versions does not match it.";
     }
 
     private static string Key(string dep, string from, string to) =>
