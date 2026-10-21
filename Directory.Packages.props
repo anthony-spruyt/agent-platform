@@ -6,7 +6,7 @@
   <ItemGroup>
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.6.1" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.1" />
-    <PackageVersion Include="KubernetesClient" Version="19.0.2" />
+    <PackageVersion Include="KubernetesClient" Version="21.0.8" />
     <!-- Transitive pin past GHSA-qhrr-8q5h-9q3h; remove once Aspire.Hosting depends on a patched MessagePack: https://github.com/microsoft/aspire/issues/21050 -->
     <PackageVersion Include="MessagePack" Version="2.5.307" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.13" />
