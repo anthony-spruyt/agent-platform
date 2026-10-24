@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.17.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.17.1...v1.17.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **deps:** update dependency kubernetesclient to v21 ([#128](https://github.com/anthony-spruyt/agent-platform/issues/128)) ([66e8e25](https://github.com/anthony-spruyt/agent-platform/commit/66e8e25f04f6251ff5e91f0191d54f0fe16283e2))
+* **deps:** update dotnet monorepo ([#129](https://github.com/anthony-spruyt/agent-platform/issues/129)) ([bbacb4e](https://github.com/anthony-spruyt/agent-platform/commit/bbacb4e5f3a93f761cd053d2048492171148947f))
+* **deps:** update opentelemetry-dotnet monorepo to 1.20.0 ([#134](https://github.com/anthony-spruyt/agent-platform/issues/134)) ([48ef980](https://github.com/anthony-spruyt/agent-platform/commit/48ef9801268b9c8a533381247bc698ef2e4164b4))
+* **deps:** update opentelemetry-dotnet-contrib monorepo to 1.20.0 ([#133](https://github.com/anthony-spruyt/agent-platform/issues/133)) ([a527e74](https://github.com/anthony-spruyt/agent-platform/commit/a527e7424858b4a250459608ff3d54d0faf211f5))
+
 ## [1.17.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.17.0...v1.17.1) (2026-10-20)
 
 
