@@ -81,6 +81,30 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // Writes only when the hold changes, so HeldAt stays the time the hold began.
+    public async Task<bool> SetHeldAsync(string repo, int prNumber, string headSha, bool held, CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.TriagePending
+            .SingleOrDefaultAsync(p => p.Repo == repo && p.PrNumber == prNumber && p.HeadSha == headSha, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null)
+        {
+            return false;
+        }
+
+        if (held == row.HeldAt.HasValue)
+        {
+            return true;
+        }
+
+        var now = time.GetUtcNow();
+        row.HeldAt = held ? now : null;
+        row.UpdatedAt = now;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     public async Task<IReadOnlyList<TriagePending>> ListOpenAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -96,7 +120,7 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         return await db.TriagePending
-            .CountAsync(p => p.Status == TriagePendingStatus.Pending || p.Status == TriagePendingStatus.Redriven, cancellationToken)
+            .CountAsync(p => (p.Status == TriagePendingStatus.Pending || p.Status == TriagePendingStatus.Redriven) && p.HeldAt == null, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -127,6 +151,7 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
             row.Reason = reason;
             row.Status = TriagePendingStatus.Pending;
             row.Attempts = 0;
+            row.HeldAt = null;
             row.OpenedAt = now;
             row.UpdatedAt = now;
         }

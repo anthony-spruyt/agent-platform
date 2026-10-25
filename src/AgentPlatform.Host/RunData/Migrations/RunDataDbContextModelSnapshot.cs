@@ -17,7 +17,7 @@ namespace AgentPlatform.Host.RunData.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -230,6 +230,10 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("head_sha");
+
+                    b.Property<DateTimeOffset?>("HeldAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("held_at");
 
                     b.Property<DateTimeOffset>("OpenedAt")
                         .HasColumnType("timestamp with time zone")

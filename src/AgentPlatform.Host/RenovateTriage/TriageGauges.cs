@@ -19,7 +19,7 @@ public sealed class TriageGauges : IDisposable
         Budget = budget;
         Sweeper = sweeper;
         Meter = new Meter(MeterName);
-        Meter.CreateObservableGauge("triage_pending_total", () => Volatile.Read(ref _pending), description: "Renovate PRs queued for the Claude rung.");
+        Meter.CreateObservableGauge("triage_pending_total", () => Volatile.Read(ref _pending), description: "Renovate PRs queued for the Claude rung; held (blocked) ones are not counted.");
         Meter.CreateObservableGauge("claude_cooldown_active", () => Volatile.Read(ref _cooldowns), description: "Claude cooldowns currently in force.");
         Meter.CreateObservableGauge("sweeper_last_success_timestamp", () => Volatile.Read(ref _sweeperLastSuccess), description: "Unix time of the last triage sweeper run in which every step succeeded; 0 before the first.");
     }
