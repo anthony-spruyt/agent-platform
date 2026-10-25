@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.17.2...v1.18.0) (2026-10-25)
+
+
+### Features
+
+* **triage:** leave blocked PRs out of the pending count ([#151](https://github.com/anthony-spruyt/agent-platform/issues/151)) ([8ed2459](https://github.com/anthony-spruyt/agent-platform/commit/8ed245974a9927f41548eb53fd859e9c178da7d1))
+
 ## [1.17.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.17.1...v1.17.2) (2026-10-24)
 
 
