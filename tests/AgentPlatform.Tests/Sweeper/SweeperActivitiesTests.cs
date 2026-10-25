@@ -258,6 +258,22 @@ public class SweeperActivitiesTests
     }
 
     [Fact]
+    public async Task ARowParkedOnAnOlderHead_IsStillMarkedHeld_WhenItsPullRequestCarriesBlocked()
+    {
+        var rig = new Rig();
+        var olderSha = "b" + Sha[1..];
+        await rig.ParkAsync(7, olderSha);
+        rig.OpenPullRequest(7, TriageRules.BlockedLabel);
+
+        await Run(rig.Activities.RedriveAsync);
+
+        var row = (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!;
+        Assert.Equal(olderSha, row.HeadSha);
+        Assert.NotNull(row.HeldAt);
+        Assert.Equal(0, await rig.Data.Pending.CountOpenAsync(Ct));
+    }
+
+    [Fact]
     public async Task WhenBlockedComesOff_TheHoldIsCleared_AndTheRowIsRedrivenInTheSameRun()
     {
         var rig = new Rig();
