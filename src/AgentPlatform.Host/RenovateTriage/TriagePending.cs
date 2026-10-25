@@ -33,4 +33,6 @@ public sealed class TriagePending
     public DateTimeOffset OpenedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }
+
+    public DateTimeOffset? HeldAt { get; set; }
 }

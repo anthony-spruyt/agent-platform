@@ -195,6 +195,90 @@ public class TriagePendingStoreTests
     }
 
     [Fact]
+    public async Task CountOpen_LeavesOutHeldRows_WhileListOpenStillReturnsThem()
+    {
+        var (store, _, _) = Create();
+        await store.UpsertAsync(Repo, 1, Sha, "r", Ct);
+        await store.UpsertAsync(Repo, 2, Sha, "r", Ct);
+        await store.UpsertAsync(Repo, 3, Sha, "r", Ct);
+        await store.SetStatusAsync(Repo, 3, Sha, TriagePendingStatus.Redriven, Ct);
+
+        await store.SetHeldAsync(Repo, 2, Sha, held: true, Ct);
+        await store.SetHeldAsync(Repo, 3, Sha, held: true, Ct);
+
+        Assert.Equal(1, await store.CountOpenAsync(Ct));
+        Assert.Equal([1, 2, 3], (await store.ListOpenAsync(Ct)).Select(p => p.PrNumber).Order());
+    }
+
+    [Fact]
+    public async Task SetHeld_Twice_KeepsTheFirstHeldAt()
+    {
+        var (store, _, time) = Create();
+        await store.UpsertAsync(Repo, 7, Sha, "r", Ct);
+        var firstHeld = time.Now + TimeSpan.FromMinutes(1);
+        time.Now = firstHeld;
+        Assert.True(await store.SetHeldAsync(Repo, 7, Sha, held: true, Ct));
+
+        time.Now += TimeSpan.FromMinutes(30);
+        Assert.True(await store.SetHeldAsync(Repo, 7, Sha, held: true, Ct));
+
+        var row = (await store.FindAsync(Repo, 7, Ct))!;
+        Assert.Equal((firstHeld, firstHeld), (row.HeldAt, row.UpdatedAt));
+    }
+
+    [Fact]
+    public async Task SetHeld_False_ClearsTheHold_AndWritesNothingWhenThereIsNone()
+    {
+        var (store, _, time) = Create();
+        await store.UpsertAsync(Repo, 7, Sha, "r", Ct);
+        var created = time.Now;
+        time.Now += TimeSpan.FromMinutes(1);
+
+        Assert.True(await store.SetHeldAsync(Repo, 7, Sha, held: false, Ct));
+        var untouched = (await store.FindAsync(Repo, 7, Ct))!;
+        Assert.Null(untouched.HeldAt);
+        Assert.Equal(created, untouched.UpdatedAt);
+
+        await store.SetHeldAsync(Repo, 7, Sha, held: true, Ct);
+        time.Now += TimeSpan.FromMinutes(1);
+        Assert.True(await store.SetHeldAsync(Repo, 7, Sha, held: false, Ct));
+
+        var row = (await store.FindAsync(Repo, 7, Ct))!;
+        Assert.Null(row.HeldAt);
+        Assert.Equal(time.Now, row.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task SetHeld_ChangesTheRowOfThatHeadOnly()
+    {
+        var (store, _, _) = Create();
+        await store.UpsertAsync(Repo, 7, Sha, "r", Ct);
+
+        Assert.False(await store.SetHeldAsync(Repo, 7, _movedSha, held: true, Ct));
+        Assert.False(await store.SetHeldAsync(Repo, 8, Sha, held: true, Ct));
+
+        Assert.Null((await store.FindAsync(Repo, 7, Ct))!.HeldAt);
+    }
+
+    [Fact]
+    public async Task Upsert_TheSameHeadAgain_KeepsTheHold_ButAHeadMoveResetsIt()
+    {
+        var (store, _, time) = Create();
+        await store.UpsertAsync(Repo, 7, Sha, "r", Ct);
+        await store.SetHeldAsync(Repo, 7, Sha, held: true, Ct);
+        var held = time.Now;
+
+        time.Now += TimeSpan.FromMinutes(5);
+        var same = await store.UpsertAsync(Repo, 7, Sha, "breaking", Ct);
+        Assert.Equal(held, same.HeldAt);
+
+        var moved = await store.UpsertAsync(Repo, 7, _movedSha, "major", Ct);
+
+        Assert.Null(moved.HeldAt);
+        Assert.Null((await store.FindAsync(Repo, 7, Ct))!.HeldAt);
+    }
+
+    [Fact]
     public void TheTables_AreKeyedAsDesigned()
     {
         var options = new DbContextOptionsBuilder<RunDataDbContext>().UseNpgsql("Host=localhost").Options;

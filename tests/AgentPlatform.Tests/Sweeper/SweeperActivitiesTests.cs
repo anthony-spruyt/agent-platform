@@ -240,6 +240,93 @@ public class SweeperActivitiesTests
     }
 
     [Fact]
+    public async Task ARowWhosePullRequestCarriesBlocked_IsMarkedHeld_AndStaysOpenButUncounted()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7, TriageRules.BlockedLabel);
+
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        var row = (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!;
+        Assert.NotNull(row.HeldAt);
+        Assert.Equal(TriagePendingStatus.Pending, row.Status);
+        Assert.Equal(0, await rig.Data.Pending.CountOpenAsync(Ct));
+        Assert.Single(await rig.Data.Pending.ListOpenAsync(Ct));
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Equal(1, result.Skipped);
+    }
+
+    [Fact]
+    public async Task ARowParkedOnAnOlderHead_IsStillMarkedHeld_WhenItsPullRequestCarriesBlocked()
+    {
+        var rig = new Rig();
+        var olderSha = "b" + Sha[1..];
+        await rig.ParkAsync(7, olderSha);
+        rig.OpenPullRequest(7, TriageRules.BlockedLabel);
+
+        await Run(rig.Activities.RedriveAsync);
+
+        var row = (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!;
+        Assert.Equal(olderSha, row.HeadSha);
+        Assert.NotNull(row.HeldAt);
+        Assert.Equal(0, await rig.Data.Pending.CountOpenAsync(Ct));
+    }
+
+    [Fact]
+    public async Task WhenBlockedComesOff_TheHoldIsCleared_AndTheRowIsRedrivenInTheSameRun()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7, TriageRules.BlockedLabel);
+        await Run(rig.Activities.RedriveAsync);
+        Assert.NotNull((await rig.Data.Pending.FindAsync(Repo, 7, Ct))!.HeldAt);
+
+        rig.OpenPullRequest(7);
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        var row = (await rig.Data.Pending.FindAsync(Repo, 7, Ct))!;
+        Assert.Null(row.HeldAt);
+        Assert.Equal(TriagePendingStatus.Redriven, row.Status);
+        Assert.Equal(1, await rig.Data.Pending.CountOpenAsync(Ct));
+        Assert.Equal(7, Assert.Single(rig.Signaler.Signals).PrNumber);
+        Assert.Equal(1, result.Redriven);
+    }
+
+    [Fact]
+    public async Task ARowSkippedForAnotherBlockingLabel_IsNotMarkedHeld()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7, TriageRules.RevertLabel);
+
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        Assert.Null((await rig.Data.Pending.FindAsync(Repo, 7, Ct))!.HeldAt);
+        Assert.Equal(TriagePendingStatus.Pending, await rig.StatusAsync(7));
+        Assert.Equal(1, await rig.Data.Pending.CountOpenAsync(Ct));
+        Assert.Equal(1, result.Skipped);
+    }
+
+    [Fact]
+    public async Task ARowThatSettles_IsNotMarkedHeld_EvenWhenItsPullRequestCarriesBlocked()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(2);
+        await rig.ParkAsync(3);
+        rig.OpenPullRequest(2, TriageRules.BlockedLabel);
+        rig.OpenPullRequest(3, TriageRules.NeedsReviewLabel, TriageRules.BlockedLabel);
+        rig.Github.IssueEvents.Add(new GitHubIssueEvent("labeled", TriageRules.AllowedOwner, TriageRules.BlockedLabel, rig.Now.AddMinutes(5)));
+
+        await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal(TriagePendingStatus.OwnerHandled, await rig.StatusAsync(2));
+        Assert.Null((await rig.Data.Pending.FindAsync(Repo, 2, Ct))!.HeldAt);
+        Assert.Equal(TriagePendingStatus.Owner, await rig.StatusAsync(3));
+        Assert.Null((await rig.Data.Pending.FindAsync(Repo, 3, Ct))!.HeldAt);
+    }
+
+    [Fact]
     public async Task ARowWhosePullRequestIsAlreadyApproved_IsNotRedriven_AndDoesNotUseUpTheCap()
     {
         var rig = new Rig(perHour: 1);
