@@ -225,6 +225,7 @@ public sealed partial class SweeperActivities(
 
         if (status is not { } settled)
         {
+            await pendings.SetHeldAsync(row.Repo, row.PrNumber, row.HeadSha, pr.Labels.Contains(TriageRules.BlockedLabel, StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             return (endsSkipped ? RowState.Skipped : RowState.Redrive, pr);
         }
 
