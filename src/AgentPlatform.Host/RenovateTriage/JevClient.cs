@@ -18,8 +18,6 @@ public interface IJevClient
 
 public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options, TimeProvider time) : IJevClient
 {
-    public const string Model = "jev-latest";
-
     public const int MaxPrBodyBytes = 32 * 1024;
 
     public const int MaxPrDiffBytes = 32 * 1024;
@@ -66,11 +64,11 @@ public sealed class JevClient(HttpClient http, IOptions<LiteLlmOptions> options,
         var body = new JsonObject
         {
             ["state"] = state,
-            ["model"] = Model,
+            ["model"] = litellm.JevModel,
             ["questions"] = questions.DeepClone(),
         };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(litellm.BaseUrl, UriKind.Absolute), "typesafe/v1/systemone"))
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(litellm.BaseUrl, UriKind.Absolute), litellm.JevPath))
         {
             Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
         };

@@ -54,5 +54,26 @@ public static class RenovateTriageServiceCollectionExtensions
         {
             throw new InvalidOperationException("LiteLlm:ApiKey is required.");
         }
+
+        if (!IsRelativePath(litellm.JevPath))
+        {
+            throw new InvalidOperationException("LiteLlm:JevPath must be a relative path without a scheme, host, query or fragment.");
+        }
+
+        if (!IsPrintableWithoutWhitespace(litellm.JevModel))
+        {
+            throw new InvalidOperationException("LiteLlm:JevModel must be a non-empty value of printable characters without whitespace.");
+        }
     }
+
+    private static bool IsPrintableWithoutWhitespace(string? value) =>
+        !string.IsNullOrEmpty(value) && value.All(c => c is > ' ' and <= '~');
+
+    private static bool IsRelativePath(string? path) =>
+        path is not null
+        && IsPrintableWithoutWhitespace(path)
+        && path[0] is not ('/' or '\\')
+        && path.AsSpan().IndexOfAny('?', '#') < 0
+        && Uri.TryCreate(path, UriKind.Relative, out var relative)
+        && !relative.IsAbsoluteUri;
 }
