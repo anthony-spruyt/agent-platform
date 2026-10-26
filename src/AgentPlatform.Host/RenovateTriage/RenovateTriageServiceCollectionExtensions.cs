@@ -55,9 +55,9 @@ public static class RenovateTriageServiceCollectionExtensions
             throw new InvalidOperationException("LiteLlm:ApiKey is required.");
         }
 
-        if (!IsRelativePath(litellm.JevPath))
+        if (!IsRelativePath(baseUrl, litellm.JevPath))
         {
-            throw new InvalidOperationException("LiteLlm:JevPath must be a relative path without a scheme, host, query or fragment.");
+            throw new InvalidOperationException("LiteLlm:JevPath must be a relative path without a scheme, host, query, fragment, leading slash or dot segments.");
         }
 
         if (!IsPrintableWithoutWhitespace(litellm.JevModel))
@@ -69,11 +69,13 @@ public static class RenovateTriageServiceCollectionExtensions
     private static bool IsPrintableWithoutWhitespace(string? value) =>
         !string.IsNullOrEmpty(value) && value.All(c => c is > ' ' and <= '~');
 
-    private static bool IsRelativePath(string? path) =>
+    private static bool IsRelativePath(Uri baseUrl, string? path) =>
         path is not null
         && IsPrintableWithoutWhitespace(path)
         && path[0] is not ('/' or '\\')
         && path.AsSpan().IndexOfAny('?', '#') < 0
-        && Uri.TryCreate(path, UriKind.Relative, out var relative)
-        && !relative.IsAbsoluteUri;
+        && !path.Split('/', '\\').Any(segment => Uri.UnescapeDataString(segment) is "." or "..")
+        && Uri.TryCreate(baseUrl, path, out var resolved)
+        && resolved.Scheme == baseUrl.Scheme
+        && resolved.Authority == baseUrl.Authority;
 }
