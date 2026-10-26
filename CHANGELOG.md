@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.18.0...v1.19.0) (2026-10-26)
+
+
+### Features
+
+* **triage:** read the Jev path and model from config ([#157](https://github.com/anthony-spruyt/agent-platform/issues/157)) ([9694aff](https://github.com/anthony-spruyt/agent-platform/commit/9694aff8f7ee25a163bb35ef6a8e5457a279860d))
+
 ## [1.18.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.17.2...v1.18.0) (2026-10-25)
 
 
