@@ -15,11 +15,13 @@ public class JevClientTests
     private static readonly CancellationToken Ct = TestContext.Current.CancellationToken;
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 7, 5, 9, 123, TimeSpan.Zero);
 
-    private static (JevClient Client, StubHttpHandler Handler) Create(Func<RecordedRequest, HttpResponseMessage> respond, string apiKey = "sk-test-virtual")
+    private static (JevClient Client, StubHttpHandler Handler) Create(Func<RecordedRequest, HttpResponseMessage> respond, string apiKey = "sk-test-virtual", Action<LiteLlmOptions>? configure = null)
     {
         var handler = new StubHttpHandler(respond);
         var http = new HttpClient(handler, disposeHandler: false);
-        var options = Options.Create(new LiteLlmOptions { BaseUrl = "http://litellm.example.test:4000", ApiKey = apiKey });
+        var litellm = new LiteLlmOptions { BaseUrl = "http://litellm.example.test:4000", ApiKey = apiKey };
+        configure?.Invoke(litellm);
+        var options = Options.Create(litellm);
         return (new JevClient(http, options, new FixedTime(Now)), handler);
     }
 
@@ -41,7 +43,7 @@ public class JevClientTests
     }
 
     [Fact]
-    public async Task Ask_PostsToTheSystemOneEndpointWithTheVirtualKey()
+    public async Task Ask_PostsToTheNativeSystemOneRouteWithTheVirtualKey()
     {
         var (client, handler) = Create(_ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")));
 
@@ -49,8 +51,26 @@ public class JevClientTests
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("http://litellm.example.test:4000/typesafe/v1/systemone", request.Uri.ToString());
+        Assert.Equal("http://litellm.example.test:4000/v1/systemone", request.Uri.ToString());
         Assert.Equal("Bearer sk-test-virtual", request.Authorization);
+    }
+
+    [Fact]
+    public async Task Ask_PostsToTheConfiguredPathWithTheConfiguredModel()
+    {
+        var (client, handler) = Create(
+            _ => StubHttpHandler.Json(Fixture("jev-response-patch-with-changelog.json")),
+            configure: o =>
+            {
+                o.JevPath = "typesafe/v1/systemone";
+                o.JevModel = "jev-2.0.0";
+            });
+
+        await client.AskAsync("notes", null, Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("http://litellm.example.test:4000/typesafe/v1/systemone", request.Uri.ToString());
+        Assert.Equal("jev-2.0.0", (string?)JsonNode.Parse(request.Body!)!["model"]);
     }
 
     [Fact]
@@ -61,7 +81,7 @@ public class JevClientTests
         await client.AskAsync("## Release notes\n- fix: \"quoted\" thing", null, Ct);
 
         var body = JsonNode.Parse(Assert.Single(handler.Requests).Body!)!.AsObject();
-        Assert.Equal("jev-latest", (string?)body["model"]);
+        Assert.Equal("jev-1.14.0", (string?)body["model"]);
         Assert.Equal("## Release notes\n- fix: \"quoted\" thing", (string?)body["state"]!["pr_body"]);
         Assert.Equal("2026-10-12T07:05:09.123Z", (string?)body["state"]!["current_date"]);
         var questions = body["questions"]!.AsObject();

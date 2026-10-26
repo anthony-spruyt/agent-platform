@@ -274,10 +274,71 @@ public class WorkerConfigurationTests
         Assert.Equal("http://litellm.litellm.svc.cluster.local:4000", provider.GetRequiredService<IOptions<LiteLlmOptions>>().Value.BaseUrl);
     }
 
+    [Fact]
+    public void TheJevPathAndModel_DefaultToTheNativeSystemOneRouteAndAPinnedModel()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["LiteLlm:ApiKey"] = "test-key" }).Build();
+        var services = new ServiceCollection();
+        services.AddRenovateTriage(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        var litellm = provider.GetRequiredService<IOptions<LiteLlmOptions>>().Value;
+
+        Assert.Equal("v1/systemone", litellm.JevPath);
+        Assert.Equal("jev-1.14.0", litellm.JevModel);
+    }
+
+    [Fact]
+    public void TheJevPathAndModel_AreReadFromConfig()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LiteLlm:ApiKey"] = "test-key",
+            ["LiteLlm:JevPath"] = "typesafe/v1/systemone",
+            ["LiteLlm:JevModel"] = "jev-2.0.0",
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddRenovateTriage(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        var litellm = provider.GetRequiredService<IOptions<LiteLlmOptions>>().Value;
+
+        Assert.Equal("typesafe/v1/systemone", litellm.JevPath);
+        Assert.Equal("jev-2.0.0", litellm.JevModel);
+    }
+
     [Theory]
     [InlineData("LiteLlm:BaseUrl", "litellm.example")]
     [InlineData("LiteLlm:ApiKey", null)]
     [InlineData("LiteLlm:ApiKey", "  ")]
+    [InlineData("LiteLlm:JevPath", "")]
+    [InlineData("LiteLlm:JevPath", "  ")]
+    [InlineData("LiteLlm:JevPath", "https://litellm.example/v1/systemone")]
+    [InlineData("LiteLlm:JevPath", "litellm.example:4000/v1/systemone")]
+    [InlineData("LiteLlm:JevPath", "//litellm.example/v1/systemone")]
+    [InlineData("LiteLlm:JevPath", "/v1/systemone")]
+    [InlineData("LiteLlm:JevPath", "\\v1\\systemone")]
+    [InlineData("LiteLlm:JevPath", "v1/systemone?model=jev")]
+    [InlineData("LiteLlm:JevPath", "v1/systemone#top")]
+    [InlineData("LiteLlm:JevPath", "v1/system one")]
+    [InlineData("LiteLlm:JevPath", "v1/systemone\n")]
+    [InlineData("LiteLlm:JevPath", "C:/v1")]
+    [InlineData("LiteLlm:JevPath", "file:x")]
+    [InlineData("LiteLlm:JevPath", "http:")]
+    [InlineData("LiteLlm:JevPath", "http:v1/systemone")]
+    [InlineData("LiteLlm:JevPath", "http://litellm.example:4000/v1/systemone")]
+    [InlineData("LiteLlm:JevPath", ".")]
+    [InlineData("LiteLlm:JevPath", "..")]
+    [InlineData("LiteLlm:JevPath", "../x")]
+    [InlineData("LiteLlm:JevPath", "%2e%2e/x")]
+    [InlineData("LiteLlm:JevPath", "a/%2E./x")]
+    [InlineData("LiteLlm:JevModel", "")]
+    [InlineData("LiteLlm:JevModel", "  ")]
+    [InlineData("LiteLlm:JevModel", "jev 1.14.0")]
+    [InlineData("LiteLlm:JevModel", " jev-1.14.0")]
+    [InlineData("LiteLlm:JevModel", "jev-1.14.0\n")]
+    [InlineData("LiteLlm:JevModel", "jev\t1.14.0")]
+    [InlineData("LiteLlm:JevModel", "jev-\u0007")]
     public void MissingOrInvalidLiteLlmSettings_FailAtStartup(string name, string? value)
     {
         Assert.Throws<InvalidOperationException>(() => Build(new()

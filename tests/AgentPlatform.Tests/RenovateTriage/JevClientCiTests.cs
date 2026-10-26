@@ -16,11 +16,13 @@ public class JevClientCiTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 
-    private static (JevClient Client, StubHttpHandler Handler) Create(Func<RecordedRequest, HttpResponseMessage> respond)
+    private static (JevClient Client, StubHttpHandler Handler) Create(Func<RecordedRequest, HttpResponseMessage> respond, Action<LiteLlmOptions>? configure = null)
     {
         var handler = new StubHttpHandler(respond);
         var http = new HttpClient(handler, disposeHandler: false);
-        var options = Options.Create(new LiteLlmOptions { BaseUrl = "http://litellm.example.test:4000", ApiKey = "sk-test-virtual" });
+        var litellm = new LiteLlmOptions { BaseUrl = "http://litellm.example.test:4000", ApiKey = "sk-test-virtual" };
+        configure?.Invoke(litellm);
+        var options = Options.Create(litellm);
         return (new JevClient(http, options, new FixedTime(Now)), handler);
     }
 
@@ -82,10 +84,10 @@ public class JevClientCiTests
         await client.ClassifyCiAsync("npm ERR! network timeout", Ct);
 
         var request = Assert.Single(handler.Requests);
-        Assert.Equal("http://litellm.example.test:4000/typesafe/v1/systemone", request.Uri.ToString());
+        Assert.Equal("http://litellm.example.test:4000/v1/systemone", request.Uri.ToString());
         Assert.Equal("Bearer sk-test-virtual", request.Authorization);
         var body = JsonNode.Parse(request.Body!)!.AsObject();
-        Assert.Equal("jev-latest", (string?)body["model"]);
+        Assert.Equal("jev-1.14.0", (string?)body["model"]);
         var state = body["state"]!.AsObject();
         Assert.Equal(["ci_logs", "current_date"], state.Select(p => p.Key));
         Assert.Equal("npm ERR! network timeout", (string?)state["ci_logs"]);
@@ -94,6 +96,24 @@ public class JevClientCiTests
         Assert.Equal(["ci_failure"], questions.Select(q => q.Key));
         Assert.Equal("choice", (string?)questions["ci_failure"]!["type"]);
         Assert.Equal(["flaky", "real", "unsure"], questions["ci_failure"]!["criteria"]!.AsObject().Select(c => c.Key));
+    }
+
+    [Fact]
+    public async Task ClassifyCi_PostsToTheConfiguredPathWithTheConfiguredModel()
+    {
+        var (client, handler) = Create(
+            _ => Answer("flaky"),
+            o =>
+            {
+                o.JevPath = "typesafe/v1/systemone";
+                o.JevModel = "jev-2.0.0";
+            });
+
+        await client.ClassifyCiAsync("log", Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("http://litellm.example.test:4000/typesafe/v1/systemone", request.Uri.ToString());
+        Assert.Equal("jev-2.0.0", (string?)JsonNode.Parse(request.Body!)!["model"]);
     }
 
     [Fact]
