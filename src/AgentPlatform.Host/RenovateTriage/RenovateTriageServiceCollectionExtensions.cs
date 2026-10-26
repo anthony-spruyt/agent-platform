@@ -74,6 +74,7 @@ public static class RenovateTriageServiceCollectionExtensions
         && IsPrintableWithoutWhitespace(path)
         && path[0] is not ('/' or '\\')
         && path.AsSpan().IndexOfAny('?', '#') < 0
+        && !path.Split('/', '\\')[0].Contains(':')
         && !path.Split('/', '\\').Any(segment => Uri.UnescapeDataString(segment) is "." or "..")
         && Uri.TryCreate(baseUrl, path, out var resolved)
         && resolved.Scheme == baseUrl.Scheme
