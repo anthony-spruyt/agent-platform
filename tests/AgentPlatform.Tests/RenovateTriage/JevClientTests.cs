@@ -81,7 +81,7 @@ public class JevClientTests
         await client.AskAsync("## Release notes\n- fix: \"quoted\" thing", null, Ct);
 
         var body = JsonNode.Parse(Assert.Single(handler.Requests).Body!)!.AsObject();
-        Assert.Equal("jev-1.14.0", (string?)body["model"]);
+        Assert.Equal(new LiteLlmOptions().JevModel, (string?)body["model"]);
         Assert.Equal("## Release notes\n- fix: \"quoted\" thing", (string?)body["state"]!["pr_body"]);
         Assert.Equal("2026-10-12T07:05:09.123Z", (string?)body["state"]!["current_date"]);
         var questions = body["questions"]!.AsObject();

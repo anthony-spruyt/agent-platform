@@ -15,7 +15,7 @@ public class TriageFactsTests
         Assert.Contains("#7", text, StringComparison.Ordinal);
         Assert.Contains(Sha, text, StringComparison.Ordinal);
         Assert.Contains("ci-failed", text, StringComparison.Ordinal);
-        Assert.Contains("2", text, StringComparison.Ordinal);
+        Assert.Contains("Failing CI jobs with a log tail below: 2", text, StringComparison.Ordinal);
     }
 
     [Fact]

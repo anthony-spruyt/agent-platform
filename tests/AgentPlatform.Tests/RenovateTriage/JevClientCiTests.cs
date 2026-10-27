@@ -87,7 +87,7 @@ public class JevClientCiTests
         Assert.Equal("http://litellm.example.test:4000/v1/systemone", request.Uri.ToString());
         Assert.Equal("Bearer sk-test-virtual", request.Authorization);
         var body = JsonNode.Parse(request.Body!)!.AsObject();
-        Assert.Equal("jev-1.14.0", (string?)body["model"]);
+        Assert.Equal(new LiteLlmOptions().JevModel, (string?)body["model"]);
         var state = body["state"]!.AsObject();
         Assert.Equal(["ci_logs", "current_date"], state.Select(p => p.Key));
         Assert.Equal("npm ERR! network timeout", (string?)state["ci_logs"]);
