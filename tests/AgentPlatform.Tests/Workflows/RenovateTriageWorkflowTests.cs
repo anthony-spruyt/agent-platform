@@ -1043,11 +1043,21 @@ public partial class RenovateTriageWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
+        const string editedBody = "The body after the scan: an edit that was never scanned.";
+        rig.Github.OnPullRequestRead = () =>
+        {
+            if (rig.Scanner.Scanned.Count > 0)
+            {
+                rig.Github.PullRequest = FakeGitHubApi.Renovate(body: editedBody);
+            }
+        };
 
         await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
 
         Assert.Contains(FakeGitHubApi.Body, rig.Scanner.Scanned);
-        Assert.Contains("This PR contains the following updates", Assert.Single(rig.Jev.Bodies), StringComparison.Ordinal);
+        var jevBody = Assert.Single(rig.Jev.Bodies);
+        Assert.Contains(FakeGitHubApi.Body, jevBody, StringComparison.Ordinal);
+        Assert.DoesNotContain(editedBody, jevBody, StringComparison.Ordinal);
     }
 
     [Fact]

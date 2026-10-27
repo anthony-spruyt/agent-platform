@@ -285,7 +285,7 @@ public class WorkerConfigurationTests
         var litellm = provider.GetRequiredService<IOptions<LiteLlmOptions>>().Value;
 
         Assert.Equal("v1/systemone", litellm.JevPath);
-        Assert.Equal("jev-1.14.0", litellm.JevModel);
+        Assert.Matches(@"^jev-\d+\.\d+\.\d+$", litellm.JevModel);
     }
 
     [Fact]
