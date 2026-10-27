@@ -6,7 +6,7 @@ public sealed class AgentPodsOptions
 
     // renovate: datasource=docker depName=ghcr.io/anthony-spruyt/claude-agent-read
     public const string DefaultImage =
-        "ghcr.io/anthony-spruyt/claude-agent-read:1.1.8@sha256:89f19f20404b47f775450eb84cdf9bba96414743417a98c1e49b6c802ec28885";
+        "ghcr.io/anthony-spruyt/claude-agent-read:1.1.9@sha256:eeba8710d1f991b794dca3ae6a017dab0826ef15c345e36698af44337460a425";
 
     public string Namespace { get; set; } = "agent-platform-agents";
 
