@@ -226,6 +226,13 @@ public class DiffShapeTests
     [InlineData("uses: o/a@{A} # v2.21.0", "uses: o/a@{B} # v2.21.1", "2.21.0>2.21.1", DiffShapeFailure.None)]
     [InlineData("uses: o/a@{A} # v2.21.0", "uses: o/a@{A} # v2.21.1", "2.21.0>2.21.1", DiffShapeFailure.CommentWithoutShaChange)]
     [InlineData("uses: o/a@{A} # v1.2.3-node20", "uses: o/a@{B} # v1.2.4-node20", "v1.2.3>v1.2.4", DiffShapeFailure.VersionNotStated)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{A} # release-1.2.4", "release-1.2.3>release-1.2.4", DiffShapeFailure.CommentWithoutShaChange)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{A} # release-1.2.4", "1.2.3>1.2.4", DiffShapeFailure.CommentWithoutShaChange)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.4", "release-1.2.3>release-1.2.4", DiffShapeFailure.None)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.4", "1.2.3>1.2.4", DiffShapeFailure.None)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.4", "other-1.2.3>other-1.2.4", DiffShapeFailure.VersionNotStated)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-v1.2.4", "release-1.2.3>release-1.2.4", DiffShapeFailure.VersionNotStated)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.3", null, DiffShapeFailure.None)]
     public void APinnedActionComment_ChangesOnlyTogetherWithItsSha(string oldLine, string newLine, string? rows, DiffShapeFailure expected)
     {
         var result = Line(oldLine.Replace("{A}", ShaA, StringComparison.Ordinal), newLine.Replace("{B}", ShaB, StringComparison.Ordinal).Replace("{A}", ShaA, StringComparison.Ordinal), rows);
@@ -648,7 +655,7 @@ public class DiffShapeTests
     [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14\"]", DiffShapeFailure.None)]
     [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.15\"]", DiffShapeFailure.VersionNotStated)]
     [InlineData("requires = [\"uv_build>=0.12,<0.14\"]", "requires = [\"uv_build>=0.13,<0.15\"]", DiffShapeFailure.VersionNotStated)]
-    [InlineData("requires = [\"uv_build>=0.11,<0.12\"]", "requires = [\"uv_build>=0.12,<0.13\"]", DiffShapeFailure.None)]
+    [InlineData("requires = [\"uv_build>=0.11,<0.12\"]", "requires = [\"uv_build>=0.12,<0.13\"]", DiffShapeFailure.VersionNotStated)]
     [InlineData("requires = [\"uv_build>=0.12,<0.13\", \"x>=1.5\"]", "requires = [\"uv_build>=0.13,<0.14\", \"x>=1.6\"]", DiffShapeFailure.VersionNotStated)]
     [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14.0\"]", DiffShapeFailure.VersionNotStated)]
     [InlineData("requires = [\"uv_build>=0.12,<0.13,!=0.14\"]", "requires = [\"uv_build>=0.13,<0.14,!=0.15\"]", DiffShapeFailure.VersionNotStated)]
@@ -694,11 +701,14 @@ public class DiffShapeTests
         Assert.Equal(DiffShapeFailure.NotAVersionChange, Line(oldLine, newLine, "24.22.1>26.12.0", datasource: "github-releases").Failure);
     }
 
-    [Fact]
-    public void AQuotedWholeNumber_FollowsTheSubjectVersionLikeAnyOtherSinglePartToken()
+    [Theory]
+    [InlineData("node-version: \"24\"", "node-version: \"26\"")]
+    [InlineData("\"timeout\": \"300\"", "\"timeout\": \"26\"")]
+    public void AQuotedWholeNumber_NeedsATableRowEvenWhenItEqualsTheSubjectVersion(string oldLine, string newLine)
     {
-        Assert.True(Line("node-version: \"24\"", "node-version: \"26\"", subject: "chore(deps): update dependency node to v26").Passed);
-        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("node-version: \"24\"", "node-version: \"26\"", subject: "chore(deps): update dependency node to v27").Failure);
+        var result = Line(oldLine, newLine, subject: "chore(deps): update dependency node to v26");
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
     }
 
     [Theory]
@@ -711,6 +721,15 @@ public class DiffShapeTests
     public void APep440Suffix_IsPartOfTheVersion(string oldLine, string newLine, string rows)
     {
         Assert.True(Line(oldLine, newLine, rows, datasource: "pypi").Passed);
+    }
+
+    [Theory]
+    [InlineData("pkg==2.9.0 \\", "pkg==2.9.0.dev4 \\", "2.9.0.dev3>2.9.0.dev4")]
+    [InlineData("pkg==2.9.0 \\", "pkg==2.9.0.post1 \\", "2.9.0.post0>2.9.0.post1")]
+    [InlineData("pkg==2.9 \\", "pkg==2.9.1 \\", "2.9.dev1>2.9.1")]
+    public void AShortenedVersion_FailsWhenTheRowContinuesWithAPep440SuffixInsteadOfANumber(string oldLine, string newLine, string rows)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, rows, datasource: "pypi").Failure);
     }
 
     [Fact]
@@ -796,6 +815,15 @@ public class DiffShapeTests
         Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
     }
 
+    [Theory]
+    [InlineData("ref: release-v1.2.3", "ref: release-v1.2.4", "release-1.2.3>release-1.2.4")]
+    [InlineData("ref: release-1.2.3", "ref: release-1.2.4", "release-v1.2.3>release-v1.2.4")]
+    [InlineData("ref: release-v1.2.3", "ref: release-1.2.4", "release-v1.2.3>release-v1.2.4")]
+    public void AVersionWithANamePrefix_FailsWhenTheLineAndTheRowDisagreeOnTheVBeforeTheNumbers(string oldLine, string newLine, string rows)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, rows, datasource: "github-tags").Failure);
+    }
+
     [Fact]
     public void AVersionAfterAPathSeparator_IsNotAPrefixedVersion()
     {
@@ -808,12 +836,15 @@ public class DiffShapeTests
     [InlineData("\"@types/node\": \"^24.12.2\"", "\"@types/node\": \"^26.0.0\"", "24.19.2>26.6.5")]
     [InlineData("version = \"~> 2.38\"", "version = \"~> 3.0\"", "2.38.0>3.4.0")]
     [InlineData("version = \"~>2.38\"", "version = \"~>3.0\"", "2.38.0>3.4.0")]
-    [InlineData("\"a\": \"~24.12.2\"", "\"a\": \"~26.0.0\"", "24.19.2>26.6.5")]
+    [InlineData("\"a\": \"~24.19.0\"", "\"a\": \"~26.6.0\"", "24.19.2>26.6.5")]
+    [InlineData("\"a\": \"^0.12.0\"", "\"a\": \"^0.13.0\"", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \"~> 1.2.0\"", "\"a\": \"~> 1.2.1\"", "1.2.3>1.2.4")]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14\"]", "0.12.24>0.13.0")]
     [InlineData("requires = \">=24.12\"", "requires = \">=26.0\"", "24.19.2>26.6.5")]
     [InlineData("\"a\": \"^24.9.0\"", "\"a\": \"^26.0.0\"", "24.10.0>26.6.5")]
     [InlineData("\"a\": \"^24.19.2\"", "\"a\": \"^26.6.5\"", "24.19.2>26.6.5")]
     [InlineData("\"a\": \"^v24.12.2\"", "\"a\": \"^v26.0.0\"", "v24.19.2>v26.6.5")]
-    public void ARangeLowerBound_PassesWhenItStaysInTheStatedMajorsAndNotAboveTheStatedVersions(string oldLine, string newLine, string rows)
+    public void ARangeLowerBound_PassesWhenItMovesUpAndEachRangeIncludesItsStatedVersion(string oldLine, string newLine, string rows)
     {
         Assert.True(Line(oldLine, newLine, rows, datasource: "npm").Passed);
     }
@@ -834,6 +865,27 @@ public class DiffShapeTests
     public void ARangeLowerBound_FailsWhenABoundIsAboveTheStatedVersionOrInAnotherMajor(string oldLine, string newLine)
     {
         Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, "24.19.2>26.6.5", datasource: "npm").Failure);
+    }
+
+    [Theory]
+    [InlineData("\"a\": \"~24.1.0\"", "\"a\": \"~24.2.0\"", "24.19.2>24.20.0")]
+    [InlineData("\"a\": \"^24.19.0\"", "\"a\": \"^24.0.0\"", "24.19.2>24.20.0")]
+    [InlineData("\"a\": \"^0.1.0\"", "\"a\": \"^0.12.0\"", "0.12.24>0.13.0")]
+    [InlineData("expr: up>=0.5", "expr: up>=0.9", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \"~> 1.2.0\"", "\"a\": \"~> 1.0.0\"", "1.2.3>1.2.4")]
+    [InlineData("\"a\": \"~1.2.0\"", "\"a\": \"~1.5.0\"", "1.2.3>1.9.0")]
+    [InlineData("\"a\": \"~> 1.2.0\"", "\"a\": \"~> 1.3.0\"", "1.2.3>1.4.0")]
+    [InlineData("\"a\": \"^0.12.0\"", "\"a\": \"^0.1.0\"", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \">=0.12\"", "\"a\": \">=0.2\"", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \"^24.19.2\"", "\"a\": \"^24.0.0\"", "24.19.2>24.20.0")]
+    [InlineData("version = \"~> 2.38\"", "version = \"~> 2.1\"", "2.38.0>2.39.0")]
+    [InlineData("\"a\": \"~24.12.2\"", "\"a\": \"~26.0.0\"", "24.19.2>26.6.5")]
+    [InlineData("\"a\": \"~24.1.0\"", "\"a\": \"~24.20.0\"", "24.19.2>24.20.0")]
+    [InlineData("\"a\": \"~24.19.0\"", "\"a\": \"~24.20.0\"", "24.19.2>24.21.0")]
+    [InlineData("\"a\": \"^24.19.2\"", "\"a\": \"^24.19.2.0\"", "24.19.2>24.20.0")]
+    public void ARangeLowerBound_FailsWhenItDoesNotMoveUpOrARangeExcludesItsStatedVersion(string oldLine, string newLine, string rows)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, rows, datasource: "npm").Failure);
     }
 
     [Theory]

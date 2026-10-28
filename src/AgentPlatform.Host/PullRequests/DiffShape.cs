@@ -41,6 +41,7 @@ public static partial class DiffShape
     private const string UsesShaContext = "uses-sha";
     private const string UsesCommentContext = "uses-comment";
     private const string ImageTagContext = "image-tag";
+    private const string QuotedNumberContext = "quoted-number";
 
     private static readonly HashSet<string> _lockfiles = new(StringComparer.Ordinal)
     {
@@ -316,7 +317,8 @@ public static partial class DiffShape
                 continue;
             }
 
-            tokens.Add(new Token(match.Index, match.Index + match.Length, kind, match.Value));
+            var context = kind == Kind.Single ? QuotedNumberContext : null;
+            tokens.Add(new Token(match.Index, match.Index + match.Length, kind, match.Value, context));
             occupied.Add((match.Index, match.Index + match.Length));
         }
 
@@ -392,7 +394,7 @@ public static partial class DiffShape
                 : rows.Any(r => MajorOf(r.From) == StripV(pair.Old) && MajorOf(r.To) == StripV(pair.New));
         }
 
-        if (stated.SubjectVersion is not { } version)
+        if (stated.SubjectVersion is not { } version || pair.Context == QuotedNumberContext)
         {
             return false;
         }
@@ -407,7 +409,8 @@ public static partial class DiffShape
         || StatesRangeLowerBound(pair, row);
 
     private static bool IsDotPrefix(string prefix, string version) =>
-        version.StartsWith(prefix, StringComparison.Ordinal) && (version.Length == prefix.Length || version[prefix.Length] == '.');
+        version.StartsWith(prefix, StringComparison.Ordinal)
+        && (version.Length == prefix.Length || (version[prefix.Length] == '.' && version.Length > prefix.Length + 1 && char.IsAsciiDigit(version[prefix.Length + 1])));
 
     private static bool TakeRangeUpperBound(VersionPair pair, List<VersionPair> statedPairs, HashSet<VersionPair> bounded)
     {
@@ -457,8 +460,8 @@ public static partial class DiffShape
         && SplitDashPrefix(row.To) is { } to
         && string.Equals(from.Prefix, to.Prefix, StringComparison.Ordinal)
         && pair.Head.EndsWith(from.Prefix, StringComparison.Ordinal)
-        && IsDotPrefix(StripV(pair.Old), StripV(from.Version))
-        && IsDotPrefix(StripV(pair.New), StripV(to.Version));
+        && IsDotPrefix(pair.Old, from.Version)
+        && IsDotPrefix(pair.New, to.Version);
 
     private static (string Prefix, string Version)? SplitDashPrefix(string value)
     {
@@ -474,26 +477,42 @@ public static partial class DiffShape
     }
 
     private static bool StatesRangeLowerBound(VersionPair pair, StatedVersion row) =>
-        RangeOperatorEnd().IsMatch(pair.Head) && IsSameMajorAndNotAbove(pair.Old, row.From) && IsSameMajorAndNotAbove(pair.New, row.To);
+        RangeOperatorEnd().Match(pair.Head) is { Success: true } range
+        && DottedNumbers(pair.Old) is { } oldBound
+        && DottedNumbers(pair.New) is { } newBound
+        && DottedNumbers(row.From) is { } from
+        && DottedNumbers(row.To) is { } to
+        && CompareParts(newBound, oldBound) > 0
+        && RangeIncludes(range.Groups["op"].Value, oldBound, from)
+        && RangeIncludes(range.Groups["op"].Value, newBound, to);
 
-    private static bool IsSameMajorAndNotAbove(string bound, string stated)
+    private static bool RangeIncludes(string op, int[] bound, int[] version) =>
+        CompareParts(version, bound) >= 0
+        && Enumerable.Range(0, FixedParts(op, bound)).All(i => PartAt(version, i) == PartAt(bound, i));
+
+    private static int FixedParts(string op, int[] bound) => op switch
     {
-        if (DottedNumbers(bound) is not { } low || DottedNumbers(stated) is not { } high || low[0] != high[0])
-        {
-            return false;
-        }
+        "^" => Array.FindIndex(bound, part => part != 0) switch { < 0 => bound.Length, var first => first + 1 },
+        "~" => Math.Min(2, bound.Length),
+        "~>" => Math.Max(1, bound.Length - 1),
+        _ => bound[0] == 0 ? 2 : 1,
+    };
 
-        for (var i = 0; i < Math.Max(low.Length, high.Length); i++)
+    private static int CompareParts(int[] left, int[] right)
+    {
+        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
         {
-            var (lowPart, highPart) = (i < low.Length ? low[i] : 0, i < high.Length ? high[i] : 0);
-            if (lowPart != highPart)
+            var order = PartAt(left, i).CompareTo(PartAt(right, i));
+            if (order != 0)
             {
-                return lowPart < highPart;
+                return order;
             }
         }
 
-        return true;
+        return 0;
     }
+
+    private static int PartAt(int[] parts, int index) => index < parts.Length ? parts[index] : 0;
 
     private static int[]? DottedNumbers(string version)
     {
@@ -592,7 +611,7 @@ public static partial class DiffShape
     [GeneratedRegex(@"^\s*(?:require\s+)?(?<mod>\S*[./]\S*)\s+(?<ver>v\S+)\s+// indirect\r?$", RegexOptions.CultureInvariant)]
     private static partial Regex GoIndirectRequire();
 
-    [GeneratedRegex(@"uses:\s*""?[\w.-]+/[^@\s""]+@(?<sha>[0-9a-f]{40})""?\s*#\s*(?<ver>v?[0-9]+(?:\.[0-9]+)*(?:[-+][\w.]+)*)\s*$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"uses:\s*""?[\w.-]+/[^@\s""]+@(?<sha>[0-9a-f]{40})""?\s*#\s*(?:[\w.]+-)??(?<ver>v?[0-9]+(?:\.[0-9]+)*(?:[-+][\w.]+)*)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex UsesPin();
 
     [GeneratedRegex(@"(?<![\w./:@-])(?<name>(?:[a-z0-9][a-z0-9.-]*(?::[0-9]+)?/)?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*)(?<!(?:^|[^\w.-])sha256):(?<tag>\w[\w.+-]{0,127}?)(?<dig>@sha256:[0-9a-f]{64})?(?![\w.+-])", RegexOptions.CultureInvariant)]
@@ -604,7 +623,7 @@ public static partial class DiffShape
     [GeneratedRegex(@"^v?[0-9]+(?:\.[0-9]+)+(?:[-+][\w.]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex MultiPartFull();
 
-    [GeneratedRegex(@"(?:\^|~|~> ?|>=)$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?:(?<op>\^|~|>=)|(?<op>~>) ?)$", RegexOptions.CultureInvariant)]
     private static partial Regex RangeOperatorEnd();
 
     [GeneratedRegex(@"^v?[0-9]+(?:[-+][\w.]+)*$", RegexOptions.CultureInvariant)]
