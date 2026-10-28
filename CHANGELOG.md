@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.1...v1.20.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **triage:** re-check CI on a timer while waiting ([#205](https://github.com/anthony-spruyt/agent-platform/issues/205)) ([2308c12](https://github.com/anthony-spruyt/agent-platform/commit/2308c12473663504169eb4c91cae9936cd120934))
+
 ## [1.20.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.0...v1.20.1) (2026-10-28)
 
 
