@@ -9,7 +9,7 @@ namespace AgentPlatform.Host.RenovateTriage;
 
 public sealed record QueueInput(string Repo, int PrNumber, string HeadSha, string Reason);
 
-public sealed record QueueResult(bool HeadMoved, string Model, bool NotLive = false);
+public sealed record QueueResult(bool HeadMoved, string Model, bool NotLive = false, bool Security = false);
 
 public sealed record ReadHeadInput(string Repo, int PrNumber);
 
@@ -41,7 +41,7 @@ public sealed class ClaudeRungActivities(IGitHubApiClient github, TriagePendingS
             await github.SetExclusiveLabelAsync(input.Repo, input.PrNumber, TriageRules.VerdictLabels, TriageRules.NeedsTriageLabel, cancellationToken).ConfigureAwait(false);
             var sticky = await TriageSticky.FindAsync(github, input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
             await TriageSticky.UpsertAsync(github, input.Repo, input.PrNumber, sticky, StickyComment.Queued(input.Reason), cancellationToken).ConfigureAwait(false);
-            return new QueueResult(false, pods.Model);
+            return new QueueResult(false, pods.Model, Security: TriageRules.IsSecurity(pr.Labels));
         });
 
     [Activity(ReadHeadName)]
