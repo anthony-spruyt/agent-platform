@@ -42,8 +42,8 @@ public class DiffShapeTests
             headReread,
             (commits ?? [new DiffCommit(Head, message ?? DefaultSubject)]).LastOrDefault()?.Message ?? string.Empty);
 
-    private static DiffShapeResult Line(string oldLine, string newLine, string? rows = null, string subject = DefaultSubject) =>
-        Classify([new DiffFile("values.yaml", "modified", Patch((oldLine, newLine)))], Message(subject, rows));
+    private static DiffShapeResult Line(string oldLine, string newLine, string? rows = null, string subject = DefaultSubject, string datasource = "docker") =>
+        Classify([new DiffFile("values.yaml", "modified", Patch((oldLine, newLine)))], Message(subject, rows, datasource));
 
     private static DiffShapeResult Lines(string? rows, string subject, params (string Old, string New)[] lines) =>
         Classify([new DiffFile("values.yaml", "modified", Patch(lines))], Message(subject, rows));
@@ -226,6 +226,15 @@ public class DiffShapeTests
     [InlineData("uses: o/a@{A} # v2.21.0", "uses: o/a@{B} # v2.21.1", "2.21.0>2.21.1", DiffShapeFailure.None)]
     [InlineData("uses: o/a@{A} # v2.21.0", "uses: o/a@{A} # v2.21.1", "2.21.0>2.21.1", DiffShapeFailure.CommentWithoutShaChange)]
     [InlineData("uses: o/a@{A} # v1.2.3-node20", "uses: o/a@{B} # v1.2.4-node20", "v1.2.3>v1.2.4", DiffShapeFailure.VersionNotStated)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{A} # release-1.2.4", "release-1.2.3>release-1.2.4", DiffShapeFailure.CommentWithoutShaChange)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{A} # release-1.2.4", "1.2.3>1.2.4", DiffShapeFailure.CommentWithoutShaChange)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.4", "release-1.2.3>release-1.2.4", DiffShapeFailure.None)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.4", "1.2.3>1.2.4", DiffShapeFailure.None)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.4", "other-1.2.3>other-1.2.4", DiffShapeFailure.VersionNotStated)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-v1.2.4", "release-1.2.3>release-1.2.4", DiffShapeFailure.VersionNotStated)]
+    [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.3", null, DiffShapeFailure.None)]
+    [InlineData("uses: o/a@{A} # foo-bar-1.2.3", "uses: o/a@{A} # foo-bar-1.2.4", "foo-bar-1.2.3>foo-bar-1.2.4", DiffShapeFailure.CommentWithoutShaChange)]
+    [InlineData("uses: o/a@{A} # foo-bar-1.2.3", "uses: o/a@{B} # foo-bar-1.2.4", "foo-bar-1.2.3>foo-bar-1.2.4", DiffShapeFailure.None)]
     public void APinnedActionComment_ChangesOnlyTogetherWithItsSha(string oldLine, string newLine, string? rows, DiffShapeFailure expected)
     {
         var result = Line(oldLine.Replace("{A}", ShaA, StringComparison.Ordinal), newLine.Replace("{B}", ShaB, StringComparison.Ordinal).Replace("{A}", ShaA, StringComparison.Ordinal), rows);
@@ -352,9 +361,9 @@ public class DiffShapeTests
     }
 
     [Fact]
-    public void ASuffixedVersionOutsideAnImageTag_MustEqualTheRowExactly()
+    public void ASuffixedNonDockerVersionOutsideAnImageTag_MustEqualTheRowExactly()
     {
-        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("version: 1.2.3-rc.1", "version: 1.2.4-rc.1", "1.2.3>1.2.4").Failure);
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("version: 1.2.3-rc.1", "version: 1.2.4-rc.1", "1.2.3>1.2.4", datasource: "github-releases").Failure);
     }
 
     [Fact]
@@ -374,6 +383,10 @@ public class DiffShapeTests
     [InlineData("a: 1.2.3.", "a: 1.2.4.")]
     [InlineData("a: 1.2.3_x", "a: 1.2.4_x")]
     [InlineData("a: 1.2.3a", "a: 1.2.4a")]
+    [InlineData("a: 1.2.3.post", "a: 1.2.4.post")]
+    [InlineData("a: 1.2.3.dev", "a: 1.2.4.dev")]
+    [InlineData("a: 1.2.3c1", "a: 1.2.4c1")]
+    [InlineData("a: 1.2.3.post1.dev2", "a: 1.2.4.post1.dev2")]
     public void ANumberTouchingALetterDigitUnderscoreOrDot_IsNotAVersionToken(string oldLine, string newLine)
     {
         Assert.Equal(DiffShapeFailure.NotAVersionChange, Line(oldLine, newLine, "1.2.3>1.2.4|3.13>3.14").Failure);
@@ -592,6 +605,25 @@ public class DiffShapeTests
     }
 
     [Fact]
+    public void APackageRenamedBesideAVersionBump_IsNotAVersionChange()
+    {
+        var result = Requirements(["markdown==3.11 \\", Hash('1')], ["Markdown==3.11.1 \\", Hash('2')], "3.11>3.11.1");
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+    }
+
+    [Fact]
+    public void AnImageRepositoryChange_BesideTheStatedTag_IsNotAVersionChange()
+    {
+        var result = Lines(
+            null,
+            "chore(deps): replace container image ghcr.io/unpoller/unpoller to v5.7.0",
+            ("repository: ghcr.io/unpoller/unpoller", "repository: docker.io/golift/unifi-poller"));
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+    }
+
+    [Fact]
     public void APipPinWithCrlfLineEndings_PassesWhenThePinIsStated()
     {
         var result = Requirements(
@@ -642,6 +674,241 @@ public class DiffShapeTests
         var result = Line("pins: foo==1.0 bar==1.1", "pins: foo==1.1 bar==1.2", "1.0>1.1");
 
         Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("node-version: \"24\"", "node-version: \"26\"")]
+    [InlineData("python-version: \"v3\"", "python-version: \"v4\"")]
+    public void AQuotedWholeNumber_PassesWhenTheRowStatesItsMajors(string oldLine, string newLine)
+    {
+        Assert.True(Line(oldLine, newLine, "24.22.1>26.12.0|3.14.8>4.0.0", datasource: "github-releases").Passed);
+    }
+
+    [Theory]
+    [InlineData("node-version: \"24\"", "node-version: \"25\"")]
+    [InlineData("node-version: \"23\"", "node-version: \"26\"")]
+    [InlineData("node-version: \"26\"", "node-version: \"24\"")]
+    public void AQuotedWholeNumber_FailsWhenItIsNotTheStatedMajors(string oldLine, string newLine)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, "24.22.1>26.12.0", datasource: "github-releases").Failure);
+    }
+
+    [Theory]
+    [InlineData("node-version: \"24.x\"", "node-version: \"26.x\"")]
+    [InlineData("node-version: \"x24\"", "node-version: \"x26\"")]
+    [InlineData("node-version: \"24 \"", "node-version: \"26 \"")]
+    [InlineData("node-version: 24", "node-version: 26")]
+    public void ANumberThatIsNotAWholeQuotedValue_IsNotAVersionToken(string oldLine, string newLine)
+    {
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, Line(oldLine, newLine, "24.22.1>26.12.0", datasource: "github-releases").Failure);
+    }
+
+    [Theory]
+    [InlineData("node-version: \"24\"", "node-version: \"26\"")]
+    [InlineData("\"timeout\": \"300\"", "\"timeout\": \"26\"")]
+    public void AQuotedWholeNumber_NeedsATableRowEvenWhenItEqualsTheSubjectVersion(string oldLine, string newLine)
+    {
+        var result = Line(oldLine, newLine, subject: "chore(deps): update dependency node to v26");
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("pkg==2.9.0.post0 \\", "pkg==3.0.0 \\", "2.9.0.post0>3.0.0")]
+    [InlineData("pkg==2.9.0.dev3 \\", "pkg==2.9.0 \\", "2.9.0.dev3>2.9.0")]
+    [InlineData("pkg==1.0a1 \\", "pkg==1.0 \\", "1.0a1>1.0")]
+    [InlineData("pkg==1.0.0b2 \\", "pkg==1.0.0 \\", "1.0.0b2>1.0.0")]
+    [InlineData("pkg==1.0rc1 \\", "pkg==1.0 \\", "1.0rc1>1.0")]
+    [InlineData("pkg==1.0.0 \\", "pkg==1.1.0rc1 \\", "1.0.0>1.1.0rc1")]
+    public void APep440Suffix_IsPartOfTheVersion(string oldLine, string newLine, string rows)
+    {
+        Assert.True(Line(oldLine, newLine, rows, datasource: "pypi").Passed);
+    }
+
+    [Theory]
+    [InlineData("pkg==2.9.0 \\", "pkg==2.9.0.dev4 \\", "2.9.0.dev3>2.9.0.dev4")]
+    [InlineData("pkg==2.9.0 \\", "pkg==2.9.0.post1 \\", "2.9.0.post0>2.9.0.post1")]
+    [InlineData("pkg==2.9 \\", "pkg==2.9.1 \\", "2.9.dev1>2.9.1")]
+    public void AShortenedVersion_FailsWhenTheRowContinuesWithAPep440SuffixInsteadOfANumber(string oldLine, string newLine, string rows)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, rows, datasource: "pypi").Failure);
+    }
+
+    [Fact]
+    public void APep440Suffix_MustBeStatedByTheRow()
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("pkg==2.9.0.post0 \\", "pkg==3.0.0 \\", "2.9.0>3.0.0", datasource: "pypi").Failure);
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("pkg==2.9.0.post0 \\", "pkg==3.0.0 \\", "2.9.0.post1>3.0.0", datasource: "pypi").Failure);
+    }
+
+    [Theory]
+    [InlineData("ARG PYTHON_VERSION=3.14-slim@{1}", "ARG PYTHON_VERSION=3.15-slim@{2}", "3.14>3.15")]
+    [InlineData("tag: \"1.8.0-wine@{1}\"", "tag: \"1.8.1-wine@{2}\"", "1.8.0>1.8.1")]
+    [InlineData("ARG V=v3.14.8-slim", "ARG V=v3.15.0-slim", "3.14.8>3.15.0")]
+    public void ASuffixedVersionOutsideAnImageReference_PassesAgainstADockerRow(string oldLine, string newLine, string rows)
+    {
+        var result = Line(
+            oldLine.Replace("{1}", _digestOne, StringComparison.Ordinal),
+            newLine.Replace("{2}", _digestTwo, StringComparison.Ordinal),
+            rows);
+
+        Assert.True(result.Passed);
+    }
+
+    [Theory]
+    [InlineData("3.14-slim", "3.15-alpine")]
+    [InlineData("3.14-slim", "3.15")]
+    [InlineData("3.14", "3.15-slim")]
+    [InlineData("3.14-slim", "3.16-slim")]
+    [InlineData("3.13-slim", "3.15-slim")]
+    [InlineData("3.14-slim", "3.15-slim-bookworm")]
+    public void ASuffixedVersionOutsideAnImageReference_FailsWhenTheSuffixOrNumberDoesNotMatchTheRow(string oldTag, string newTag)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line($"ARG V={oldTag}", $"ARG V={newTag}", "3.14>3.15").Failure);
+    }
+
+    [Theory]
+    [InlineData("github-releases")]
+    [InlineData("github-tags")]
+    [InlineData("pypi")]
+    [InlineData("npm")]
+    [InlineData("terraform-provider")]
+    public void ASuffixedVersionOutsideAnImageReference_FailsAgainstARowThatIsNotDocker(string datasource)
+    {
+        var result = Line("ARG PYTHON_VERSION=3.14-slim", "ARG PYTHON_VERSION=3.15-slim", "3.14>3.15", datasource: datasource);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("- https://h/autoscaler/vertical-pod-autoscaler-1.8.0/crd.yaml", "- https://h/autoscaler/vertical-pod-autoscaler-1.8.1/crd.yaml", "vertical-pod-autoscaler-1.8.0>vertical-pod-autoscaler-1.8.1")]
+    [InlineData("ref: release-v1.2.3", "ref: release-v1.2.4", "release-v1.2.3>release-v1.2.4")]
+    [InlineData("ref: release-1.2", "ref: release-1.3", "release-1.2.3>release-1.3.0")]
+    [InlineData("ref: a-b-1.2.3", "ref: a-b-1.2.4", "a-b-1.2.3>a-b-1.2.4")]
+    public void AVersionWithANamePrefix_PassesWhenTheRowStatesTheSamePrefixBeforeItsNumbers(string oldLine, string newLine, string rows)
+    {
+        Assert.True(Line(oldLine, newLine, rows, datasource: "github-tags").Passed);
+    }
+
+    [Theory]
+    [InlineData("url: https://h/autoscaler/1.8.0/crd.yaml", "url: https://h/autoscaler/1.8.1/crd.yaml")]
+    [InlineData("url: https://h/other-1.8.0/crd.yaml", "url: https://h/other-1.8.1/crd.yaml")]
+    [InlineData("url: https://h/vertical-pod-autoscaler-x/1.8.0", "url: https://h/vertical-pod-autoscaler-x/1.8.1")]
+    [InlineData("url: https://h/vertical-pod-autoscaler-1.9.0/crd.yaml", "url: https://h/vertical-pod-autoscaler-1.9.1/crd.yaml")]
+    [InlineData("url: https://h/vertical-pod-autoscaler-1.8.0/crd.yaml", "url: https://h/vertical-pod-autoscaler-1.8.2/crd.yaml")]
+    [InlineData("url: https://h/vertical-pod-autoscaler-1.7.0/crd.yaml", "url: https://h/vertical-pod-autoscaler-1.8.1/crd.yaml")]
+    public void AVersionWithANamePrefix_FailsWhenThePrefixIsNotRightBeforeTheMatchingNumbers(string oldLine, string newLine)
+    {
+        var result = Line(oldLine, newLine, "vertical-pod-autoscaler-1.8.0>vertical-pod-autoscaler-1.8.1", datasource: "github-tags");
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("vertical-pod-autoscaler-1.8.0>autoscaler-1.8.1")]
+    [InlineData("vertical-pod-autoscaler-1.8.0>1.8.1")]
+    [InlineData("1.8.0>vertical-pod-autoscaler-1.8.1")]
+    [InlineData("vertical-pod-autoscaler/1.8.0>vertical-pod-autoscaler/1.8.1")]
+    [InlineData("vertical-pod-autoscaler-next>vertical-pod-autoscaler-nexus")]
+    public void AVersionWithANamePrefix_FailsWhenTheRowsDoNotShareAPrefixEndingInADashBeforeAVersion(string rows)
+    {
+        var result = Line("ref: x/vertical-pod-autoscaler-1.8.0", "ref: x/vertical-pod-autoscaler-1.8.1", rows, datasource: "github-tags");
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("ref: release-v1.2.3", "ref: release-v1.2.4", "release-1.2.3>release-1.2.4")]
+    [InlineData("ref: release-1.2.3", "ref: release-1.2.4", "release-v1.2.3>release-v1.2.4")]
+    [InlineData("ref: release-v1.2.3", "ref: release-1.2.4", "release-v1.2.3>release-v1.2.4")]
+    public void AVersionWithANamePrefix_FailsWhenTheLineAndTheRowDisagreeOnTheVBeforeTheNumbers(string oldLine, string newLine, string rows)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, rows, datasource: "github-tags").Failure);
+    }
+
+    [Fact]
+    public void AVersionAfterAPathSeparator_IsNotAPrefixedVersion()
+    {
+        var result = Line("ref: x/releases/1.8.0", "ref: x/releases/1.8.1", "releases/1.8.0>releases/1.8.1", datasource: "github-tags");
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("\"@types/node\": \"^24.12.2\"", "\"@types/node\": \"^26.0.0\"", "24.19.2>26.6.5")]
+    [InlineData("version = \"~> 2.38\"", "version = \"~> 3.0\"", "2.38.0>3.4.0")]
+    [InlineData("version = \"~>2.38\"", "version = \"~>3.0\"", "2.38.0>3.4.0")]
+    [InlineData("\"a\": \"~24.19.0\"", "\"a\": \"~26.6.0\"", "24.19.2>26.6.5")]
+    [InlineData("\"a\": \"^0.12.0\"", "\"a\": \"^0.13.0\"", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \"~> 1.2.0\"", "\"a\": \"~> 1.2.1\"", "1.2.3>1.2.4")]
+    [InlineData("requires = [\"uv_build>=0.12,<0.13\"]", "requires = [\"uv_build>=0.13,<0.14\"]", "0.12.24>0.13.0")]
+    [InlineData("requires = \">=24.12\"", "requires = \">=26.0\"", "24.19.2>26.6.5")]
+    [InlineData("\"a\": \"^24.9.0\"", "\"a\": \"^26.0.0\"", "24.10.0>26.6.5")]
+    [InlineData("\"a\": \"^24.19.2\"", "\"a\": \"^26.6.5\"", "24.19.2>26.6.5")]
+    [InlineData("\"a\": \"^v24.12.2\"", "\"a\": \"^v26.0.0\"", "v24.19.2>v26.6.5")]
+    public void ARangeLowerBound_PassesWhenItMovesUpAndEachRangeIncludesItsStatedVersion(string oldLine, string newLine, string rows)
+    {
+        Assert.True(Line(oldLine, newLine, rows, datasource: "npm").Passed);
+    }
+
+    [Theory]
+    [InlineData("\"a\": \"^24.12.2\"", "\"a\": \"^26.7.0\"")]
+    [InlineData("\"a\": \"^24.12.2\"", "\"a\": \"^26.6.6\"")]
+    [InlineData("\"a\": \"^24.12.2\"", "\"a\": \"^26.6.5.1\"")]
+    [InlineData("\"a\": \"^24.12.2\"", "\"a\": \"^25.0.0\"")]
+    [InlineData("\"a\": \"^24.12.2\"", "\"a\": \"^27.0.0\"")]
+    [InlineData("\"a\": \"^24.20.0\"", "\"a\": \"^26.0.0\"")]
+    [InlineData("\"a\": \"^24.19.2.1\"", "\"a\": \"^26.0.0\"")]
+    [InlineData("\"a\": \"^23.0.0\"", "\"a\": \"^26.0.0\"")]
+    [InlineData("\"a\": \"^25.0.0\"", "\"a\": \"^26.0.0\"")]
+    [InlineData("\"a\": \"^24.12.2-rc.1\"", "\"a\": \"^26.0.0\"")]
+    [InlineData("\"a\": \"^24.12.2\"", "\"a\": \"^26.0.0-rc.1\"")]
+    [InlineData("\"a\": \"^26.0.0\"", "\"a\": \"^24.12.2\"")]
+    public void ARangeLowerBound_FailsWhenABoundIsAboveTheStatedVersionOrInAnotherMajor(string oldLine, string newLine)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, "24.19.2>26.6.5", datasource: "npm").Failure);
+    }
+
+    [Theory]
+    [InlineData("\"a\": \"~24.1.0\"", "\"a\": \"~24.2.0\"", "24.19.2>24.20.0")]
+    [InlineData("\"a\": \"^24.19.0\"", "\"a\": \"^24.0.0\"", "24.19.2>24.20.0")]
+    [InlineData("\"a\": \"^0.1.0\"", "\"a\": \"^0.12.0\"", "0.12.24>0.13.0")]
+    [InlineData("expr: up>=0.5", "expr: up>=0.9", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \"~> 1.2.0\"", "\"a\": \"~> 1.0.0\"", "1.2.3>1.2.4")]
+    [InlineData("\"a\": \"~1.2.0\"", "\"a\": \"~1.5.0\"", "1.2.3>1.9.0")]
+    [InlineData("\"a\": \"~> 1.2.0\"", "\"a\": \"~> 1.3.0\"", "1.2.3>1.4.0")]
+    [InlineData("\"a\": \"^0.12.0\"", "\"a\": \"^0.1.0\"", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \">=0.12\"", "\"a\": \">=0.2\"", "0.12.24>0.13.0")]
+    [InlineData("\"a\": \"^24.19.2\"", "\"a\": \"^24.0.0\"", "24.19.2>24.20.0")]
+    [InlineData("version = \"~> 2.38\"", "version = \"~> 2.1\"", "2.38.0>2.39.0")]
+    [InlineData("\"a\": \"~24.12.2\"", "\"a\": \"~26.0.0\"", "24.19.2>26.6.5")]
+    [InlineData("\"a\": \"~24.1.0\"", "\"a\": \"~24.20.0\"", "24.19.2>24.20.0")]
+    [InlineData("\"a\": \"~24.19.0\"", "\"a\": \"~24.20.0\"", "24.19.2>24.21.0")]
+    [InlineData("\"a\": \"^24.19.2\"", "\"a\": \"^24.19.2.0\"", "24.19.2>24.20.0")]
+    public void ARangeLowerBound_FailsWhenItDoesNotMoveUpOrARangeExcludesItsStatedVersion(string oldLine, string newLine, string rows)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, rows, datasource: "npm").Failure);
+    }
+
+    [Theory]
+    [InlineData("\"a\": \"24.12.2\"", "\"a\": \"26.0.0\"")]
+    [InlineData("\"a\": \"==24.12.2\"", "\"a\": \"==26.0.0\"")]
+    [InlineData("\"a\": \"<24.12.2\"", "\"a\": \"<26.0.0\"")]
+    [InlineData("\"a\": \"<=24.12.2\"", "\"a\": \"<=26.0.0\"")]
+    [InlineData("\"a\": \">24.12.2\"", "\"a\": \">26.0.0\"")]
+    [InlineData("\"a\": \"!=24.12.2\"", "\"a\": \"!=26.0.0\"")]
+    [InlineData("\"a\": \"^ 24.12.2\"", "\"a\": \"^ 26.0.0\"")]
+    [InlineData("\"a\": \"~ 24.12.2\"", "\"a\": \"~ 26.0.0\"")]
+    [InlineData("\"a\": \"~/24.12.2\"", "\"a\": \"~/26.0.0\"")]
+    public void ARangeLowerBound_NeedsTheOperatorRightBeforeTheNumber(string oldLine, string newLine)
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line(oldLine, newLine, "24.19.2>26.6.5", datasource: "npm").Failure);
+    }
+
+    [Fact]
+    public void ABareShortenedVersionThatIsNotAPrefixOfTheRow_FailsWithoutARangeOperator()
+    {
+        Assert.Equal(DiffShapeFailure.VersionNotStated, Line("version = \"2.38\"", "version = \"3.0\"", "2.38.0>3.4.0", datasource: "terraform-provider").Failure);
     }
 
     private static DiffShapeResult GoMod(string rows, string datasource, params (string Old, string New)[] lines) =>
