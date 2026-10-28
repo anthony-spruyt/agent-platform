@@ -611,7 +611,7 @@ public static partial class DiffShape
     [GeneratedRegex(@"^\s*(?:require\s+)?(?<mod>\S*[./]\S*)\s+(?<ver>v\S+)\s+// indirect\r?$", RegexOptions.CultureInvariant)]
     private static partial Regex GoIndirectRequire();
 
-    [GeneratedRegex(@"uses:\s*""?[\w.-]+/[^@\s""]+@(?<sha>[0-9a-f]{40})""?\s*#\s*(?:[\w.]+-)??(?<ver>v?[0-9]+(?:\.[0-9]+)*(?:[-+][\w.]+)*)\s*$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"uses:\s*""?[\w.-]+/[^@\s""]+@(?<sha>[0-9a-f]{40})""?\s*#\s*(?:[\w.-]+-)??(?<ver>v?[0-9]+(?:\.[0-9]+)*(?:[-+][\w.]+)*)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex UsesPin();
 
     [GeneratedRegex(@"(?<![\w./:@-])(?<name>(?:[a-z0-9][a-z0-9.-]*(?::[0-9]+)?/)?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*)(?<!(?:^|[^\w.-])sha256):(?<tag>\w[\w.+-]{0,127}?)(?<dig>@sha256:[0-9a-f]{64})?(?![\w.+-])", RegexOptions.CultureInvariant)]

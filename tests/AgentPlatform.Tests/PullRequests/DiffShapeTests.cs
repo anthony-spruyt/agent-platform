@@ -233,6 +233,8 @@ public class DiffShapeTests
     [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.4", "other-1.2.3>other-1.2.4", DiffShapeFailure.VersionNotStated)]
     [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-v1.2.4", "release-1.2.3>release-1.2.4", DiffShapeFailure.VersionNotStated)]
     [InlineData("uses: o/a@{A} # release-1.2.3", "uses: o/a@{B} # release-1.2.3", null, DiffShapeFailure.None)]
+    [InlineData("uses: o/a@{A} # foo-bar-1.2.3", "uses: o/a@{A} # foo-bar-1.2.4", "foo-bar-1.2.3>foo-bar-1.2.4", DiffShapeFailure.CommentWithoutShaChange)]
+    [InlineData("uses: o/a@{A} # foo-bar-1.2.3", "uses: o/a@{B} # foo-bar-1.2.4", "foo-bar-1.2.3>foo-bar-1.2.4", DiffShapeFailure.None)]
     public void APinnedActionComment_ChangesOnlyTogetherWithItsSha(string oldLine, string newLine, string? rows, DiffShapeFailure expected)
     {
         var result = Line(oldLine.Replace("{A}", ShaA, StringComparison.Ordinal), newLine.Replace("{B}", ShaB, StringComparison.Ordinal).Replace("{A}", ShaA, StringComparison.Ordinal), rows);
