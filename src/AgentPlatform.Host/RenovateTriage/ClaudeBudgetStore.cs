@@ -151,9 +151,10 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         var counted = await CountedRunsAsync(db, now, cancellationToken).ConfigureAwait(false);
         var slots = Math.Min(caps.MaxPerHour - counted.Count(r => r.At > now - _hour), caps.MaxPerDay - counted.Count);
         var picked = new List<RedriveCandidate>();
-        foreach (var candidate in candidates)
+        // Security candidates go first and ignore the slot count, but each still uses one.
+        foreach (var candidate in candidates.Where(c => c.Security).Concat(candidates.Where(c => !c.Security)))
         {
-            if (picked.Count >= slots)
+            if (!candidate.Security && picked.Count >= slots)
             {
                 break;
             }
@@ -267,11 +268,12 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         var caps = options.Value.Claude;
         var counted = await CountedRunsAsync(db, now, cancellationToken).ConfigureAwait(false);
 
+        // Security PRs skip the hourly and daily caps; their runs still count toward them for every other PR.
         ClaudeReservation? latest = null;
         foreach (var (cause, until) in new[]
         {
-            (ClaudeBudgetCauses.HourlyCap, FreeAt(counted.Where(r => r.At > now - _hour), caps.MaxPerHour, _hour)),
-            (ClaudeBudgetCauses.DailyCap, FreeAt(counted, caps.MaxPerDay, _day)),
+            (ClaudeBudgetCauses.HourlyCap, input.Security ? null : FreeAt(counted.Where(r => r.At > now - _hour), caps.MaxPerHour, _hour)),
+            (ClaudeBudgetCauses.DailyCap, input.Security ? null : FreeAt(counted, caps.MaxPerDay, _day)),
             (ClaudeBudgetCauses.PrDailyCap, FreeAt(counted.Where(r => r.Repo == input.Repo && r.PrNumber == input.PrNumber), caps.MaxPerPrPerDay, _day)),
         })
         {

@@ -1298,4 +1298,31 @@ public class TriageRulesTests
             Assert.Equal(SafeAction.WaitForCi, TriageRules.AssessSafe(CiState.Pending, "renovate/cilium-1.x"));
         }
     }
+
+    public class SecurityLabel
+    {
+        [Fact]
+        public void ThePullRequestIsSecurity_WhenItCarriesTheSecurityLabel()
+        {
+            Assert.True(TriageRules.IsSecurity(["dependencies", "security"]));
+        }
+
+        [Theory]
+        [InlineData("Security")]
+        [InlineData("SECURITY")]
+        [InlineData("security-fix")]
+        [InlineData("security ")]
+        [InlineData("not-security")]
+        [InlineData("dependencies")]
+        public void AnyOtherLabel_IsNotSecurity(string label)
+        {
+            Assert.False(TriageRules.IsSecurity([label]));
+        }
+
+        [Fact]
+        public void NoLabels_IsNotSecurity()
+        {
+            Assert.False(TriageRules.IsSecurity([]));
+        }
+    }
 }

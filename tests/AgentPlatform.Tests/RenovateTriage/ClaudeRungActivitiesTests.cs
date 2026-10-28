@@ -43,6 +43,27 @@ public class ClaudeRungActivitiesTests
     }
 
     [Fact]
+    public async Task Queue_FlagsAPullRequestThatCarriesTheSecurityLabel()
+    {
+        var rig = Create();
+        rig.Github.PullRequest = rig.Github.PullRequest with { Labels = ["dependencies", TriageRules.SecurityLabel] };
+
+        var result = await Run(() => rig.Activities.QueueAsync(new QueueInput(Repo, 7, Sha, "breaking-change")));
+
+        Assert.True(result.Security);
+    }
+
+    [Fact]
+    public async Task Queue_DoesNotFlagAPullRequestWithoutTheSecurityLabel()
+    {
+        var rig = Create();
+
+        var result = await Run(() => rig.Activities.QueueAsync(new QueueInput(Repo, 7, Sha, "breaking-change")));
+
+        Assert.False(result.Security);
+    }
+
+    [Fact]
     public async Task Queue_ClearsAnOlderHeadsVerdictLabel_ButNotTheBlockedLabel()
     {
         var rig = Create();

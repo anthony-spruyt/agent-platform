@@ -52,6 +52,7 @@ public static partial class TriageRules
     public const string BlockedLabel = "blocked";
     public const string RevertLabel = "agent/revert";
     public const string AutoApprovedLabel = "agent/auto-approved";
+    public const string SecurityLabel = "security";
 
     public static readonly IReadOnlyCollection<string> VerdictLabels = [SafeLabel, AutoApprovedLabel, FixableLabel];
 
@@ -148,6 +149,12 @@ public static partial class TriageRules
         ArgumentNullException.ThrowIfNull(label);
         return _blockingLabels.Contains(label, StringComparer.Ordinal)
             && !(hasPendingRow && string.Equals(label, NeedsTriageLabel, StringComparison.Ordinal));
+    }
+
+    public static bool IsSecurity(IReadOnlyCollection<string> labels)
+    {
+        ArgumentNullException.ThrowIfNull(labels);
+        return labels.Contains(SecurityLabel, StringComparer.Ordinal);
     }
 
     public static bool IsApproving(TriageVerdict verdict) => verdict is TriageVerdict.Approve or TriageVerdict.Safe;
