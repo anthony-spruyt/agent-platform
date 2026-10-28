@@ -58,7 +58,8 @@ public sealed record JudgeInput(
     string HeadSha,
     bool RetryJevErrors = false,
     ScannedText? Body = null,
-    IReadOnlyList<ScannedText>? Changelogs = null);
+    IReadOnlyList<ScannedText>? Changelogs = null,
+    IReadOnlyList<ChangelogSource>? ChangelogSources = null);
 
 public sealed record JudgeResult(bool HeadMoved, TriageDecision? Decision = null, JevAnswers? Jev = null, string? JevError = null, bool NotesFound = false);
 

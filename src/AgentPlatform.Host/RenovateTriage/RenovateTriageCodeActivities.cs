@@ -7,7 +7,7 @@ using Temporalio.Exceptions;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public sealed record ScannedChangelog(string Dependency, string Origin, ScanOutcome Outcome, ScannedText Text);
+public sealed record ScannedChangelog(string Dependency, string Origin, ScanOutcome Outcome, ScannedText Text, ChangelogSource? Source = null);
 
 public sealed record FetchChangelogInput(string Repo, int PrNumber, string HeadSha, ScannedText PrBody);
 
@@ -270,7 +270,7 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
         foreach (var section in sections)
         {
             var scan = await scanner.ScanAsync(section.Text, cancellationToken).ConfigureAwait(false);
-            scanned.Add(new ScannedChangelog(section.Dependency, section.Origin, scan.Outcome, scan.Text));
+            scanned.Add(new ScannedChangelog(section.Dependency, section.Origin, scan.Outcome, scan.Text, section.Source));
         }
 
         return scanned;

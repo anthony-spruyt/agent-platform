@@ -4,13 +4,36 @@ using System.Text.RegularExpressions;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
+public enum NotesLocation
+{
+    None,
+    Body,
+    FetchedSections,
+}
+
 public static partial class ReleaseNotesDetector
 {
     private const RegexOptions Linear = RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
     private const int IndentedCodeWidth = 4;
 
-    public static bool Found(string? body, IReadOnlyList<string>? sections) =>
-        Guarded(() => BodyCoversEveryUpdate(body) || SectionsCoverEveryUpdate(body, sections));
+    public static bool Found(string? body, IReadOnlyList<string>? sections) => Locate(body, sections) != NotesLocation.None;
+
+    public static NotesLocation Locate(string? body, IReadOnlyList<string>? sections)
+    {
+        try
+        {
+            if (BodyCoversEveryUpdate(body))
+            {
+                return NotesLocation.Body;
+            }
+
+            return SectionsCoverEveryUpdate(body, sections) ? NotesLocation.FetchedSections : NotesLocation.None;
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return NotesLocation.None;
+        }
+    }
 
     public static bool BodyHasNotes(string? body) => Guarded(() => BodyCoversEveryUpdate(body));
 

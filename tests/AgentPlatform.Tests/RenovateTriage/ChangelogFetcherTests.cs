@@ -27,7 +27,29 @@ public class ChangelogFetcherTests
 
         var section = Assert.Single(await fetcher.FetchAsync(Repo, [Update()], Ct));
 
-        Assert.Equal(new ChangelogSection("dep", "upstream/dep", "release v1.2.3", "- fixed the crash"), section);
+        Assert.Equal(new ChangelogSection("dep", new ChangelogSource("upstream/dep", "v1.2.3", ChangelogKind.Release), "- fixed the crash"), section);
+    }
+
+    [Fact]
+    public async Task Fetch_NamesTheSourceRepoAndTagOfTheReleaseItUsed()
+    {
+        var (fetcher, api) = Create();
+        api.Releases["upstream/dep:1.2.3"] = new GitHubRelease("1.2.3", null, "notes");
+
+        var section = Assert.Single(await fetcher.FetchAsync(Repo, [Update(to: "1.2.3")], Ct));
+
+        Assert.Equal(new ChangelogSource("upstream/dep", "1.2.3", ChangelogKind.Release), section.Source);
+    }
+
+    [Fact]
+    public async Task Fetch_NamesTheSourceRepoAndTagOfTheChangelogFileItUsed()
+    {
+        var (fetcher, api) = Create();
+        api.FileContents["upstream/dep:CHANGELOG.md@1.2.3"] = "## 1.2.3\n\n- fixed";
+
+        var section = Assert.Single(await fetcher.FetchAsync(Repo, [Update(to: "1.2.3")], Ct));
+
+        Assert.Equal(new ChangelogSource("upstream/dep", "1.2.3", ChangelogKind.File), section.Source);
     }
 
     [Fact]

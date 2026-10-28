@@ -19,8 +19,10 @@ public class TriageRulesTests
     private static GitHubCheckSuite Suite(string app = "github-actions", string status = "completed", int runs = 1) =>
         new(1, status, status == "completed" ? "success" : null, app, runs);
 
-    private static TriageDecision Decide(string branch, JevAnswers jev, BumpFacts? facts = null, bool notesFound = false) =>
-        TriageRules.DecideFromJev(branch, jev, facts ?? new BumpFacts(true, []), notesFound);
+    private static TriageDecision Decide(string branch, JevAnswers jev, BumpFacts? facts = null, NotesLocation notes = NotesLocation.None, IReadOnlyList<ChangelogSource>? sources = null) =>
+        TriageRules.DecideFromJev(branch, jev, facts ?? new BumpFacts(true, []), notes, sources);
+
+    private static ChangelogSource Release(string repo = "upstream/dep", string tag = "v1.2.3") => new(repo, tag, ChangelogKind.Release);
 
     private static BumpFacts Versions(params (string Old, string New, string Kind)[] changes) =>
         new(false, [.. changes.Select(c => new VersionChange(c.Old, c.New, c.Kind))]);
@@ -999,7 +1001,7 @@ public class TriageRulesTests
         {
             var decision = Decide("renovate/foo", Jev(bump, changelog: 0.7));
 
-            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, $"**Auto-approved:** {bump} bump with changelog."), decision);
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, $"**Auto-approved:** {bump} bump, Jev scored the changelog 0.70."), decision);
         }
 
         [Theory]
@@ -1017,22 +1019,22 @@ public class TriageRulesTests
         [InlineData("minor")]
         public void PatchAndMinor_WithReleaseNotesFoundInCode_AreApprovedWhateverJevScoredTheChangelog(string bump)
         {
-            var decision = Decide("renovate/foo", Jev(bump, changelog: 0.1), notesFound: true);
+            var decision = Decide("renovate/foo", Jev(bump, changelog: 0.1), notes: NotesLocation.Body);
 
-            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, $"**Auto-approved:** {bump} bump with changelog."), decision);
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, $"**Auto-approved:** {bump} bump with release notes in the PR body."), decision);
         }
 
         [Fact]
         public void PatchAndMinor_WithoutNotesInCode_FallBackToJevsChangelogScore()
         {
-            Assert.Equal(TriageRules.ChangelogPresent, Decide("renovate/foo", Jev("patch", changelog: 0.8), notesFound: false).Reason);
-            Assert.Equal(TriageRules.NoChangelog, Decide("renovate/foo", Jev("patch", changelog: 0.3), notesFound: false).Reason);
+            Assert.Equal(TriageRules.ChangelogPresent, Decide("renovate/foo", Jev("patch", changelog: 0.8), notes: NotesLocation.None).Reason);
+            Assert.Equal(TriageRules.NoChangelog, Decide("renovate/foo", Jev("patch", changelog: 0.3), notes: NotesLocation.None).Reason);
         }
 
         [Fact]
         public void ReleaseNotesFoundInCode_DoNotOverrideABreakingAnswer()
         {
-            var decision = Decide("renovate/foo", Jev("minor", breaking: 0.9, changelog: 0.1), notesFound: true);
+            var decision = Decide("renovate/foo", Jev("minor", breaking: 0.9, changelog: 0.1), notes: NotesLocation.Body);
 
             Assert.Equal(TriageRules.Breaking, decision.Reason);
         }
@@ -1045,7 +1047,7 @@ public class TriageRulesTests
         [InlineData("bogus", TriageRules.UnknownBump)]
         public void ReleaseNotesFoundInCode_DoNotChangeTheOtherBumpTypes(string bump, string reason)
         {
-            var decision = Decide("renovate/foo", Jev(bump, changelog: 0.1), new BumpFacts(false, []), notesFound: true);
+            var decision = Decide("renovate/foo", Jev(bump, changelog: 0.1), new BumpFacts(false, []), notes: NotesLocation.Body);
 
             Assert.Equal(reason, decision.Reason);
         }
@@ -1053,14 +1055,98 @@ public class TriageRulesTests
         [Fact]
         public void ReleaseNotesFoundInCode_DoNotOverrideTheBumpMismatchChecks()
         {
-            Assert.Equal(TriageRules.BumpTypeMismatch, Decide("renovate/foo", Jev("patch", changelog: 0.1), Versions(("1.0.0", "2.0.0", "major")), notesFound: true).Reason);
-            Assert.Equal(TriageRules.BumpTypeMismatch, Decide("renovate/foo", Jev("patch", changelog: 0.1), new BumpFacts(false, [], UnpairedVersions: true), notesFound: true).Reason);
+            Assert.Equal(TriageRules.BumpTypeMismatch, Decide("renovate/foo", Jev("patch", changelog: 0.1), Versions(("1.0.0", "2.0.0", "major")), notes: NotesLocation.Body).Reason);
+            Assert.Equal(TriageRules.BumpTypeMismatch, Decide("renovate/foo", Jev("patch", changelog: 0.1), new BumpFacts(false, [], UnpairedVersions: true), notes: NotesLocation.Body).Reason);
         }
 
         [Fact]
         public void ReleaseNotesFoundInCode_LeaveAnAllowlistedBranchAllowlisted()
         {
-            Assert.Equal(TriageRules.Allowlisted, Decide("renovate/pin-dependencies", Jev("patch", changelog: 0.1), notesFound: true).Reason);
+            Assert.Equal(TriageRules.Allowlisted, Decide("renovate/pin-dependencies", Jev("patch", changelog: 0.1), notes: NotesLocation.Body).Reason);
+        }
+
+        [Fact]
+        public void NotesInThePrBody_AreNamedEvenWhenFetchedSourcesCameWithThem()
+        {
+            var decision = Decide("renovate/foo", Jev("patch", changelog: 0.9), notes: NotesLocation.Body, sources: [Release()]);
+
+            Assert.Equal("**Auto-approved:** patch bump with release notes in the PR body.", decision.Comment);
+        }
+
+        [Theory]
+        [InlineData("patch")]
+        [InlineData("minor")]
+        public void NotesFromAFetchedRelease_LinkTheReleaseWhateverJevScored(string bump)
+        {
+            var decision = Decide("renovate/foo", Jev(bump, changelog: 0.1), notes: NotesLocation.FetchedSections, sources: [Release("coder/coder", "v2.37.7")]);
+
+            Assert.Equal(
+                new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, $"**Auto-approved:** {bump} bump with release notes from [coder/coder v2.37.7](https://github.com/coder/coder/releases/tag/v2.37.7)."),
+                decision);
+        }
+
+        [Fact]
+        public void NotesFromSeveralFetchedReleases_ListEachLinkSeparatedByCommas()
+        {
+            var decision = Decide(
+                "renovate/foo",
+                Jev("patch"),
+                notes: NotesLocation.FetchedSections,
+                sources: [Release("upstream/a", "v1.0.1"), new ChangelogSource("upstream/b", "2.0.1", ChangelogKind.File)]);
+
+            Assert.Equal(
+                "**Auto-approved:** patch bump with release notes from [upstream/a v1.0.1](https://github.com/upstream/a/releases/tag/v1.0.1), [upstream/b 2.0.1](https://github.com/upstream/b/blob/2.0.1/CHANGELOG.md).",
+                decision.Comment);
+        }
+
+        [Fact]
+        public void NotesFromAChangelogFile_LinkTheFileAtTheTag()
+        {
+            var decision = Decide("renovate/foo", Jev("minor"), notes: NotesLocation.FetchedSections, sources: [new ChangelogSource("upstream/dep", "v1.2.3", ChangelogKind.File)]);
+
+            Assert.Equal(
+                "**Auto-approved:** minor bump with release notes from [upstream/dep v1.2.3](https://github.com/upstream/dep/blob/v1.2.3/CHANGELOG.md).",
+                decision.Comment);
+        }
+
+        [Fact]
+        public void NotesFromFetchedReleases_ListAtMostTheFetchCap()
+        {
+            var sources = Enumerable.Range(1, ChangelogFetcher.MaxDependencies + 1).Select(i => Release($"upstream/dep{i}")).ToList();
+
+            var decision = Decide("renovate/foo", Jev("patch"), notes: NotesLocation.FetchedSections, sources: sources);
+
+            Assert.Equal(ChangelogFetcher.MaxDependencies, decision.Comment!.Split("](", StringSplitOptions.None).Length - 1);
+            Assert.DoesNotContain($"upstream/dep{ChangelogFetcher.MaxDependencies + 1} ", decision.Comment, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void NotesFromTheSameReleaseListedTwice_AreLinkedOnce()
+        {
+            var decision = Decide("renovate/foo", Jev("patch"), notes: NotesLocation.FetchedSections, sources: [Release(), Release()]);
+
+            Assert.Equal(1, decision.Comment!.Split("](", StringSplitOptions.None).Length - 1);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void NotesFoundInFetchedSectionsWithoutSourceInfo_KeepTheGenericText(bool emptyList)
+        {
+            var decision = Decide("renovate/foo", Jev("patch", changelog: 0.1), notes: NotesLocation.FetchedSections, sources: emptyList ? [] : null);
+
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), decision);
+        }
+
+        [Theory]
+        [InlineData(0.85, "0.85")]
+        [InlineData(0.7, "0.70")]
+        [InlineData(1, "1.00")]
+        public void WithoutNotesInCode_AJevScoreAtTheThresholdApproves_AndTheTextGivesTheScoreToTwoPlaces(double score, string shown)
+        {
+            var decision = Decide("renovate/foo", Jev("patch", changelog: score), sources: [Release()]);
+
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, $"**Auto-approved:** patch bump, Jev scored the changelog {shown}."), decision);
         }
 
         [Fact]
@@ -1178,6 +1264,9 @@ public class TriageRulesTests
         [InlineData("**Auto-approved:** digest bump.", "**Auto-approved:** new commit `0123456`, digest bump.")]
         [InlineData("**Auto-approved:** allowlisted.", "**Auto-approved:** new commit `0123456`, allowlisted.")]
         [InlineData("**Auto-approved:**", "**Auto-approved:** new commit `0123456`.")]
+        [InlineData("**Auto-approved:** patch bump with release notes in the PR body.", "**Auto-approved:** new commit `0123456`, patch bump with release notes in the PR body.")]
+        [InlineData("**Auto-approved:** patch bump with release notes from [upstream/dep v1.2.3](https://github.com/upstream/dep/releases/tag/v1.2.3).", "**Auto-approved:** new commit `0123456`, patch bump with release notes from [upstream/dep v1.2.3](https://github.com/upstream/dep/releases/tag/v1.2.3).")]
+        [InlineData("**Auto-approved:** patch bump, Jev scored the changelog 0.85.", "**Auto-approved:** new commit `0123456`, patch bump, Jev scored the changelog 0.85.")]
         [InlineData(null, "**Auto-approved:** new commit `0123456`.")]
         public void StickyApprovalText_NamesTheCommitAndTheLowercasedReason(string? approvalComment, string expected)
         {

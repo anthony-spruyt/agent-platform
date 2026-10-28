@@ -52,7 +52,21 @@ public class RenovateTriageCodeActivitiesTests
             var result = await Run(() => rig.Activities.FetchChangelogAsync(new FetchChangelogInput(Repo, 7, Sha, Body())));
 
             Assert.False(result.HeadMoved);
-            Assert.Equal([new ScannedChangelog("dep", "release v1.2.3", ScanOutcome.Clean, ScannedText.Create("- fixed"))], result.Sections);
+            Assert.Equal([new ScannedChangelog("dep", "release v1.2.3", ScanOutcome.Clean, ScannedText.Create("- fixed"), new ChangelogSource("upstream/dep", "v1.2.3", ChangelogKind.Release))], result.Sections);
+        }
+
+        [Fact]
+        public void AChangelogResultRecordedBeforeSourcesWereCarried_StillReadsWithoutASource()
+        {
+            var recorded = $$"""
+                {"HeadMoved":false,"Sections":[{"Dependency":"dep","SourceRepo":"upstream/dep","Origin":"release v1.2.3","Outcome":0,"Text":{{System.Text.Json.JsonSerializer.Serialize(ScannedText.Create("- fixed"))}}}]}
+                """;
+
+            var result = RecordedPayload.Read<FetchChangelogResult>(recorded);
+
+            var section = Assert.Single(result.Sections);
+            Assert.Equal(("dep", "release v1.2.3"), (section.Dependency, section.Origin));
+            Assert.Null(section.Source);
         }
 
         [Fact]

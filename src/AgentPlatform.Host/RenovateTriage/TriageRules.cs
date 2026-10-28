@@ -275,7 +275,7 @@ public static partial class TriageRules
         return match.Success && !lower.Contains("n8n-mcp", StringComparison.Ordinal) ? match.Value : null;
     }
 
-    public static TriageDecision DecideFromJev(string branch, JevAnswers jev, BumpFacts facts, bool notesFound = false)
+    public static TriageDecision DecideFromJev(string branch, JevAnswers jev, BumpFacts facts, NotesLocation notes = NotesLocation.None, IReadOnlyList<ChangelogSource>? sources = null)
     {
         ArgumentNullException.ThrowIfNull(branch);
         ArgumentNullException.ThrowIfNull(jev);
@@ -308,7 +308,7 @@ public static partial class TriageRules
                 return new TriageDecision(TriageVerdict.NeedsReview, OtherBump, OtherBumpComment);
             case "patch":
             case "minor":
-                return DecidePatchOrMinor(branch, jev, facts, notesFound);
+                return DecidePatchOrMinor(branch, jev, facts, notes, sources);
             default:
                 return new TriageDecision(TriageVerdict.NeedsReview, UnknownBump, OtherBumpComment);
         }
@@ -383,7 +383,7 @@ public static partial class TriageRules
         return reason.Length == 0 ? $"{commit}." : $"{commit}, {char.ToLowerInvariant(reason[0])}{reason[1..]}.";
     }
 
-    private static TriageDecision DecidePatchOrMinor(string branch, JevAnswers jev, BumpFacts facts, bool notesFound)
+    private static TriageDecision DecidePatchOrMinor(string branch, JevAnswers jev, BumpFacts facts, NotesLocation notes, IReadOnlyList<ChangelogSource>? sources)
     {
         var disagreeing = facts.Versions.FirstOrDefault(v => !string.Equals(v.Kind, jev.BumpType, StringComparison.Ordinal));
         if (disagreeing is not null)
@@ -404,9 +404,27 @@ public static partial class TriageRules
             return new TriageDecision(TriageVerdict.Approve, Allowlisted, AllowlistedApprovalComment);
         }
 
-        return notesFound || jev.Changelog >= ChangelogThreshold
-            ? new TriageDecision(TriageVerdict.Approve, ChangelogPresent, $"{AutoApprovedPrefix} {jev.BumpType} bump with changelog.")
+        return notes != NotesLocation.None || jev.Changelog >= ChangelogThreshold
+            ? new TriageDecision(TriageVerdict.Approve, ChangelogPresent, ChangelogApprovalComment(jev, notes, sources))
             : new TriageDecision(TriageVerdict.NeedsReview, NoChangelog, NoChangelogComment);
+    }
+
+    private static string ChangelogApprovalComment(JevAnswers jev, NotesLocation notes, IReadOnlyList<ChangelogSource>? sources)
+    {
+        var bump = $"{AutoApprovedPrefix} {jev.BumpType} bump";
+        return notes switch
+        {
+            NotesLocation.Body => $"{bump} with release notes in the PR body.",
+            NotesLocation.FetchedSections when sources is { Count: > 0 } => $"{bump} with release notes from {string.Join(", ", sources.Distinct().Take(ChangelogFetcher.MaxDependencies).Select(SourceLink))}.",
+            NotesLocation.FetchedSections => $"{bump} with changelog.",
+            _ => $"{bump}, Jev scored the changelog {jev.Changelog.ToString("0.00", CultureInfo.InvariantCulture)}.",
+        };
+    }
+
+    private static string SourceLink(ChangelogSource source)
+    {
+        var path = source.Kind == ChangelogKind.Release ? $"releases/tag/{source.Tag}" : $"blob/{source.Tag}/{ChangelogFetcher.ChangelogFile}";
+        return $"[{source.Repo} {source.Tag}](https://github.com/{source.Repo}/{path})";
     }
 
     private static bool IsCalendar(VersionChange change) => CalendarVersion().IsMatch(change.Old) && CalendarVersion().IsMatch(change.New);

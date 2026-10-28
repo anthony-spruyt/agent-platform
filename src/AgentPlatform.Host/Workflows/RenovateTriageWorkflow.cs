@@ -446,9 +446,10 @@ public partial class RenovateTriageWorkflow
         }
 
         var clean = fetched.Sections.Select(s => s.Text).ToList();
+        var sources = fetched.Sections.All(s => s.Source is not null) ? fetched.Sections.Select(s => s.Source!).ToList() : null;
 
         stepStarted = Workflow.UtcNow;
-        var judge = await JudgeWithJevAsync(input, headSha, body, clean);
+        var judge = await JudgeWithJevAsync(input, headSha, body, clean, sources);
         await RecordStepAsync(run, ++seq, "jev-changelog", LadderRung.Jev, JudgeStopReason(judge), stepStarted, judge);
         return (judge.HeadMoved, judge.Jev is null ? null : judge.Decision, seq);
     }
@@ -473,7 +474,7 @@ public partial class RenovateTriageWorkflow
         return seq;
     }
 
-    private static async Task<JudgeResult> JudgeWithJevAsync(RenovateTriageInput input, string headSha, ScannedText? body, IReadOnlyList<ScannedText>? changelogs)
+    private static async Task<JudgeResult> JudgeWithJevAsync(RenovateTriageInput input, string headSha, ScannedText? body, IReadOnlyList<ScannedText>? changelogs, IReadOnlyList<ChangelogSource>? sources = null)
     {
         if (!Workflow.Patched(JevRetryPatch))
         {
@@ -485,7 +486,7 @@ public partial class RenovateTriageWorkflow
         try
         {
             return await Workflow.ExecuteActivityAsync(
-                (RenovateTriageActivities activities) => activities.JudgeAsync(new JudgeInput(input.Repo, input.PrNumber, headSha, RetryJevErrors: true, Body: body, Changelogs: changelogs)),
+                (RenovateTriageActivities activities) => activities.JudgeAsync(new JudgeInput(input.Repo, input.PrNumber, headSha, RetryJevErrors: true, Body: body, Changelogs: changelogs, ChangelogSources: sources)),
                 _judgeOptions);
         }
         catch (ActivityFailureException ex) when (ex.InnerException is ApplicationFailureException { ErrorType: RenovateTriageActivities.JevErrorFailureType } cause)

@@ -236,6 +236,8 @@ In order; the first that applies decides:
    Jev answers a breaking-change score, a bump type and a changelog score. It judges the bump type itself from the old and new versions in the diff or the body, without trusting Renovate's labels. A breaking score of 0.66 or more, or a major, calver or other type: needs review. An answer that is none of the known types: needs review, `unknown-bump`.
 8. The bump-type guard (below) checks Jev's type against the diff.
 9. A patch or minor on an allowlisted branch approves; any other needs release notes found in code, or else a changelog score of 0.7 or more from Jev, so Jev's score is the fallback. The `jev` run steps record whether the code found release notes as `notesFound`; it stays false when Jev fails. A Jev failure: needs review, `jev-error`.
+   The `changelog-present` review body says where the notes came from, first match: the PR body (`with release notes in the PR body`); the fetched sections (`with release notes from`, then one link per source, at most 5, comma-separated: `owner/repo tag` linking its release, or its `CHANGELOG.md` at that tag when the notes came from the file); otherwise Jev's score to two decimals.
+   Fetched sections without a recorded source give `bump with changelog.`.
 
 ### Merge-from-base commits
 
@@ -301,7 +303,9 @@ The comments:
 | `non-renovate-commit` | **Needs review:** this PR has commits that Renovate didn't make.                                                  |
 | `ci-timeout`          | **Needs review:** CI didn't finish within 2 hours.                                                                |
 | `digest`              | Review body: **Auto-approved:** digest bump.                                                                      |
-| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with changelog.                                           |
+| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes in the PR body.                        |
+| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes from `<release links>`.                |
+| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump, Jev scored the changelog `<score>`.                      |
 | `allowlisted`         | Review body: **Auto-approved:** allowlisted.                                                                      |
 | Sticky edit           | **Auto-approved:** new commit `<short sha>`, `<reason>`. The reason is the review body's text, lowercased.        |
 | Dismissal message     | A newer commit needs review.                                                                                      |
