@@ -254,6 +254,30 @@ public partial class RenovateTriageWorkflowTests
         Assert.True(applies[1].StartedAt - applies[0].StartedAt < 2 * RenovateTriageWorkflow.StatusPollInterval, $"Applied after {applies[1].StartedAt - applies[0].StartedAt}.");
     }
 
+    [Fact]
+    public async Task AfterACiRaceAbort_TheNextAssessIsRecordedUnderItsOwnStepNumber()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = Answers(env, during: () =>
+        {
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            return Task.CompletedTask;
+        });
+
+        await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            return await RunToResultAsync(handle);
+        });
+
+        var steps = await StepsAsync(rig);
+        var aborted = steps.FindIndex(s => s is { Name: "apply", StopReason: "Aborted" });
+        Assert.Equal(["assess", "verdict", "apply"], steps.Skip(aborted + 1).Select(s => s.Name));
+    }
+
     [Theory]
     [InlineData("FIXABLE", TriageVerdict.Fixable, "claude-fixable", TriageRules.FixableLabel)]
     [InlineData("BLOCKED", TriageVerdict.Blocked, "claude-blocked", TriageRules.BlockedLabel)]

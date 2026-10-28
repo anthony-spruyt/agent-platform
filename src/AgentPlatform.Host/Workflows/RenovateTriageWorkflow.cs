@@ -292,7 +292,7 @@ public partial class RenovateTriageWorkflow
                 seq = _seq;
                 if (climbed is null)
                 {
-                    ciWait = await WaitOutCiRaceAsync(ciWait);
+                    (ciWait, seq) = await WaitOutCiRaceAsync(ciWait, seq);
                     continue;
                 }
 
@@ -328,15 +328,16 @@ public partial class RenovateTriageWorkflow
                 return recorded;
             }
 
-            ciWait = await WaitOutCiRaceAsync(ciWait);
+            (ciWait, seq) = await WaitOutCiRaceAsync(ciWait, seq);
         }
     }
 
-    private async Task<CiWait> WaitOutCiRaceAsync(CiWait ciWait)
+    // The apply step that sent the run back to waiting took the number after the verdict's, so the next step skips it.
+    private async Task<(CiWait Wait, int Seq)> WaitOutCiRaceAsync(CiWait ciWait, int seq)
     {
         if (!_ciRace)
         {
-            return ciWait;
+            return (ciWait, seq);
         }
 
         _ciRace = false;
@@ -347,7 +348,7 @@ public partial class RenovateTriageWorkflow
         }
 
         _ciWaitOver = ciWait.TimedOut;
-        return ciWait;
+        return (ciWait, seq + 1);
     }
 
     private static async Task<PrecheckResult> PrecheckAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, string stepName)

@@ -374,7 +374,7 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task APrApprovedWhileWaiting_IsSkippedWhenTheTwoHoursEnd()
+    public async Task APrApprovedWhileWaiting_IsSkippedOnTheNextPoll()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();

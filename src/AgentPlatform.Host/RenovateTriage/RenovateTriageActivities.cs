@@ -265,6 +265,15 @@ public sealed partial class RenovateTriageActivities(
             return new Gate(TriageRules.NonRenovateCommitDecision());
         }
 
+        if (input.Decision.Verdict == TriageVerdict.Safe && !input.CiWaitOver)
+        {
+            var (checks, action) = await AssessSafeAsync(input, pr, cancellationToken).ConfigureAwait(false);
+            if (action == SafeAction.WaitForCi)
+            {
+                return CiPending(input, checks);
+            }
+        }
+
         var precheck = await TriagePrecheck.RunAsync(github, scanner, input.Repo, input.PrNumber, pr, cancellationToken).ConfigureAwait(false);
         if (precheck.HeadMoved)
         {
@@ -283,18 +292,26 @@ public sealed partial class RenovateTriageActivities(
 
     private async Task<Gate> GateSafeAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
     {
-        var checks = await github.ListCheckRunsAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
-        var suites = await github.ListCheckSuitesAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
-        var ci = TriageRules.AssessChecks(checks, suites);
-        return TriageRules.AssessSafe(ci, pr.HeadRef) switch
+        var (checks, action) = await AssessSafeAsync(input, pr, cancellationToken).ConfigureAwait(false);
+        return action switch
         {
             SafeAction.Fixable => new Gate(TriageRules.SafeOnRedHeadDecision(input.Repo, input.HeadSha, TriageRules.FailedChecks(checks))),
             SafeAction.WaitForCi when input.CiWaitOver => new Gate(TriageRules.CiTimeoutDecision()),
-            SafeAction.WaitForCi => new Gate(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason, StatusPending: TriageRules.HasPendingCommitStatus(checks))),
+            SafeAction.WaitForCi => CiPending(input, checks),
             SafeAction.CommentOnly => new Gate(input.Decision, HighRiskTerm: TriageRules.RiskyTerm(pr.HeadRef)),
             _ => new Gate(input.Decision),
         };
     }
+
+    private async Task<(IReadOnlyList<GitHubCheckRun> Checks, SafeAction Action)> AssessSafeAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
+    {
+        var checks = await github.ListCheckRunsAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
+        var suites = await github.ListCheckSuitesAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
+        return (checks, TriageRules.AssessSafe(TriageRules.AssessChecks(checks, suites), pr.HeadRef));
+    }
+
+    private static Gate CiPending(ApplyInput input, IReadOnlyList<GitHubCheckRun> checks) =>
+        new(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason, StatusPending: TriageRules.HasPendingCommitStatus(checks)));
 
     private async Task<VerdictAction> WriteEffectAsync(ApplyInput input, Gate gate, CancellationToken cancellationToken)
     {
