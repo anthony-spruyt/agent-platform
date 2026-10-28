@@ -2296,6 +2296,19 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
+        public async Task Safe_WhileCiIsPending_AbortsWithoutScanningThePrBody()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason), result);
+            Assert.Empty(rig.Scanner.Scanned);
+        }
+
+        [Fact]
         public async Task Safe_WhileCiIsStillPendingAfterTheWaitIsOver_GoesToTheOwnerAsCiTimeout()
         {
             var rig = Live();
