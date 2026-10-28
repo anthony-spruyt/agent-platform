@@ -1021,6 +1021,22 @@ public class ReleaseNotesDetectorTests
         Assert.False(ReleaseNotesDetector.SectionHasNotes(section));
 
     [Fact]
+    public void Locate_WhenTheBodyHasNotes_NamesTheBody_EvenWhenTheSectionsHaveNotesToo() =>
+        Assert.Equal(NotesLocation.Body, ReleaseNotesDetector.Locate(Fixture("container-images-2389"), ["## 1.2.3\n\n- the crash"]));
+
+    [Fact]
+    public void Locate_WhenOnlyTheFetchedSectionsHaveNotes_NamesTheSections() =>
+        Assert.Equal(NotesLocation.FetchedSections, ReleaseNotesDetector.Locate(Body(Block(Versioned + TitleOnly)), ["## 1.2.3\n\n- the crash"]));
+
+    [Fact]
+    public void Locate_WhenNeitherHasNotes_NamesNone()
+    {
+        Assert.Equal(NotesLocation.None, ReleaseNotesDetector.Locate(Body(Block(Versioned + TitleOnly)), ["## 1.2.3\n\nprose"]));
+        Assert.Equal(NotesLocation.None, ReleaseNotesDetector.Locate(Body(Block(Versioned + TitleOnly)), null));
+        Assert.Equal(NotesLocation.None, ReleaseNotesDetector.Locate(null, null));
+    }
+
+    [Fact]
     public void Found_WhenTheBodyHasNotes_IgnoresTheSections() =>
         Assert.True(ReleaseNotesDetector.Found(Fixture("container-images-2389"), ["## 1.2.3\n\nprose"]));
 

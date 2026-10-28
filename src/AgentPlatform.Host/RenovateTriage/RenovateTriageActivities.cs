@@ -127,7 +127,7 @@ public sealed partial class RenovateTriageActivities(
             var diff = PrDiff.Build(files, JevClient.MaxPrDiffBytes);
             var facts = BumpAnalyzer.Analyze(files);
             var jevBody = JevBody(input, pr.Body);
-            var notesFound = ReleaseNotesFound(input);
+            var notes = LocateReleaseNotes(input);
 
             JevAnswers answers;
             try
@@ -147,7 +147,7 @@ public sealed partial class RenovateTriageActivities(
                 throw new ApplicationFailureException(ex.Message, ex, nonRetryable: true);
             }
 
-            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers, facts, notesFound), answers, NotesFound: notesFound);
+            return new JudgeResult(false, TriageRules.DecideFromJev(pr.HeadRef, answers, facts, notes, SourcesOf(input)), answers, NotesFound: notes != NotesLocation.None);
         });
 
     [Activity(RecordVerdictName)]
@@ -420,8 +420,11 @@ public sealed partial class RenovateTriageActivities(
         return string.Join("\n\n---\n\n", texts.Select(t => t.Text));
     }
 
-    private static bool ReleaseNotesFound(JudgeInput input) =>
-        input.Body is not null && ReleaseNotesDetector.Found(input.Body.Text, input.Changelogs?.Select(c => c.Text).ToList());
+    private static NotesLocation LocateReleaseNotes(JudgeInput input) =>
+        input.Body is null ? NotesLocation.None : ReleaseNotesDetector.Locate(input.Body.Text, input.Changelogs?.Select(c => c.Text).ToList());
+
+    private static IReadOnlyList<ChangelogSource>? SourcesOf(JudgeInput input) =>
+        input.ChangelogSources is { Count: > 0 } sources && sources.Count == input.Changelogs?.Count ? sources : null;
 
     private static void Validate(string repo, int prNumber)
     {

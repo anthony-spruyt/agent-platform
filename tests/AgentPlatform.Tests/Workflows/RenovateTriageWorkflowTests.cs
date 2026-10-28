@@ -143,7 +143,7 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal((Repo, 7, ShaA), (verdict.Repo, verdict.PrNumber, verdict.HeadSha));
         Assert.Equal(TriageVerdict.Approve, verdict.Verdict);
         Assert.Equal(TriageMode.Shadow, verdict.Mode);
-        Assert.Equal("**Auto-approved:** patch bump with changelog.", verdict.Comment);
+        Assert.Equal("**Auto-approved:** patch bump, Jev scored the changelog 0.78.", verdict.Comment);
     }
 
     [Fact]
@@ -588,7 +588,7 @@ public partial class RenovateTriageWorkflowTests
         });
 
         Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), result);
-        Assert.Equal([(ShaA, "**Auto-approved:** patch bump with changelog.")], rig.Github.Approvals);
+        Assert.Equal([(ShaA, "**Auto-approved:** patch bump, Jev scored the changelog 0.78.")], rig.Github.Approvals);
         Assert.Equal([TriageRules.AutoApprovedLabel], rig.Github.AddedLabels);
         var verdict = Assert.Single(await VerdictsAsync(rig));
         Assert.Equal(TriageMode.Live, verdict.Mode);
@@ -1345,6 +1345,7 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal(TriageRules.ChangelogPresent, result.Reason);
         var steps = await StepsAsync(rig);
         Assert.Contains(steps, s => s.Name == "jev-changelog");
+        Assert.Equal("**Auto-approved:** patch bump with release notes from [upstream/dep v1.2.3](https://github.com/upstream/dep/releases/tag/v1.2.3).", Assert.Single(await VerdictsAsync(rig)).Comment);
     }
 
     [Fact]
