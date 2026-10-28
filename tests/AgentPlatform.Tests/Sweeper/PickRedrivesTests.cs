@@ -1,6 +1,5 @@
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
-using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Tests.Sweeper;
 
@@ -10,43 +9,18 @@ public class PickRedrivesTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static (ClaudeBudgetStore Store, InMemoryRunData Data) Create(int perHour = 2, int perDay = 8, int perPr = 2)
-    {
-        var data = InMemoryRunData.Create();
-        var options = Options.Create(new RenovateTriageOptions { Claude = new ClaudeBudgetOptions { MaxPerHour = perHour, MaxPerDay = perDay, MaxPerPrPerDay = perPr } });
-        return (new ClaudeBudgetStore(data.Factory, options, new FixedTime(Now)), data);
-    }
+    private static (ClaudeBudgetStore Store, InMemoryRunData Data) Create(int perHour = 2, int perDay = 8, int perPr = 2) =>
+        InMemoryRunData.CreateWithBudget(Now, perHour, perDay, perPr);
 
     private static RedriveCandidate C(string repo, int pr) => new(repo, pr);
 
     private static RedriveCandidate S(string repo, int pr) => new(repo, pr, Security: true);
 
-    private static async Task RunAsync(InMemoryRunData data, string repo, int pr, TimeSpan ago, ClaudeRunOutcome? outcome = ClaudeRunOutcome.Succeeded)
-    {
-        await using var db = await data.Factory.CreateDbContextAsync(Ct);
-        var at = Now - ago;
-        db.ClaudeRuns.Add(new ClaudeRun
-        {
-            Id = Guid.NewGuid(),
-            Repo = repo,
-            PrNumber = pr,
-            HeadSha = "sha",
-            WorkflowId = "wf",
-            Attempt = 1,
-            ReservedAt = at,
-            PodCreatedAt = at,
-            FinishedAt = at,
-            Outcome = outcome,
-        });
-        await db.SaveChangesAsync(Ct);
-    }
+    private static Task RunAsync(InMemoryRunData data, string repo, int pr, TimeSpan ago, ClaudeRunOutcome? outcome = ClaudeRunOutcome.Succeeded) =>
+        data.SeedRunAsync(repo, pr, Now - ago, Ct, outcome);
 
-    private static async Task CooldownAsync(InMemoryRunData data, string scope, TimeSpan from)
-    {
-        await using var db = await data.Factory.CreateDbContextAsync(Ct);
-        db.ClaudeCooldowns.Add(new ClaudeCooldown { Scope = scope, Until = Now + from, Cause = "usage-limit" });
-        await db.SaveChangesAsync(Ct);
-    }
+    private static Task CooldownAsync(InMemoryRunData data, string scope, TimeSpan from) =>
+        data.SeedCooldownAsync(scope, Now + from, Ct);
 
     [Fact]
     public async Task WithNothingSpent_TheHourlyCapBoundsTheRedrives_OldestFirst()
@@ -249,10 +223,5 @@ public class PickRedrivesTests
         var picked = await store.PickRedrivesAsync([S("o/a", 1), S("o/b", 2)], Ct);
 
         Assert.Equal([S("o/b", 2)], picked);
-    }
-
-    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
     }
 }

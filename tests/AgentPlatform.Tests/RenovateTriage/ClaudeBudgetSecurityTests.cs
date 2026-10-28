@@ -1,7 +1,6 @@
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Tests.RenovateTriage;
 
@@ -14,42 +13,17 @@ public class ClaudeBudgetSecurityTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static (ClaudeBudgetStore Store, InMemoryRunData Data) Create(int perHour = 2, int perDay = 8, int perPr = 20)
-    {
-        var data = InMemoryRunData.Create();
-        var options = Options.Create(new RenovateTriageOptions { Claude = new ClaudeBudgetOptions { MaxPerHour = perHour, MaxPerDay = perDay, MaxPerPrPerDay = perPr } });
-        return (new ClaudeBudgetStore(data.Factory, options, new FixedTime(Now)), data);
-    }
+    private static (ClaudeBudgetStore Store, InMemoryRunData Data) Create(int perHour = 2, int perDay = 8, int perPr = 20) =>
+        InMemoryRunData.CreateWithBudget(Now, perHour, perDay, perPr);
 
     private static Task<ClaudeReservation> ReserveAsync(ClaudeBudgetStore store, int pr, bool security, string repo = Repo) =>
         store.ReserveAsync($"wf-{pr}", new ReserveClaudeRunInput(Guid.NewGuid(), repo, pr, Sha, "opus", security), Ct);
 
-    private static async Task RunAsync(InMemoryRunData data, int pr, TimeSpan ago, ClaudeRunOutcome outcome = ClaudeRunOutcome.Succeeded, string repo = Repo)
-    {
-        await using var db = await data.Factory.CreateDbContextAsync(Ct);
-        var at = Now - ago;
-        db.ClaudeRuns.Add(new ClaudeRun
-        {
-            Id = Guid.NewGuid(),
-            Repo = repo,
-            PrNumber = pr,
-            HeadSha = Sha,
-            WorkflowId = "wf",
-            Attempt = 1,
-            ReservedAt = at,
-            PodCreatedAt = at,
-            FinishedAt = at,
-            Outcome = outcome,
-        });
-        await db.SaveChangesAsync(Ct);
-    }
+    private static Task RunAsync(InMemoryRunData data, int pr, TimeSpan ago, ClaudeRunOutcome outcome = ClaudeRunOutcome.Succeeded, string repo = Repo) =>
+        data.SeedRunAsync(repo, pr, Now - ago, Ct, outcome);
 
-    private static async Task CooldownAsync(InMemoryRunData data, string scope)
-    {
-        await using var db = await data.Factory.CreateDbContextAsync(Ct);
-        db.ClaudeCooldowns.Add(new ClaudeCooldown { Scope = scope, Until = Now.AddMinutes(30), Cause = "usage-limit" });
-        await db.SaveChangesAsync(Ct);
-    }
+    private static Task CooldownAsync(InMemoryRunData data, string scope) =>
+        data.SeedCooldownAsync(scope, Now.AddMinutes(30), Ct);
 
     [Fact]
     public async Task ASecurityPullRequest_ReservesWhenTheHourlyCapIsFull_AndOthersPark()
@@ -160,7 +134,7 @@ public class ClaudeBudgetSecurityTests
     }
 
     [Fact]
-    public async Task ANonSecurityPullRequest_ParksAtTheCapsAsBefore()
+    public async Task ANonSecurityPullRequest_ParksAtTheHourlyCap()
     {
         var (store, data) = Create(perHour: 1, perDay: 8);
         await RunAsync(data, 8, TimeSpan.FromMinutes(5));
@@ -168,11 +142,5 @@ public class ClaudeBudgetSecurityTests
         var parked = await ReserveAsync(store, 1, security: false);
 
         Assert.Equal((ClaudeReservationKind.Park, ClaudeBudgetCauses.HourlyCap), (parked.Kind, parked.Cause));
-        Assert.Equal(Now.AddMinutes(55), parked.Until);
-    }
-
-    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
     }
 }

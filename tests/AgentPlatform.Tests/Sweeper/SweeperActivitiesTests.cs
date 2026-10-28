@@ -66,34 +66,13 @@ public class SweeperActivitiesTests
 
         public async Task SpendAsync(int runs)
         {
-            await using var db = await Data.Factory.CreateDbContextAsync(Ct);
             for (var i = 0; i < runs; i++)
             {
-                var at = Now.AddMinutes(-10 - i);
-                db.ClaudeRuns.Add(new ClaudeRun
-                {
-                    Id = Guid.NewGuid(),
-                    Repo = "anthony-spruyt/spent",
-                    PrNumber = 900 + i,
-                    HeadSha = Sha,
-                    WorkflowId = "wf",
-                    Attempt = 1,
-                    ReservedAt = at,
-                    PodCreatedAt = at,
-                    FinishedAt = at,
-                    Outcome = ClaudeRunOutcome.Succeeded,
-                });
+                await Data.SeedRunAsync("anthony-spruyt/spent", 900 + i, Now.AddMinutes(-10 - i), Ct);
             }
-
-            await db.SaveChangesAsync(Ct);
         }
 
-        public async Task CooldownAsync()
-        {
-            await using var db = await Data.Factory.CreateDbContextAsync(Ct);
-            db.ClaudeCooldowns.Add(new ClaudeCooldown { Scope = ClaudeCooldown.Global, Until = Now.AddHours(1), Cause = "usage-limit" });
-            await db.SaveChangesAsync(Ct);
-        }
+        public Task CooldownAsync() => Data.SeedCooldownAsync(ClaudeCooldown.Global, Now.AddHours(1), Ct);
 
         public void OpenCheck(int pr, string conclusion = "", string status = "in_progress")
         {

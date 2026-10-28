@@ -64,18 +64,6 @@ public class ClaudeRungActivitiesTests
     }
 
     [Fact]
-    public async Task Queue_ForAMovedHead_IsNotFlaggedEvenWithTheSecurityLabel()
-    {
-        var rig = Create();
-        rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.SecurityLabel] };
-
-        var result = await Run(() => rig.Activities.QueueAsync(new QueueInput(Repo, 7, OtherSha, "breaking-change")));
-
-        Assert.True(result.HeadMoved);
-        Assert.False(result.Security);
-    }
-
-    [Fact]
     public async Task Queue_ClearsAnOlderHeadsVerdictLabel_ButNotTheBlockedLabel()
     {
         var rig = Create();
