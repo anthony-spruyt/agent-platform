@@ -1,16 +1,32 @@
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using AgentPlatform.Host.GitHub;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public sealed record ChangelogSection(string Dependency, string SourceRepo, string Origin, string Text);
+[JsonConverter(typeof(JsonStringEnumConverter<ChangelogKind>))]
+public enum ChangelogKind
+{
+    Release,
+    File,
+}
+
+public sealed record ChangelogSource(string Repo, string Tag, ChangelogKind Kind);
+
+public sealed record ChangelogSection(string Dependency, ChangelogSource Source, string Text)
+{
+    public string Origin => Source.Kind == ChangelogKind.Release
+        ? $"release {Source.Tag}"
+        : $"changelog {ChangelogFetcher.ChangelogFile} at {Source.Tag}";
+}
 
 public sealed partial class ChangelogFetcher(IGitHubApiClient github)
 {
     public const int MaxDependencies = 5;
     public const int MaxSectionChars = 100_000;
 
-    private const string ChangelogFile = "CHANGELOG.md";
+    internal const string ChangelogFile = "CHANGELOG.md";
+
     private const int MaxFileChars = 1_000_000;
 
     public async Task<IReadOnlyList<ChangelogSection>> FetchAsync(string repo, IReadOnlyList<RenovateUpdate> updates, CancellationToken cancellationToken)
@@ -50,7 +66,7 @@ public sealed partial class ChangelogFetcher(IGitHubApiClient github)
             var release = await github.GetReleaseByTagAsync(repo, source, tag, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(release?.Body))
             {
-                return new ChangelogSection(update.Dependency, source, $"release {tag}", Cut(release.Body.Trim()));
+                return new ChangelogSection(update.Dependency, new ChangelogSource(source, tag, ChangelogKind.Release), Cut(release.Body.Trim()));
             }
         }
 
@@ -63,7 +79,7 @@ public sealed partial class ChangelogFetcher(IGitHubApiClient github)
             }
 
             return ChangelogSectionText.Extract(file, version, MaxSectionChars) is { } text
-                ? new ChangelogSection(update.Dependency, source, $"changelog {ChangelogFile} at {tag}", text)
+                ? new ChangelogSection(update.Dependency, new ChangelogSource(source, tag, ChangelogKind.File), text)
                 : null;
         }
 

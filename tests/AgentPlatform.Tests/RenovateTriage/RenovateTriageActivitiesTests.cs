@@ -1129,7 +1129,7 @@ public class RenovateTriageActivitiesTests
 
             Assert.Equal([body], rig.Jev.Bodies);
             Assert.False(result.HeadMoved);
-            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), result.Decision);
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump, Jev scored the changelog 0.78."), result.Decision);
             Assert.Equal(rig.Jev.Answers, result.Jev);
             Assert.Null(result.JevError);
         }
@@ -1144,6 +1144,7 @@ public class RenovateTriageActivitiesTests
 
             Assert.True(result.NotesFound);
             Assert.Equal(TriageRules.ChangelogPresent, result.Decision!.Reason);
+            Assert.Equal("**Auto-approved:** patch bump with release notes in the PR body.", result.Decision.Comment);
             Assert.Equal(rig.Jev.Answers, result.Jev);
         }
 
@@ -1175,6 +1176,7 @@ public class RenovateTriageActivitiesTests
             Assert.Equal(TriageRules.NoChangelog, low.Decision!.Reason);
             Assert.False(high.NotesFound);
             Assert.Equal(TriageRules.ChangelogPresent, high.Decision!.Reason);
+            Assert.Equal("**Auto-approved:** patch bump, Jev scored the changelog 0.80.", high.Decision.Comment);
         }
 
         [Fact]
@@ -1187,6 +1189,83 @@ public class RenovateTriageActivitiesTests
 
             Assert.True(result.NotesFound);
             Assert.Equal(TriageRules.ChangelogPresent, result.Decision!.Reason);
+        }
+
+        [Fact]
+        public async Task FetchedChangelogSectionsWithTheirSources_NameTheReleasesTheNotesCameFrom()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+            var source = new ChangelogSource("o/r", "v1.0.1", ChangelogKind.Release);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash")], ChangelogSources: [source])));
+
+            Assert.True(result.NotesFound);
+            Assert.Equal("**Auto-approved:** patch bump with release notes from [o/r v1.0.1](https://github.com/o/r/releases/tag/v1.0.1).", result.Decision!.Comment);
+        }
+
+        [Fact]
+        public async Task FetchedChangelogSectionsWithoutSources_KeepTheGenericText()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash")])));
+
+            Assert.Equal("**Auto-approved:** patch bump with changelog.", result.Decision!.Comment);
+        }
+
+        [Fact]
+        public async Task SourcesThatDoNotMatchTheSectionsOneForOne_AreNotNamed()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+            var sources = new[] { new ChangelogSource("o/r", "v1.0.1", ChangelogKind.Release), new ChangelogSource("o/other", "v2.0.0", ChangelogKind.Release) };
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash")], ChangelogSources: sources)));
+
+            Assert.Equal("**Auto-approved:** patch bump with changelog.", result.Decision!.Comment);
+        }
+
+        [Fact]
+        public async Task NotesInTheBody_AreNamedAsTheBody_EvenWhenSectionsAndSourcesAreGiven()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+            var source = new ChangelogSource("o/r", "v1.0.1", ChangelogKind.Release);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\n- fixed a crash")], ChangelogSources: [source])));
+
+            Assert.Equal("**Auto-approved:** patch bump with release notes in the PR body.", result.Decision!.Comment);
+        }
+
+        [Fact]
+        public async Task FetchedSectionsWithoutBullets_LeaveJevsScoreToDecide_AndTheTextGivesTheScore()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.85);
+            var source = new ChangelogSource("o/r", "v1.0.1", ChangelogKind.Release);
+
+            var result = await Run(() => rig.Activities.JudgeAsync(new JudgeInput(Repo, 7, Sha, Body: ScannedText.Create(BodyWithoutNotes), Changelogs: [ScannedText.Create("## 1.0.1\n\nprose only")], ChangelogSources: [source])));
+
+            Assert.False(result.NotesFound);
+            Assert.Equal("**Auto-approved:** patch bump, Jev scored the changelog 0.85.", result.Decision!.Comment);
+        }
+
+        [Fact]
+        public async Task AJudgeInputRecordedBeforeSourcesWereCarried_StillReplaysAndDecides()
+        {
+            var rig = Create();
+            rig.Jev.Answers = new JevAnswers(0.04, "patch", 0.1);
+            var recorded = $$"""
+                {"Repo":"{{Repo}}","PrNumber":7,"HeadSha":"{{Sha}}","RetryJevErrors":true,"Body":{{JsonSerializer.Serialize(ScannedText.Create(BodyWithoutNotes))}},"Changelogs":[{{JsonSerializer.Serialize(ScannedText.Create("## 1.0.1\n\n- fixed a crash"))}}]}
+                """;
+
+            var input = RecordedPayload.Read<JudgeInput>(recorded);
+            var result = await Run(() => rig.Activities.JudgeAsync(input));
+
+            Assert.Null(input.ChangelogSources);
+            Assert.Equal(new TriageDecision(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump with changelog."), result.Decision);
         }
 
         [Fact]
