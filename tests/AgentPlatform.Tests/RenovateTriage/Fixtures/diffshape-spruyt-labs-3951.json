@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "2cb086b7a1c522203e666c8f46ba2e5dff9ef180",
+  "files": [
+    {
+      "path": "talos/patches/control-plane/07-extra-manifests.yaml",
+      "status": "modified",
+      "patch": "@@ -21,4 +21,4 @@ cluster:\n     # renovate: depName=csi-addons/kubernetes-csi-addons datasource=github-tags\n     - https://raw.githubusercontent.com/csi-addons/kubernetes-csi-addons/v0.15.1/deploy/controller/crds.yaml\n     # renovate: depName=kubernetes/autoscaler datasource=github-tags versioning=regex:^vertical-pod-autoscaler-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$\n-    - https://raw.githubusercontent.com/kubernetes/autoscaler/vertical-pod-autoscaler-1.8.0/vertical-pod-autoscaler/deploy/vpa-v1-crd-gen.yaml\n+    - https://raw.githubusercontent.com/kubernetes/autoscaler/vertical-pod-autoscaler-1.8.1/vertical-pod-autoscaler/deploy/vpa-v1-crd-gen.yaml"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "2cb086b7a1c522203e666c8f46ba2e5dff9ef180",
+      "message": "chore(deps): update dependency kubernetes/autoscaler to vertical-pod-autoscaler-1.8.1\n\n| datasource  | package               | from                          | to                            |\n| ----------- | --------------------- | ----------------------------- | ----------------------------- |\n| github-tags | kubernetes/autoscaler | vertical-pod-autoscaler-1.8.0 | vertical-pod-autoscaler-1.8.1 |"
+    }
+  ]
+}

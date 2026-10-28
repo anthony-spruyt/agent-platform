@@ -1,0 +1,22 @@
+{
+  "expectedFileCount": 2,
+  "head": "fd01b24de21d5fa8cf645997306cc7cc99759b3c",
+  "files": [
+    {
+      "path": "packages/xfg/package-lock.json",
+      "status": "modified",
+      "patch": "@@ -20,7 +20,7 @@\n         \"xfg\": \"dist/cli.js\"\n       },\n       \"devDependencies\": {\n-        \"@types/node\": \"^24.12.2\",\n+        \"@types/node\": \"^26.0.0\",\n         \"bottleneck\": \"^2.19.5\",\n         \"c8\": \"^12.0.0\",\n         \"tsx\": \"^4.15.0\",\n@@ -531,13 +531,13 @@\n       \"license\": \"MIT\"\n     },\n     \"node_modules/@types/node\": {\n-      \"version\": \"24.19.2\",\n-      \"resolved\": \"https://registry.npmjs.org/@types/node/-/node-24.19.2.tgz\",\n-      \"integrity\": \"sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==\",\n+      \"version\": \"26.6.5\",\n+      \"resolved\": \"https://registry.npmjs.org/@types/node/-/node-26.6.5.tgz\",\n+      \"integrity\": \"sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==\",\n       \"dev\": true,\n       \"license\": \"MIT\",\n       \"dependencies\": {\n-        \"undici-types\": \">=7.24.0 <7.24.7\"\n+        \"undici-types\": \"~8.9.0\"\n       }\n     },\n     \"node_modules/ansi-regex\": {\n@@ -1253,9 +1253,9 @@\n       }\n     },\n     \"node_modules/undici-types\": {\n-      \"version\": \"7.24.6\",\n-      \"resolved\": \"https://registry.npmjs.org/undici-types/-/undici-types-7.24.6.tgz\",\n-      \"integrity\": \"sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==\",\n+      \"version\": \"8.9.0\",\n+      \"resolved\": \"https://registry.npmjs.org/undici-types/-/undici-types-8.9.0.tgz\",\n+      \"integrity\": \"sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==\",\n       \"dev\": true,\n       \"license\": \"MIT\"\n     },"
+    },
+    {
+      "path": "packages/xfg/package.json",
+      "status": "modified",
+      "patch": "@@ -86,7 +86,7 @@\n     \"yaml\": \"^2.4.5\"\n   },\n   \"devDependencies\": {\n-    \"@types/node\": \"^24.12.2\",\n+    \"@types/node\": \"^26.0.0\",\n     \"bottleneck\": \"^2.19.5\",\n     \"c8\": \"^12.0.0\",\n     \"tsx\": \"^4.15.0\","
+    }
+  ],
+  "commits": [
+    {
+      "sha": "fd01b24de21d5fa8cf645997306cc7cc99759b3c",
+      "message": "chore(deps): update dependency @types/node to v26\n\n| datasource | package     | from    | to     |\n| ---------- | ----------- | ------- | ------ |\n| npm        | @types/node | 24.19.2 | 26.6.5 |"
+    }
+  ]
+}

@@ -41,6 +41,7 @@ public static partial class DiffShape
     private const string UsesShaContext = "uses-sha";
     private const string UsesCommentContext = "uses-comment";
     private const string ImageTagContext = "image-tag";
+    private const string QuotedNumberContext = "quoted-number";
 
     private static readonly HashSet<string> _lockfiles = new(StringComparer.Ordinal)
     {
@@ -66,7 +67,7 @@ public static partial class DiffShape
 
     private sealed record Token(int Start, int End, Kind Kind, string Value, string? Context = null);
 
-    private sealed record VersionPair(Kind Kind, string Old, string New, string Path, object Line, bool IsImageTag = false, bool IsIndirect = false, bool FollowsLessThan = false);
+    private sealed record VersionPair(Kind Kind, string Old, string New, string Path, object Line, string Head, string? Context = null, bool IsIndirect = false, bool FollowsLessThan = false);
 
     public static DiffShapeResult Classify(
         IReadOnlyList<DiffFile> files,
@@ -214,7 +215,7 @@ public static partial class DiffShape
 
             var head = oldLine[..before.Start];
             var followsLessThan = head.EndsWith('<') || head.EndsWith("<=", StringComparison.Ordinal);
-            pairs.Add(new VersionPair(before.Kind, before.Value, after.Value, path, line, before.Context == ImageTagContext, before.Start == indirectAt, followsLessThan));
+            pairs.Add(new VersionPair(before.Kind, before.Value, after.Value, path, line, head, before.Context, before.Start == indirectAt, followsLessThan));
         }
 
         return null;
@@ -310,13 +311,14 @@ public static partial class DiffShape
                 continue;
             }
 
-            var kind = match.Groups["digest"].Success ? Kind.Digest : match.Groups["sha"].Success ? Kind.Sha : Kind.Multi;
+            var kind = MatchKind(match);
             if (kind == Kind.Sha && match.Length != 40 && !HexLetter().IsMatch(match.Value))
             {
                 continue;
             }
 
-            tokens.Add(new Token(match.Index, match.Index + match.Length, kind, match.Value));
+            var context = kind == Kind.Single ? QuotedNumberContext : null;
+            tokens.Add(new Token(match.Index, match.Index + match.Length, kind, match.Value, context));
             occupied.Add((match.Index, match.Index + match.Length));
         }
 
@@ -331,6 +333,21 @@ public static partial class DiffShape
 
         mask.Append(line, position, line.Length - position);
         return (mask.ToString(), tokens);
+    }
+
+    private static Kind MatchKind(Match match)
+    {
+        if (match.Groups["digest"].Success)
+        {
+            return Kind.Digest;
+        }
+
+        if (match.Groups["sha"].Success)
+        {
+            return Kind.Sha;
+        }
+
+        return match.Groups["single"].Success ? Kind.Single : Kind.Multi;
     }
 
     private static bool Overlaps(List<(int Start, int End)> occupied, int start, int end) =>
@@ -373,11 +390,11 @@ public static partial class DiffShape
         if (stated.Rows is { } rows)
         {
             return pair.Kind == Kind.Multi
-                ? rows.Any(r => (IsDotPrefix(StripV(pair.Old), StripV(r.From)) && IsDotPrefix(StripV(pair.New), StripV(r.To))) || (pair.IsImageTag && StatesBeforeSharedSuffix(pair, r)))
+                ? rows.Any(r => StatesMultiPart(pair, r))
                 : rows.Any(r => MajorOf(r.From) == StripV(pair.Old) && MajorOf(r.To) == StripV(pair.New));
         }
 
-        if (stated.SubjectVersion is not { } version)
+        if (stated.SubjectVersion is not { } version || pair.Context == QuotedNumberContext)
         {
             return false;
         }
@@ -385,8 +402,15 @@ public static partial class DiffShape
         return (IsMultiPart(version) || pair.Kind == Kind.Single) && StripV(pair.New) == StripV(version);
     }
 
+    private static bool StatesMultiPart(VersionPair pair, StatedVersion row) =>
+        (IsDotPrefix(StripV(pair.Old), StripV(row.From)) && IsDotPrefix(StripV(pair.New), StripV(row.To)))
+        || (AllowsSharedSuffix(pair, row) && StatesBeforeSharedSuffix(pair, row))
+        || StatesAfterSharedPrefix(pair, row)
+        || StatesRangeLowerBound(pair, row);
+
     private static bool IsDotPrefix(string prefix, string version) =>
-        version.StartsWith(prefix, StringComparison.Ordinal) && (version.Length == prefix.Length || version[prefix.Length] == '.');
+        version.StartsWith(prefix, StringComparison.Ordinal)
+        && (version.Length == prefix.Length || (version[prefix.Length] == '.' && version.Length > prefix.Length + 1 && char.IsAsciiDigit(version[prefix.Length + 1])));
 
     private static bool TakeRangeUpperBound(VersionPair pair, List<VersionPair> statedPairs, HashSet<VersionPair> bounded)
     {
@@ -430,6 +454,84 @@ public static partial class DiffShape
         Version.TryParse(GoCore(old), out var from) && Version.TryParse(GoCore(next), out var to) && to > from;
 
     private static string GoCore(string version) => StripV(version).Split('-', '+')[0];
+
+    private static bool StatesAfterSharedPrefix(VersionPair pair, StatedVersion row) =>
+        SplitDashPrefix(row.From) is { } from
+        && SplitDashPrefix(row.To) is { } to
+        && string.Equals(from.Prefix, to.Prefix, StringComparison.Ordinal)
+        && pair.Head.EndsWith(from.Prefix, StringComparison.Ordinal)
+        && IsDotPrefix(pair.Old, from.Version)
+        && IsDotPrefix(pair.New, to.Version);
+
+    private static (string Prefix, string Version)? SplitDashPrefix(string value)
+    {
+        for (var dash = value.IndexOf('-', StringComparison.Ordinal); dash >= 0; dash = value.IndexOf('-', dash + 1))
+        {
+            if (MultiPartFull().IsMatch(value[(dash + 1)..]))
+            {
+                return (value[..(dash + 1)], value[(dash + 1)..]);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool StatesRangeLowerBound(VersionPair pair, StatedVersion row) =>
+        RangeOperatorEnd().Match(pair.Head) is { Success: true } range
+        && DottedNumbers(pair.Old) is { } oldBound
+        && DottedNumbers(pair.New) is { } newBound
+        && DottedNumbers(row.From) is { } from
+        && DottedNumbers(row.To) is { } to
+        && CompareParts(newBound, oldBound) > 0
+        && RangeIncludes(range.Groups["op"].Value, oldBound, from)
+        && RangeIncludes(range.Groups["op"].Value, newBound, to);
+
+    private static bool RangeIncludes(string op, int[] bound, int[] version) =>
+        CompareParts(version, bound) >= 0
+        && Enumerable.Range(0, FixedParts(op, bound)).All(i => PartAt(version, i) == PartAt(bound, i));
+
+    private static int FixedParts(string op, int[] bound) => op switch
+    {
+        "^" => Array.FindIndex(bound, part => part != 0) switch { < 0 => bound.Length, var first => first + 1 },
+        "~" => Math.Min(2, bound.Length),
+        "~>" => Math.Max(1, bound.Length - 1),
+        _ => bound[0] == 0 ? 2 : 1,
+    };
+
+    private static int CompareParts(int[] left, int[] right)
+    {
+        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
+        {
+            var order = PartAt(left, i).CompareTo(PartAt(right, i));
+            if (order != 0)
+            {
+                return order;
+            }
+        }
+
+        return 0;
+    }
+
+    private static int PartAt(int[] parts, int index) => index < parts.Length ? parts[index] : 0;
+
+    private static int[]? DottedNumbers(string version)
+    {
+        var parts = StripV(version).Split('.');
+        var numbers = new int[parts.Length];
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (!int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i]))
+            {
+                return null;
+            }
+        }
+
+        return numbers;
+    }
+
+    // A suffix after the version is docker tag syntax: other datasources have to state it in their row.
+    private static bool AllowsSharedSuffix(VersionPair pair, StatedVersion row) =>
+        pair.Context == ImageTagContext || (pair.Context is null && string.Equals(row.Datasource, "docker", StringComparison.Ordinal));
 
     private static bool StatesBeforeSharedSuffix(VersionPair pair, StatedVersion row)
     {
@@ -509,17 +611,20 @@ public static partial class DiffShape
     [GeneratedRegex(@"^\s*(?:require\s+)?(?<mod>\S*[./]\S*)\s+(?<ver>v\S+)\s+// indirect\r?$", RegexOptions.CultureInvariant)]
     private static partial Regex GoIndirectRequire();
 
-    [GeneratedRegex(@"uses:\s*""?[\w.-]+/[^@\s""]+@(?<sha>[0-9a-f]{40})""?\s*#\s*(?<ver>v?[0-9]+(?:\.[0-9]+)*(?:[-+][\w.]+)*)\s*$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"uses:\s*""?[\w.-]+/[^@\s""]+@(?<sha>[0-9a-f]{40})""?\s*#\s*(?:[\w.-]+-)??(?<ver>v?[0-9]+(?:\.[0-9]+)*(?:[-+][\w.]+)*)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex UsesPin();
 
     [GeneratedRegex(@"(?<![\w./:@-])(?<name>(?:[a-z0-9][a-z0-9.-]*(?::[0-9]+)?/)?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*)(?<!(?:^|[^\w.-])sha256):(?<tag>\w[\w.+-]{0,127}?)(?<dig>@sha256:[0-9a-f]{64})?(?![\w.+-])", RegexOptions.CultureInvariant)]
     private static partial Regex ImageReference();
 
-    [GeneratedRegex(@"(?<digest>sha256:[0-9a-f]{64}|sha512-[A-Za-z0-9+/]{86,88}={0,2}(?![A-Za-z0-9+/=])|(?<![0-9A-Za-z])(?:[0-9a-f]{128}|[0-9a-f]{64})(?![0-9A-Za-z]))|(?<sha>(?<![0-9A-Za-z])(?:[0-9a-f]{40}|[0-9a-f]{7,12})(?![0-9A-Za-z]))|(?<multi>(?<![\w.])v?[0-9]+(?:\.[0-9]+)+(?:[-+][\w.]+)*(?![\w.]))", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<digest>sha256:[0-9a-f]{64}|sha512-[A-Za-z0-9+/]{86,88}={0,2}(?![A-Za-z0-9+/=])|(?<![0-9A-Za-z])(?:[0-9a-f]{128}|[0-9a-f]{64})(?![0-9A-Za-z]))|(?<sha>(?<![0-9A-Za-z])(?:[0-9a-f]{40}|[0-9a-f]{7,12})(?![0-9A-Za-z]))|(?<multi>(?<![\w.])v?[0-9]+(?:\.[0-9]+)+(?:(?:\.post|\.dev|a|b|rc)[0-9]+)?(?:[-+][\w.]+)*(?![\w.]))|(?<single>(?<="")v?[0-9]+(?=""))", RegexOptions.CultureInvariant)]
     private static partial Regex AnyToken();
 
     [GeneratedRegex(@"^v?[0-9]+(?:\.[0-9]+)+(?:[-+][\w.]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex MultiPartFull();
+
+    [GeneratedRegex(@"(?:(?<op>\^|~|>=)|(?<op>~>) ?)$", RegexOptions.CultureInvariant)]
+    private static partial Regex RangeOperatorEnd();
 
     [GeneratedRegex(@"^v?[0-9]+(?:[-+][\w.]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex SinglePartFull();
