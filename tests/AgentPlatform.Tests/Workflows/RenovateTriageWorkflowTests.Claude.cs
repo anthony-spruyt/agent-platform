@@ -22,6 +22,8 @@ public partial class RenovateTriageWorkflowTests
 
     private static readonly string[] GreenReasons = ["CI is green"];
 
+    private static readonly string[] CiRaceWake = ["assess", "verdict", "apply"];
+
     // Checks pass and Jev reports a likely breaking change, so the rules hand the head to the agent.
     private static Rig Climbing()
     {
@@ -255,7 +257,7 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task AfterACiRaceAbort_TheNextAssessIsRecordedUnderItsOwnStepNumber()
+    public async Task AfterEachCiRaceAbort_TheNextAssessIsRecordedUnderItsOwnStepNumber()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = Climbing();
@@ -269,13 +271,22 @@ public partial class RenovateTriageWorkflowTests
         {
             var handle = await StartAsync(env, Signal());
             await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
+            for (var aborts = 2; aborts <= 3; aborts++)
+            {
+                await env.DelayAsync(RenovateTriageWorkflow.StatusPollInterval + TimeSpan.FromSeconds(30));
+                await WaitForStepAsync(rig, "apply", "Aborted", atLeast: aborts);
+            }
+
             rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
             return await RunToResultAsync(handle);
         });
 
         var steps = await StepsAsync(rig);
-        var aborted = steps.FindIndex(s => s is { Name: "apply", StopReason: "Aborted" });
-        Assert.Equal(["assess", "verdict", "apply"], steps.Skip(aborted + 1).Select(s => s.Name));
+        var first = steps.FindIndex(s => s is { Name: "apply", StopReason: "Aborted" });
+        var after = steps.Skip(first + 1).ToList();
+        Assert.Equal(3, steps.Count(s => s is { Name: "apply", StopReason: "Aborted" }));
+        Assert.Equal(Enumerable.Repeat(CiRaceWake, 3).SelectMany(wake => wake), after.Select(s => s.Name));
+        Assert.Equal(Enumerable.Range(steps[first].Seq + 1, after.Count), after.Select(s => s.Seq));
     }
 
     [Theory]

@@ -783,13 +783,13 @@ public partial class RenovateTriageWorkflowTests
         rig.Github.Checks[1] = new GitHubCheckRun(2, "build", "completed", "success", "github-actions");
     }
 
-    private static async Task WaitForStepAsync(Rig rig, string name, string? stopReason = null)
+    private static async Task WaitForStepAsync(Rig rig, string name, string? stopReason = null, int atLeast = 1)
     {
         var deadline = DateTime.UtcNow.AddSeconds(20);
         while (true)
         {
             await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
-            if (await db.RunSteps.AnyAsync(s => s.Name == name && (stopReason == null || s.StopReason == stopReason), Ct))
+            if (await db.RunSteps.CountAsync(s => s.Name == name && (stopReason == null || s.StopReason == stopReason), Ct) >= atLeast)
             {
                 return;
             }
