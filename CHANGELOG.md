@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.20.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.19.1...v1.20.0) (2026-10-28)
+
+
+### Features
+
+* **triage:** put Renovate security PRs ahead of the Claude caps ([#188](https://github.com/anthony-spruyt/agent-platform/issues/188)) ([5972d9b](https://github.com/anthony-spruyt/agent-platform/commit/5972d9b9dbc195317479550570b9be094ae9cd2b))
+* **triage:** say where the notes came from in a changelog-present approval ([#189](https://github.com/anthony-spruyt/agent-platform/issues/189)) ([79776c4](https://github.com/anthony-spruyt/agent-platform/commit/79776c43b496882082d5fe364c3f0b38baadf859))
+
 ## [1.19.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.19.0...v1.19.1) (2026-10-28)
 
 
