@@ -22,6 +22,8 @@ public partial class RenovateTriageWorkflowTests
 
     private static readonly string[] GreenReasons = ["CI is green"];
 
+    private static readonly string[] CiRaceWake = ["assess", "verdict", "apply"];
+
     // Checks pass and Jev reports a likely breaking change, so the rules hand the head to the agent.
     private static Rig Climbing()
     {
@@ -223,6 +225,68 @@ public partial class RenovateTriageWorkflowTests
         var applies = (await StepsAsync(rig)).Where(s => s.Name == "apply").ToList();
         Assert.Equal(["Aborted", "Applied"], applies.Select(s => s.StopReason));
         Assert.True(applies[1].StartedAt - applies[0].StartedAt < RenovateTriageWorkflow.CiTimeout, $"Applied after {applies[1].StartedAt - applies[0].StartedAt}.");
+    }
+
+    [Fact]
+    public async Task ASafeAnswer_WhoseChecksRestartBeforeTheApply_IsApprovedOnTheNextPoll_WithoutASignal()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = Answers(env, during: () =>
+        {
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            return Task.CompletedTask;
+        });
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
+            Assert.Empty(rig.Github.Approvals);
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            return await RunToResultAsync(handle, "renovate-triage-ci-poll-race");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, "claude-safe", TriageVerdict.Safe), result);
+        Assert.Equal([ShaA], rig.Github.Approvals.Select(a => a.CommitId));
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+        Assert.Single(rig.Pods.Inputs);
+        var applies = (await StepsAsync(rig)).Where(s => s.Name == "apply").ToList();
+        Assert.Equal(["Aborted", "Applied"], applies.Select(s => s.StopReason));
+        Assert.True(applies[1].StartedAt - applies[0].StartedAt < 2 * RenovateTriageWorkflow.StatusPollInterval, $"Applied after {applies[1].StartedAt - applies[0].StartedAt}.");
+    }
+
+    [Fact]
+    public async Task AfterEachCiRaceAbort_TheNextAssessIsRecordedUnderItsOwnStepNumber()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = Answers(env, during: () =>
+        {
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            return Task.CompletedTask;
+        });
+
+        await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
+            for (var aborts = 2; aborts <= 3; aborts++)
+            {
+                await env.DelayAsync(RenovateTriageWorkflow.StatusPollInterval + TimeSpan.FromSeconds(30));
+                await WaitForStepAsync(rig, "apply", "Aborted", atLeast: aborts);
+            }
+
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            return await RunToResultAsync(handle);
+        });
+
+        var steps = await StepsAsync(rig);
+        var first = steps.FindIndex(s => s is { Name: "apply", StopReason: "Aborted" });
+        var after = steps.Skip(first + 1).ToList();
+        Assert.Equal(3, steps.Count(s => s is { Name: "apply", StopReason: "Aborted" }));
+        Assert.Equal(Enumerable.Repeat(CiRaceWake, 3).SelectMany(wake => wake), after.Select(s => s.Name));
+        Assert.Equal(Enumerable.Range(steps[first].Seq + 1, after.Count), after.Select(s => s.Seq));
     }
 
     [Theory]
