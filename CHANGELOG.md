@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.0...v1.20.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **triage:** auto-approve Docker Hub bumps of our own images ([#197](https://github.com/anthony-spruyt/agent-platform/issues/197)) ([8ed0d76](https://github.com/anthony-spruyt/agent-platform/commit/8ed0d7694aee7386d1ac4935d2f512c7b4ed1faf))
+
 ## [1.20.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.19.1...v1.20.0) (2026-10-28)
 
 
