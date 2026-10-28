@@ -64,7 +64,7 @@ public partial class RenovateTriageWorkflow
     private string _climbHead = string.Empty;
     private int _seq;
 
-    private sealed record Climb(RenovateTriageInput Input, BeginRunResult? Run, string HeadSha, string Template, string Prompt, string Model, int SignalsSeen);
+    private sealed record Climb(RenovateTriageInput Input, BeginRunResult? Run, string HeadSha, string Template, string Prompt, string Model, int SignalsSeen, bool Security);
 
     private sealed record Attempt(TriageDecision? Decision, bool UsageLimit = false, DateTimeOffset? ResetsAt = null);
 
@@ -119,7 +119,7 @@ public partial class RenovateTriageWorkflow
         var template = await Workflow.ExecuteActivityAsync(
             (PromptActivities activities) => activities.LoadPromptAsync(AgentPrompts.RenovateTriage),
             _promptOptions);
-        var climb = new Climb(input, run, headSha, template, AgentPrompts.Render(template, new AgentRepoContext(input.Repo, input.PrNumber, headSha)), queued.Model, signalsSeen);
+        var climb = new Climb(input, run, headSha, template, AgentPrompts.Render(template, new AgentRepoContext(input.Repo, input.PrNumber, headSha)), queued.Model, signalsSeen, queued.Security);
 
         while (true)
         {
@@ -185,7 +185,7 @@ public partial class RenovateTriageWorkflow
         try
         {
             var reservation = await Workflow.ExecuteActivityAsync(
-                (ClaudeBudgetActivities activities) => activities.ReserveAsync(new ReserveClaudeRunInput(Workflow.NewGuid(), climb.Input.Repo, climb.Input.PrNumber, climb.HeadSha, climb.Model)),
+                (ClaudeBudgetActivities activities) => activities.ReserveAsync(new ReserveClaudeRunInput(Workflow.NewGuid(), climb.Input.Repo, climb.Input.PrNumber, climb.HeadSha, climb.Model, climb.Security)),
                 _reserveOptions);
             await RecordStepAsync(climb.Run, ++_seq, "reserve", LadderRung.Rule, reservation.Kind.ToString().ToLowerInvariant(), stepStarted, reservation);
             return reservation;

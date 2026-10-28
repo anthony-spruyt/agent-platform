@@ -64,12 +64,15 @@ public class SweeperActivitiesTests
         public void OpenPullRequest(int number, params string[] labels) =>
             Github.PullRequestsByNumber[number] = (FakeGitHubApi.Renovate() with { Number = number, Labels = labels });
 
-        public async Task CooldownAsync()
+        public async Task SpendAsync(int runs)
         {
-            await using var db = await Data.Factory.CreateDbContextAsync(Ct);
-            db.ClaudeCooldowns.Add(new ClaudeCooldown { Scope = ClaudeCooldown.Global, Until = Now.AddHours(1), Cause = "usage-limit" });
-            await db.SaveChangesAsync(Ct);
+            for (var i = 0; i < runs; i++)
+            {
+                await Data.SeedRunAsync("anthony-spruyt/spent", 900 + i, Now.AddMinutes(-10 - i), Ct);
+            }
         }
+
+        public Task CooldownAsync() => Data.SeedCooldownAsync(ClaudeCooldown.Global, Now.AddHours(1), Ct);
 
         public void OpenCheck(int pr, string conclusion = "", string status = "in_progress")
         {
@@ -137,6 +140,62 @@ public class SweeperActivitiesTests
         Assert.Equal([11, 12], rig.Signaler.Signals.Select(s => s.PrNumber));
         Assert.Equal(TriagePendingStatus.Pending, await rig.StatusAsync(13));
         Assert.Equal(2, result.Redriven);
+    }
+
+    [Fact]
+    public async Task ASecurityPullRequest_IsRedrivenFirst_AndTakesASlotFromTheOthers()
+    {
+        var rig = new Rig(perHour: 2);
+        foreach (var pr in new[] { 11, 12, 13 })
+        {
+            await rig.ParkAsync(pr);
+        }
+
+        rig.OpenPullRequest(11);
+        rig.OpenPullRequest(12);
+        rig.OpenPullRequest(13, TriageRules.SecurityLabel);
+
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal([13, 11], rig.Signaler.Signals.Select(s => s.PrNumber));
+        Assert.Equal(TriagePendingStatus.Redriven, await rig.StatusAsync(13));
+        Assert.Equal(TriagePendingStatus.Pending, await rig.StatusAsync(12));
+        Assert.Equal(2, result.Redriven);
+    }
+
+    [Fact]
+    public async Task ASecurityPullRequest_IsRedriven_WhenTheHourlyCapIsFull_AndTheOthersWait()
+    {
+        var rig = new Rig(perHour: 2);
+        await rig.SpendAsync(2);
+        foreach (var pr in new[] { 11, 12, 13 })
+        {
+            await rig.ParkAsync(pr);
+        }
+
+        rig.OpenPullRequest(11);
+        rig.OpenPullRequest(12);
+        rig.OpenPullRequest(13, TriageRules.SecurityLabel);
+
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal([13], rig.Signaler.Signals.Select(s => s.PrNumber));
+        Assert.Equal(TriagePendingStatus.Pending, await rig.StatusAsync(11));
+        Assert.Equal(1, result.Redriven);
+    }
+
+    [Fact]
+    public async Task ASecurityPullRequest_StaysOutOfTheLineWhileBlocked()
+    {
+        var rig = new Rig(perHour: 2);
+        await rig.SpendAsync(2);
+        await rig.ParkAsync(13);
+        rig.OpenPullRequest(13, TriageRules.SecurityLabel, TriageRules.BlockedLabel);
+
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Equal(0, result.Redriven);
     }
 
     [Fact]

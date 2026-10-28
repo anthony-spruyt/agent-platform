@@ -120,6 +120,25 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal(AgentPrompts.RenovateTriage, prompt.Name);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheSecurityLabel_TravelsFromTheQueueStepToTheReservation(bool labelled)
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        if (labelled)
+        {
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [.. rig.Github.PullRequest.Labels, TriageRules.SecurityLabel] };
+        }
+
+        rig.Pods.OnRun = Answers(env);
+
+        await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(labelled, Assert.Single(rig.Budget.Reserves).Security);
+    }
+
     [Fact]
     public async Task ASafeAnswer_WhoseChecksRestartBeforeTheApply_WaitsForCiAndThenApprovesInsteadOfHandingOff()
     {

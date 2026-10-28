@@ -37,13 +37,13 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
 
         public required TriagePendingStore Pending { get; init; }
 
-        public async Task<ClaudeReservation> ReserveAsync(int pr, string sha = Sha, string repo = Repo, Guid? runId = null, CancellationToken ct = default) =>
-            await Budget.ReserveAsync("wf-" + pr, new ReserveClaudeRunInput(runId ?? Guid.NewGuid(), repo, pr, sha, Model), ct);
+        public async Task<ClaudeReservation> ReserveAsync(int pr, string sha = Sha, string repo = Repo, Guid? runId = null, bool security = false, CancellationToken ct = default) =>
+            await Budget.ReserveAsync("wf-" + pr, new ReserveClaudeRunInput(runId ?? Guid.NewGuid(), repo, pr, sha, Model, security), ct);
 
-        public async Task<Guid> RunAsync(int pr, ClaudeRunOutcome outcome, string sha = Sha, string repo = Repo, CancellationToken ct = default)
+        public async Task<Guid> RunAsync(int pr, ClaudeRunOutcome outcome, string sha = Sha, string repo = Repo, bool security = false, CancellationToken ct = default)
         {
             await Pending.UpsertAsync(repo, pr, sha, "ci-failed", ct);
-            var reservation = await ReserveAsync(pr, sha, repo, ct: ct);
+            var reservation = await ReserveAsync(pr, sha, repo, security: security, ct: ct);
             Assert.Equal(ClaudeReservationKind.Reserved, reservation.Kind);
             await Budget.MarkPodCreatedAsync(reservation.RunId!.Value, ct);
             await Budget.FinishAsync(new FinishClaudeRunInput(reservation.RunId.Value, outcome), ct);
@@ -153,6 +153,37 @@ public class ClaudeBudgetIntegrationTests(AppHostFixture fixture)
 
         Assert.Equal(ClaudeReservation.Park(ClaudeBudgetCauses.PrDailyCap, Start.AddHours(24)), parked);
         Assert.Equal(ClaudeReservationKind.Reserved, (await h.ReserveAsync(8, ct: ct)).Kind);
+    }
+
+    [Fact]
+    public async Task Reserve_ForASecurityPullRequest_SkipsTheHourlyAndDailyCaps_AndStillCountsTowardThem()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 1, MaxPerDay = 1, MaxPerPrPerDay = 2 });
+        await h.RunAsync(1, ClaudeRunOutcome.Succeeded, ct: ct);
+
+        Assert.Equal(ClaudeReservation.Park(ClaudeBudgetCauses.DailyCap, Start.AddHours(24)), await h.ReserveAsync(2, ct: ct));
+        var security = await h.ReserveAsync(2, security: true, ct: ct);
+
+        Assert.Equal(ClaudeReservationKind.Reserved, security.Kind);
+        await h.Budget.MarkPodCreatedAsync(security.RunId!.Value, ct);
+        await using var db = await h.Factory.CreateDbContextAsync(ct);
+        Assert.Equal(2, await db.ClaudeRuns.CountAsync(ct));
+        Assert.Equal(ClaudeBudgetCauses.DailyCap, (await h.ReserveAsync(3, ct: ct)).Cause);
+    }
+
+    [Fact]
+    public async Task Reserve_ForASecurityPullRequest_StillParksAtThePerPrCap()
+    {
+        using var _ = Scope(out var ct);
+        var h = await StartAsync(ct, new ClaudeBudgetOptions { MaxPerHour = 1, MaxPerDay = 1, MaxPerPrPerDay = 2 });
+        await h.RunAsync(7, ClaudeRunOutcome.Succeeded, ct: ct);
+        await h.RunAsync(7, ClaudeRunOutcome.Succeeded, new string('a', 40), security: true, ct: ct);
+
+        var parked = await h.ReserveAsync(7, new string('b', 40), security: true, ct: ct);
+
+        Assert.Equal(ClaudeBudgetCauses.PrDailyCap, parked.Cause);
+        Assert.Equal(ClaudeReservationKind.Reserved, (await h.ReserveAsync(8, security: true, ct: ct)).Kind);
     }
 
     [Theory]
