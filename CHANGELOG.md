@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.19.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.19.0...v1.19.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **deps:** update aspire monorepo to 13.6.2 ([#171](https://github.com/anthony-spruyt/agent-platform/issues/171)) ([d3d6910](https://github.com/anthony-spruyt/agent-platform/commit/d3d69103730c601c56439c3d7903c76be441ee98))
+* **deps:** update opentelemetry-dotnet monorepo to 1.20.1 ([#172](https://github.com/anthony-spruyt/agent-platform/issues/172)) ([f8cb36d](https://github.com/anthony-spruyt/agent-platform/commit/f8cb36dc04ef8d43bf5e2c390f858375592f0a65))
+* **deps:** update temporalio-dotnet to 1.21.0 ([#176](https://github.com/anthony-spruyt/agent-platform/issues/176)) ([4525abe](https://github.com/anthony-spruyt/agent-platform/commit/4525abe90065141ca03625ad836707efb13452fe))
+* **triage:** accept dot-less, prefixed, suffixed, range and PEP 440 versions as version-only ([#181](https://github.com/anthony-spruyt/agent-platform/issues/181)) ([cf8efde](https://github.com/anthony-spruyt/agent-platform/commit/cf8efde69b94b683f70163715d46b3e84059cab5))
+
 ## [1.19.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.18.0...v1.19.0) (2026-10-26)
 
 
