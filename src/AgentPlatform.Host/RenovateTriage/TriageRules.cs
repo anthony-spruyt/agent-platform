@@ -129,6 +129,7 @@ public static partial class TriageRules
         "renovate/docker-metadata-action-digest",
         "renovate/docker-setup-buildx-action-digest",
         "renovate/aspruyt",
+        "renovate/docker.io-aspruyt",
         "renovate/node-24",
         "renovate/aikidosec-safe-chain",
     ];

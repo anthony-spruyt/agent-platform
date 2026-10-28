@@ -973,6 +973,7 @@ public class TriageRulesTests
         [InlineData("renovate/docker-metadata-action-digest")]
         [InlineData("renovate/docker-setup-buildx-action-digest")]
         [InlineData("renovate/aspruyt-foo")]
+        [InlineData("renovate/docker.io-aspruyt-foo")]
         [InlineData("renovate/node-24")]
         [InlineData("renovate/node-24.x")]
         [InlineData("renovate/aikidosec-safe-chain")]
