@@ -287,28 +287,28 @@ What each verdict writes, after the gates:
 
 The comments:
 
-| Reason                | Text                                                                                                              |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `ci-failed`           | **Needs review:** CI failed on `<short sha>`. Failed: `<check names, linked>`.                                    |
-| `high-risk`           | **Needs review:** `<matched term>` is on the high-risk list. These always get a human look.                       |
-| `breaking`            | **Needs review:** likely breaking changes (Jev score `<x>`).                                                      |
-| `major-bump`          | **Needs review:** major bump, `<old>` -> `<new>`.                                                                 |
-| `calver-bump`         | **Needs review:** calendar-versioned bump, `<old>` -> `<new>`. The version can't show whether it breaks anything. |
-| `other-bump`          | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
-| `unknown-bump`        | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                |
-| `no-changelog`        | **Needs review:** no changelog found for this bump.                                                               |
-| `jev-error`           | **Needs review:** the triage check couldn't run (Jev error).                                                      |
-| `bump-type-mismatch`  | **Needs review:** the versions in the diff (`<old>` -> `<new>`) don't match the bump type Jev picked (`<type>`).  |
-| `digest-mismatch`     | **Needs review:** marked as a digest bump, but more than a digest changed.                                        |
-| `non-renovate-commit` | **Needs review:** this PR has commits that Renovate didn't make.                                                  |
-| `ci-timeout`          | **Needs review:** CI didn't finish within 2 hours.                                                                |
-| `digest`              | Review body: **Auto-approved:** digest bump.                                                                      |
-| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes in the PR body.                        |
-| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes from `<release links>`.                |
-| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump, Jev scored the changelog `<score>`.                      |
-| `allowlisted`         | Review body: **Auto-approved:** allowlisted.                                                                      |
-| Sticky edit           | **Auto-approved:** new commit `<short sha>`, `<reason>`. The reason is the review body's text, lowercased.        |
-| Dismissal message     | A newer commit needs review.                                                                                      |
+| Reason                | Text                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ci-failed`           | **Needs review:** CI failed on `<short sha>`. Failed: `<check names, linked>`.                                                  |
+| `high-risk`           | **Needs review:** `<matched term>` is on the high-risk list. These always get a human look.                                     |
+| `breaking`            | **Needs review:** likely breaking changes (Jev score `<x>`).                                                                    |
+| `major-bump`          | **Needs review:** major bump, `<old>` -> `<new>`.                                                                               |
+| `calver-bump`         | **Needs review:** calendar-versioned bump, `<old>` -> `<new>`. The version can't show whether it breaks anything.               |
+| `other-bump`          | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                              |
+| `unknown-bump`        | **Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.                              |
+| `no-changelog`        | **Needs review:** no changelog found for this bump.                                                                             |
+| `jev-error`           | **Needs review:** the triage check couldn't run (Jev error).                                                                    |
+| `bump-type-mismatch`  | **Needs review:** the versions in the diff (`<old>` -> `<new>`) don't match the bump type Jev picked (`<type>`).                |
+| `digest-mismatch`     | **Needs review:** marked as a digest bump, but more than a digest changed.                                                      |
+| `non-renovate-commit` | **Needs review:** this PR has commits that Renovate didn't make.                                                                |
+| `ci-timeout`          | **Needs review:** CI didn't finish within 2 hours.                                                                              |
+| `digest`              | Review body: **Auto-approved:** digest bump.                                                                                    |
+| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes in the PR body.                                      |
+| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes from `<release or CHANGELOG.md links>`.              |
+| `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump, Jev scored the changelog `<score>`.                                    |
+| `allowlisted`         | Review body: **Auto-approved:** allowlisted.                                                                                    |
+| Sticky edit           | **Auto-approved:** new commit `<short sha>`, `<reason>`. The reason is the review body's text with its first letter lowercased. |
+| Dismissal message     | A newer commit needs review.                                                                                                    |
 
 ## Run data
 

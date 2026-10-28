@@ -1142,7 +1142,7 @@ public class TriageRulesTests
         [InlineData(0.85, "0.85")]
         [InlineData(0.7, "0.70")]
         [InlineData(1, "1.00")]
-        public void WithoutNotesInCode_AJevScoreAtTheThresholdApproves_AndTheTextGivesTheScoreToTwoPlaces(double score, string shown)
+        public void WithoutNotesInCode_AJevScoreAtOrAboveTheThresholdApproves_AndTheTextGivesTheScoreToTwoPlaces(double score, string shown)
         {
             var decision = Decide("renovate/foo", Jev("patch", changelog: score), sources: [Release()]);
 
