@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "5574acf9cfcf55ca888fb008d6e2a951b9281de2",
+  "files": [
+    {
+      "path": "cluster/apps/enshrouded/enshrouded/app/values.yaml",
+      "status": "modified",
+      "patch": "@@ -35,7 +35,7 @@ controllers:\n       app:\n         image:\n           repository: mornedhels/enshrouded-server\n-          tag: \"1.8.0-wine@sha256:45912c59b8f0a1805b7ff73d616a379d973e6436105ca4533cf681f6096a1920\"\n+          tag: \"1.8.1-wine@sha256:002a8ac3387eddc5151b18ab5e7c02f9382f8e941dcfc75e56fa5134bd18f283\"\n           pullPolicy: IfNotPresent\n         # Wine gives every new thread the CPU mask its first process started with, so pin before bootstrap starts\n         command:"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "5574acf9cfcf55ca888fb008d6e2a951b9281de2",
+      "message": "chore(deps): update container image mornedhels/enshrouded-server to v1.8.1\n\n| datasource | package                      | from  | to    |\n| ---------- | ---------------------------- | ----- | ----- |\n| docker     | mornedhels/enshrouded-server | 1.8.0 | 1.8.1 |"
+    }
+  ]
+}

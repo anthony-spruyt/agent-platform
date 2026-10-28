@@ -46,7 +46,15 @@ public class DiffShapeFixtureTests
     [InlineData("litellm-middleware-89")]
     [InlineData("litellm-middleware-69")]
     [InlineData("kata-tap-qdisc-fix-26")]
-    public void MergedRenovatePrs_Pass(string name)
+    [InlineData("repo-operator-1107")]
+    [InlineData("xfg-1315")]
+    [InlineData("container-images-2585")]
+    [InlineData("spruyt-labs-3806")]
+    [InlineData("spruyt-labs-3951")]
+    [InlineData("xfg-1314")]
+    [InlineData("spruyt-labs-3890")]
+    [InlineData("xfg-1311")]
+    public void RenovatePrs_Pass(string name)
     {
         Assert.True(Classify(name).Passed);
     }
@@ -54,7 +62,9 @@ public class DiffShapeFixtureTests
     [Theory]
     [InlineData("container-images-2291", DiffShapeFailure.VersionNotStated)]
     [InlineData("container-images-2241", DiffShapeFailure.NotAVersionChange)]
-    public void MergedRenovatePrsWithUnstatedOrUnpairedChanges_Fail(string name, DiffShapeFailure expected)
+    [InlineData("xfg-1272", DiffShapeFailure.UnpairedLines)]
+    [InlineData("spruyt-labs-3798", DiffShapeFailure.NotAVersionChange)]
+    public void RenovatePrsWithUnstatedOrUnpairedChanges_Fail(string name, DiffShapeFailure expected)
     {
         Assert.Equal(expected, Classify(name).Failure);
     }

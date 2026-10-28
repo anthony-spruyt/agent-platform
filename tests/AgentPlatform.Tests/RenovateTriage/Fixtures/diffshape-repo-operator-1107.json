@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "4af61c5dc3dcd45edc8417f8e30f04abe5899005",
+  "files": [
+    {
+      "path": ".github/workflows/image-age.yaml",
+      "status": "modified",
+      "patch": "@@ -42,7 +42,7 @@ jobs:\n       - name: Set up Node\n         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n         with:\n-          node-version: \"24\"\n+          node-version: \"26\"\n \n       - name: Extract images\n         env:\n@@ -152,7 +152,7 @@ jobs:\n       - name: Set up Node\n         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n         with:\n-          node-version: \"24\"\n+          node-version: \"26\"\n \n       - name: Download preset\n         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "4af61c5dc3dcd45edc8417f8e30f04abe5899005",
+      "message": "chore(deps): update dependency node to v26\n\n| datasource      | package               | from    | to      |\n| --------------- | --------------------- | ------- | ------- |\n| github-releases | actions/node-versions | 24.22.1 | 26.12.0 |"
+    }
+  ]
+}

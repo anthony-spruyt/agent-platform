@@ -1,0 +1,27 @@
+{
+  "expectedFileCount": 3,
+  "head": "5b205f81487014bcde9d8da4c86f7b44511f4f6e",
+  "files": [
+    {
+      "path": "cluster/apps/coder-system/coder-template-sync/app/templates/devcontainer/main.tf",
+      "status": "modified",
+      "patch": "@@ -11,7 +11,7 @@ terraform {\n       # trips \"Unexpected Identity Change\" on refresh for pods created by\n       # previous plan iterations, blocking destroy/recreate. See\n       # hashicorp/terraform-provider-kubernetes issues around v3.0.\n-      version = \"~> 2.38\"\n+      version = \"~> 3.0\"\n     }\n     envbuilder = {\n       source  = \"coder/envbuilder\""
+    },
+    {
+      "path": "cluster/apps/coder-system/coder-template-sync/app/templates/spruyt-labs/main.tf",
+      "status": "modified",
+      "patch": "@@ -8,7 +8,7 @@ terraform {\n     kubernetes = {\n       source = \"hashicorp/kubernetes\"\n       # <3.x: v3 pod identity tracking trips \"Unexpected Identity Change\" on refresh, blocking recreate.\n-      version = \"~> 2.38\"\n+      version = \"~> 3.0\"\n     }\n     envbuilder = {\n       source  = \"coder/envbuilder\""
+    },
+    {
+      "path": "cluster/apps/coder-system/coder-template-sync/app/templates/xfg/main.tf",
+      "status": "modified",
+      "patch": "@@ -11,7 +11,7 @@ terraform {\n       # trips \"Unexpected Identity Change\" on refresh for pods created by\n       # previous plan iterations, blocking destroy/recreate. See\n       # hashicorp/terraform-provider-kubernetes issues around v3.0.\n-      version = \"~> 2.38\"\n+      version = \"~> 3.0\"\n     }\n     envbuilder = {\n       source  = \"coder/envbuilder\""
+    }
+  ],
+  "commits": [
+    {
+      "sha": "5b205f81487014bcde9d8da4c86f7b44511f4f6e",
+      "message": "chore(deps): update terraform kubernetes to v3\n\n| datasource         | package              | from   | to    |\n| ------------------ | -------------------- | ------ | ----- |\n| terraform-provider | hashicorp/kubernetes | 2.38.0 | 3.4.0 |"
+    }
+  ]
+}

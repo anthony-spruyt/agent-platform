@@ -1,0 +1,32 @@
+{
+  "expectedFileCount": 4,
+  "head": "eac5e0325d7005a542aaf1ed11fe56f332581a9e",
+  "files": [
+    {
+      "path": "llm-guard-cuda/Dockerfile",
+      "status": "modified",
+      "patch": "@@ -1,5 +1,5 @@\n # renovate: datasource=docker depName=python\n-ARG PYTHON_VERSION=3.14-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a\n+ARG PYTHON_VERSION=3.15-slim@sha256:f786b2e19cf9bb54e96bfcd4c1b40c4c56336c22e60607ffd4b080ae5b5dee83\n FROM docker.io/astral/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv\n FROM python:${PYTHON_VERSION} AS torch-lock\n WORKDIR /lock"
+    },
+    {
+      "path": "llm-guard/Dockerfile",
+      "status": "modified",
+      "patch": "@@ -1,5 +1,5 @@\n # renovate: datasource=docker depName=python\n-ARG PYTHON_VERSION=3.14-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a\n+ARG PYTHON_VERSION=3.15-slim@sha256:f786b2e19cf9bb54e96bfcd4c1b40c4c56336c22e60607ffd4b080ae5b5dee83\n FROM docker.io/astral/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv\n FROM python:${PYTHON_VERSION} AS torch-lock\n WORKDIR /lock"
+    },
+    {
+      "path": "llm-tool-guard-model/Dockerfile",
+      "status": "modified",
+      "patch": "@@ -1,5 +1,5 @@\n # renovate: datasource=docker depName=python\n-ARG PYTHON_VERSION=3.14-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a\n+ARG PYTHON_VERSION=3.15-slim@sha256:f786b2e19cf9bb54e96bfcd4c1b40c4c56336c22e60607ffd4b080ae5b5dee83\n FROM python:${PYTHON_VERSION} AS download\n \n WORKDIR /build"
+    },
+    {
+      "path": "llm-tool-guard/Dockerfile",
+      "status": "modified",
+      "patch": "@@ -1,5 +1,5 @@\n # renovate: datasource=docker depName=python\n-ARG PYTHON_VERSION=3.14-slim@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a\n+ARG PYTHON_VERSION=3.15-slim@sha256:f786b2e19cf9bb54e96bfcd4c1b40c4c56336c22e60607ffd4b080ae5b5dee83\n FROM docker.io/astral/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv\n FROM python:${PYTHON_VERSION} AS torch-lock\n WORKDIR /lock"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "eac5e0325d7005a542aaf1ed11fe56f332581a9e",
+      "message": "chore(deps): update container image python to v3.15\n\n| datasource | package | from | to   |\n| ---------- | ------- | ---- | ---- |\n| docker     | python  | 3.14 | 3.15 |"
+    }
+  ]
+}

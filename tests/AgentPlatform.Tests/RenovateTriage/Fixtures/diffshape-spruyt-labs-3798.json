@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "9c07176b2668c53adf64baeba40512622e5643d7",
+  "files": [
+    {
+      "path": "cluster/apps/unifi-system/unpoller/app/values.yaml",
+      "status": "modified",
+      "patch": "@@ -16,7 +16,7 @@ controllers:\n     containers:\n       app:\n         image:\n-          repository: ghcr.io/unpoller/unpoller\n+          repository: docker.io/golift/unifi-poller\n           tag: v5.7.0@sha256:5be0efc124aa58c37b3d66b0e5edf00478670f278b9206e5566c102b64c9c868\n           pullPolicy: IfNotPresent\n         env:"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "9c07176b2668c53adf64baeba40512622e5643d7",
+      "message": "chore(deps): replace container image ghcr.io/unpoller/unpoller to v5.7.0"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "expectedFileCount": 4,
+  "head": "e3ae6881d325ecaae3b166e4ba26266083db19d8",
+  "files": [
+    {
+      "path": ".github/actions/integration-test-setup/action.yaml",
+      "status": "modified",
+      "patch": "@@ -14,7 +14,7 @@ runs:\n     - name: Setup Node.js\n       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7\n       with:\n-        node-version: \"24\"\n+        node-version: \"26\"\n         cache: \"npm\"\n         cache-dependency-path: packages/xfg/package-lock.json\n "
+    },
+    {
+      "path": ".github/workflows/ci-repo.yaml",
+      "status": "modified",
+      "patch": "@@ -124,7 +124,7 @@ jobs:\n       - name: Setup Node.js\n         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7\n         with:\n-          node-version: \"24\"\n+          node-version: \"26\"\n           cache: \"npm\"\n           cache-dependency-path: packages/xfg/package-lock.json\n "
+    },
+    {
+      "path": ".github/workflows/release.yaml",
+      "status": "modified",
+      "patch": "@@ -100,7 +100,7 @@ jobs:\n       - name: Setup Node.js\n         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7\n         with:\n-          node-version: \"24\"\n+          node-version: \"26\"\n           cache: \"npm\"\n           cache-dependency-path: packages/xfg/package-lock.json\n "
+    },
+    {
+      "path": "action.yml",
+      "status": "modified",
+      "patch": "@@ -79,7 +79,7 @@ runs:\n     - name: Setup Node.js\n       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7\n       with:\n-        node-version: \"24\"\n+        node-version: \"26\"\n \n     - name: Install GitLab CLI\n       if: ${{ inputs.gitlab-token != '' }}"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "e3ae6881d325ecaae3b166e4ba26266083db19d8",
+      "message": "chore(deps): update dependency node to v26\n\n| datasource      | package               | from    | to      |\n| --------------- | --------------------- | ------- | ------- |\n| github-releases | actions/node-versions | 24.22.1 | 26.12.0 |"
+    }
+  ]
+}
