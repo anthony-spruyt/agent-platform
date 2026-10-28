@@ -225,6 +225,35 @@ public partial class RenovateTriageWorkflowTests
         Assert.True(applies[1].StartedAt - applies[0].StartedAt < RenovateTriageWorkflow.CiTimeout, $"Applied after {applies[1].StartedAt - applies[0].StartedAt}.");
     }
 
+    [Fact]
+    public async Task ASafeAnswer_WhoseChecksRestartBeforeTheApply_IsApprovedOnTheNextPoll_WithoutASignal()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        rig.Pods.OnRun = Answers(env, during: () =>
+        {
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+            return Task.CompletedTask;
+        });
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
+            Assert.Empty(rig.Github.Approvals);
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            return await RunToResultAsync(handle, "renovate-triage-ci-poll-race");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, "claude-safe", TriageVerdict.Safe), result);
+        Assert.Equal([ShaA], rig.Github.Approvals.Select(a => a.CommitId));
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+        Assert.Single(rig.Pods.Inputs);
+        var applies = (await StepsAsync(rig)).Where(s => s.Name == "apply").ToList();
+        Assert.Equal(["Aborted", "Applied"], applies.Select(s => s.StopReason));
+        Assert.True(applies[1].StartedAt - applies[0].StartedAt < 2 * RenovateTriageWorkflow.StatusPollInterval, $"Applied after {applies[1].StartedAt - applies[0].StartedAt}.");
+    }
+
     [Theory]
     [InlineData("FIXABLE", TriageVerdict.Fixable, "claude-fixable", TriageRules.FixableLabel)]
     [InlineData("BLOCKED", TriageVerdict.Blocked, "claude-blocked", TriageRules.BlockedLabel)]

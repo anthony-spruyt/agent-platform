@@ -296,11 +296,10 @@ public partial class RenovateTriageWorkflowTests
         var verdict = Assert.Single(await VerdictsAsync(rig));
         Assert.Equal(TriageRules.CiTimeoutComment, verdict.Comment);
         Assert.Empty(rig.Jev.Bodies);
-        Assert.Equal(2, rig.Github.Calls.Count(c => c.StartsWith("checks", StringComparison.Ordinal)));
     }
 
     [Fact]
-    public async Task ChecksThatFinishedWithoutASignal_AreJudgedWhenTheTwoHoursEnd()
+    public async Task ChecksThatFinishWithoutASignal_AreJudgedOnTheNextPoll_NotWhenTheTwoHoursEnd()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
@@ -309,12 +308,16 @@ public partial class RenovateTriageWorkflowTests
         var result = await InWorkerAsync(env, rig, async () =>
         {
             var handle = await StartAsync(env, Signal());
-            await WaitForAsync(() => rig.Github.Calls.Any(c => c.StartsWith("checks", StringComparison.Ordinal)));
+            await WaitForStepAsync(rig, "assess", "Pending");
             rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
-            return await RunToResultAsync(handle, "renovate-triage-ci-timeout-reassessed");
+            return await RunToResultAsync(handle, "renovate-triage-ci-poll-pending");
         });
 
         Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), result);
+        var steps = await StepsAsync(rig);
+        var waitedAt = steps.First(s => s is { Name: "assess", StopReason: "Pending" }).StartedAt;
+        var judgedAt = steps.Last(s => s.Name == "assess").StartedAt;
+        Assert.True(judgedAt - waitedAt < 2 * RenovateTriageWorkflow.StatusPollInterval, $"Judged after {judgedAt - waitedAt}.");
     }
 
     [Fact]
@@ -355,7 +358,7 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task ActionsStillRunning_NextToACompletedStatus_StaysSignalOnlyUntilTheTwoHoursEnd()
+    public async Task ActionsStillRunning_NextToACompletedStatus_AreReassessedEveryFiveMinutes_UntilTheTwoHoursEnd()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig();
@@ -366,8 +369,8 @@ public partial class RenovateTriageWorkflowTests
 
         Assert.Equal(TriageRules.CiTimeout, result.Reason);
         var pending = (await StepsAsync(rig)).Where(s => s is { Name: "assess", StopReason: "Pending" }).ToList();
-        Assert.Equal(2, pending.Count);
-        Assert.True(pending[1].StartedAt - pending[0].StartedAt >= RenovateTriageWorkflow.CiTimeout);
+        Assert.Equal((int)(RenovateTriageWorkflow.CiTimeout / RenovateTriageWorkflow.StatusPollInterval) + 1, pending.Count);
+        Assert.True(pending[^1].StartedAt - pending[0].StartedAt >= RenovateTriageWorkflow.CiTimeout);
     }
 
     [Fact]
@@ -1086,7 +1089,7 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task AfterARerun_WithNoSignal_TheTriageReassessesWhenTheTwoHoursEnd()
+    public async Task AfterARerun_WithNoSignal_TheTriageReassessesOnTheNextPoll_NotWhenTheTwoHoursEnd()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
@@ -1105,7 +1108,73 @@ public partial class RenovateTriageWorkflowTests
         var steps = await StepsAsync(rig);
         var rerunAt = steps.Single(s => s is { Name: "ci-rerun", StopReason: "rerun" }).StartedAt;
         var reassessedAt = steps.Last(s => s.Name == "assess").StartedAt;
-        Assert.True(reassessedAt - rerunAt >= RenovateTriageWorkflow.CiTimeout, $"Reassessed after {reassessedAt - rerunAt}.");
+        Assert.True(reassessedAt - rerunAt < 2 * RenovateTriageWorkflow.StatusPollInterval, $"Reassessed after {reassessedAt - rerunAt}.");
+    }
+
+    [Fact]
+    public async Task AfterARerun_ANewAttemptThatFinishesWithoutASignal_IsApprovedOnALaterPoll_NotTimedOut()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        FailCi(rig);
+        rig.Jev.CiKind = CiFailureKind.Flaky;
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var reads = 0;
+            rig.Github.OnCheckRunsRead = () =>
+            {
+                if (rig.Github.Reruns.Count == 1 && ++reads == 2)
+                {
+                    PassCi(rig);
+                }
+
+                return Task.CompletedTask;
+            };
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.Github.Reruns.Count == 1);
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "build", "in_progress", null, "github-actions");
+            return await RunToResultAsync(handle, "renovate-triage-ci-poll-rerun");
+        });
+
+        Assert.Equal(TriageVerdict.Approve, result.Verdict);
+        Assert.Equal([900L], rig.Github.Reruns);
+        var steps = await StepsAsync(rig);
+        var rerunAt = steps.Single(s => s is { Name: "ci-rerun", StopReason: "rerun" }).StartedAt;
+        Assert.Contains(steps, s => s is { Name: "assess", StopReason: "Pending" } && s.StartedAt > rerunAt);
+        Assert.True(steps.Last(s => s.Name == "assess").StartedAt - rerunAt < RenovateTriageWorkflow.CiTimeout);
+    }
+
+    [Fact]
+    public async Task AfterARerun_AFirstAttemptThatStillShows_IsWaitedOutOnThePolls_WithoutAskingJevAgain()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        FailCi(rig);
+        rig.Jev.CiKind = CiFailureKind.Flaky;
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            // A stale poll reads the checks twice (assess, then classify), so the fifth read is the third poll's assess.
+            var reads = 0;
+            rig.Github.OnCheckRunsRead = () =>
+            {
+                if (rig.Github.Reruns.Count == 1 && ++reads == 5)
+                {
+                    PassCi(rig);
+                }
+
+                return Task.CompletedTask;
+            };
+            var handle = await StartAsync(env, Signal());
+            await WaitForAsync(() => rig.Github.Reruns.Count == 1);
+            return await RunToResultAsync(handle, "renovate-triage-ci-poll-stale");
+        });
+
+        Assert.Equal(TriageVerdict.Approve, result.Verdict);
+        Assert.Equal([900L], rig.Github.Reruns);
+        Assert.Single(rig.Jev.CiLogs);
+        Assert.Equal(2, (await StepsAsync(rig)).Count(s => s is { Name: "ci-classify", StopReason: "stale" }));
     }
 
     [Fact]

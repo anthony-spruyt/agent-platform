@@ -19,6 +19,7 @@ public partial class RenovateTriageWorkflow
     private const string FreshCheckPatch = "renovate-triage-fresh-check-v1";
     private const string CiRacePatch = "renovate-triage-ci-race-v1";
     private const string StatusPollPatch = "renovate-triage-status-poll-v1";
+    private const string CiPollPatch = "renovate-triage-ci-poll-v1";
 
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
@@ -406,7 +407,7 @@ public partial class RenovateTriageWorkflow
         return new CiFailureStep(rerun.HeadMoved, !rerun.HeadMoved && rerun.Outcome != RerunOutcome.AttemptLimit, false, seq, signalsBeforeRerun);
     }
 
-    // Only check_suite events are forwarded, so nothing signals a commit status completing: a wait on one wakes on a timer.
+    // A check_suite webhook can be lost and nothing signals a commit status completing, so a wait wakes on a timer too.
     private async Task<CiWait> WaitForCiSignalAsync(CiWait wait, int signalsSeen, bool pollStatus = false)
     {
         var remaining = wait.Remaining(Workflow.UtcNow, CiTimeout);
@@ -415,7 +416,9 @@ public partial class RenovateTriageWorkflow
             return wait with { TimedOut = true };
         }
 
-        var polling = pollStatus && Workflow.Patched(StatusPollPatch) && remaining > StatusPollInterval;
+        var polling = Workflow.Patched(CiPollPatch)
+            ? remaining > StatusPollInterval
+            : pollStatus && Workflow.Patched(StatusPollPatch) && remaining > StatusPollInterval;
         var signalled = await Workflow.WaitConditionAsync(() => _signalCount > signalsSeen, polling ? StatusPollInterval : remaining);
         return signalled || polling ? wait : wait with { TimedOut = true };
     }
