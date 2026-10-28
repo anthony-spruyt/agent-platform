@@ -80,7 +80,7 @@ public sealed partial class SweeperActivities(
             }
         }
 
-        var picked = await budget.PickRedrivesAsync([.. candidates.Select(c => new RedriveCandidate(c.Row.Repo, c.Row.PrNumber))], cancellationToken).ConfigureAwait(false);
+        var picked = await budget.PickRedrivesAsync([.. candidates.Select(c => new RedriveCandidate(c.Row.Repo, c.Row.PrNumber, TriageRules.IsSecurity(c.Pr.Labels)))], cancellationToken).ConfigureAwait(false);
         var redriven = 0;
         foreach (var pick in picked)
         {

@@ -34,7 +34,7 @@ internal sealed class InMemoryRunData
         var name = Guid.NewGuid().ToString();
         var interceptor = new FailingSaveInterceptor();
         var provider = new ServiceCollection()
-            .AddDbContextFactory<RunDataDbContext>(options => options.UseInMemoryDatabase(name).AddInterceptors(interceptor))
+            .AddDbContextFactory<RunDataDbContext>(options => options.UseInMemoryDatabase(name).ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)).AddInterceptors(interceptor))
             .BuildServiceProvider();
         return new InMemoryRunData(provider.GetRequiredService<IDbContextFactory<RunDataDbContext>>(), interceptor);
     }
