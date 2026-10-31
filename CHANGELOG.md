@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.20.3](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.2...v1.20.3) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** update aspire monorepo to 13.6.3 ([#215](https://github.com/anthony-spruyt/agent-platform/issues/215)) ([12dcd45](https://github.com/anthony-spruyt/agent-platform/commit/12dcd45d59382d6a10246efa71cdc3e4dc5e0372))
+* **deps:** update aspire monorepo to 13.6.4 ([#222](https://github.com/anthony-spruyt/agent-platform/issues/222)) ([c68e4b3](https://github.com/anthony-spruyt/agent-platform/commit/c68e4b388b5074dad9e123b4f4ae766c3f8e6516))
+* **deps:** update dependency modelcontextprotocol.aspnetcore to 2.3.0 ([#180](https://github.com/anthony-spruyt/agent-platform/issues/180)) ([abfe82b](https://github.com/anthony-spruyt/agent-platform/commit/abfe82b60a5a464d19b33981395ee476db16a475))
+
 ## [1.20.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.1...v1.20.2) (2026-10-28)
 
 
