@@ -1,5 +1,6 @@
 using System.Text;
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.ClaudeBudget;
 
 namespace AgentPlatform.Host.RenovateTriage;
 

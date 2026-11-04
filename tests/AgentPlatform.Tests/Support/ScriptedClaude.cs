@@ -1,4 +1,5 @@
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.Workflows;
 using Temporalio.Activities;

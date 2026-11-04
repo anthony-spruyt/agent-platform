@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AgentPlatform.Host.RenovateTriage;
@@ -24,19 +25,13 @@ public static class RenovateTriageServiceCollectionExtensions
 #pragma warning restore EXTEXP0001
         services.AddSingleton<TriageVerdictStore>();
         services.AddSingleton<TriagePendingStore>();
-        services.AddSingleton<ClaudeBudgetStore>();
+        services.AddSingleton<IClaudeAttemptLedger, TriageAttemptLedger>();
         services.AddSingleton<SweeperStore>();
         return services;
     }
 
     private static void Validate(RenovateTriageOptions triage)
     {
-        var caps = triage.Claude;
-        if (caps.MaxPerHour < 1 || caps.MaxPerDay < 1 || caps.MaxPerPrPerDay < 1)
-        {
-            throw new InvalidOperationException("RenovateTriage:Claude:MaxPerHour, MaxPerDay and MaxPerPrPerDay must each be at least 1.");
-        }
-
         if (triage.Sweeper.Interval < SweeperOptions.MinInterval)
         {
             throw new InvalidOperationException("RenovateTriage:Sweeper:Interval must be at least one minute.");

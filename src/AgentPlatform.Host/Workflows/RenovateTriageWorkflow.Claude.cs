@@ -1,5 +1,6 @@
 using System.Globalization;
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
@@ -185,7 +186,7 @@ public partial class RenovateTriageWorkflow
         try
         {
             var reservation = await Workflow.ExecuteActivityAsync(
-                (ClaudeBudgetActivities activities) => activities.ReserveAsync(new ReserveClaudeRunInput(Workflow.NewGuid(), climb.Input.Repo, climb.Input.PrNumber, climb.HeadSha, climb.Model, climb.Security)),
+                (ClaudeBudgetActivities activities) => activities.ReserveAsync(RenovateBudget.Reserve(Workflow.NewGuid(), climb.Input.Repo, climb.Input.PrNumber, climb.HeadSha, climb.Model, climb.Security)),
                 _reserveOptions);
             await RecordStepAsync(climb.Run, ++_seq, "reserve", LadderRung.Rule, reservation.Kind.ToString().ToLowerInvariant(), stepStarted, reservation);
             return reservation;

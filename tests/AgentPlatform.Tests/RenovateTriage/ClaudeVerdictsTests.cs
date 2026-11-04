@@ -1,4 +1,5 @@
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 
 namespace AgentPlatform.Tests.RenovateTriage;

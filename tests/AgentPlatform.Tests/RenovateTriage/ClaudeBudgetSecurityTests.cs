@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
@@ -17,7 +18,7 @@ public class ClaudeBudgetSecurityTests
         InMemoryRunData.CreateWithBudget(Now, perHour, perDay, perPr);
 
     private static Task<ClaudeReservation> ReserveAsync(ClaudeBudgetStore store, int pr, bool security, string repo = Repo) =>
-        store.ReserveAsync($"wf-{pr}", new ReserveClaudeRunInput(Guid.NewGuid(), repo, pr, Sha, "opus", security), Ct);
+        store.ReserveAsync($"wf-{pr}", RenovateBudget.Reserve(Guid.NewGuid(), repo, pr, Sha, "opus", security), Ct);
 
     private static Task RunAsync(InMemoryRunData data, int pr, TimeSpan ago, ClaudeRunOutcome outcome = ClaudeRunOutcome.Succeeded, string repo = Repo) =>
         data.SeedRunAsync(repo, pr, Now - ago, Ct, outcome);
