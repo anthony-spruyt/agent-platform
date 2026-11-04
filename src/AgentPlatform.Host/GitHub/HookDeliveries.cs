@@ -7,16 +7,17 @@ public static class HookRedeliveryPlanner
     private const int MaxRedeliveries = 3;
 
     // GitHub groups a redelivery under the original's guid; a guid is judged by its newest attempt and retried through that attempt's id, oldest first
-    public static IReadOnlyList<long> Plan(IEnumerable<HookDelivery> deliveries, DateTimeOffset windowStart)
+    public static IReadOnlyList<long> Plan(IEnumerable<HookDelivery> deliveries, DateTimeOffset windowStart, IReadOnlySet<string> events)
     {
         ArgumentNullException.ThrowIfNull(deliveries);
+        ArgumentNullException.ThrowIfNull(events);
 
         var plan = new List<HookDelivery>();
         foreach (var group in deliveries.GroupBy(d => d.DeliveryGuid, StringComparer.Ordinal))
         {
             var newest = group.MaxBy(d => d.DeliveredAt)!;
             if (newest.DeliveredAt < windowStart
-                || newest.Event != "check_suite"
+                || !events.Contains(newest.Event)
                 || group.Any(d => d.StatusCode is >= 200 and < 300)
                 || group.Count(d => d.Redelivery) >= MaxRedeliveries)
             {

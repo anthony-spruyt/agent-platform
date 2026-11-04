@@ -80,4 +80,15 @@ public class WebRoleGitHubTests
 
         Assert.IsType<TemporalRenovateTriageSignaler>(scope.ServiceProvider.GetRequiredService<IRenovateTriageSignaler>());
     }
+
+    [Fact]
+    public void TheWebRole_RoutesCheckSuitesToTheTriageHandlerAlone()
+    {
+        using var factory = Factory(GitHubPayloads.Secret);
+
+        using var scope = factory.Services.CreateScope();
+
+        Assert.IsType<RenovateTriageCheckSuiteHandler>(Assert.Single(scope.ServiceProvider.GetServices<IGitHubEventHandler>()));
+        Assert.True(scope.ServiceProvider.GetRequiredService<IGitHubEventRouter>().AcceptedEvents.SetEquals(["check_suite"]));
+    }
 }

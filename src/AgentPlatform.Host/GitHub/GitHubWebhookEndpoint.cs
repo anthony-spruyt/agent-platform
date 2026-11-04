@@ -1,6 +1,4 @@
-using System.Text.Json;
 using System.Text.RegularExpressions;
-using AgentPlatform.Host.Workflows;
 using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Host.GitHub;
@@ -24,7 +22,7 @@ public static partial class GitHubWebhookEndpoint
     private static async Task<IResult> HandleAsync(
         HttpRequest request,
         IOptions<GitHubWebhookOptions> options,
-        IRenovateTriageSignaler signaler,
+        IGitHubEventRouter router,
         ILogger<GitHubWebhookLog> logger,
         CancellationToken cancellationToken)
     {
@@ -62,30 +60,19 @@ public static partial class GitHubWebhookEndpoint
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
         }
 
-        var eventName = request.Headers[EventHeader].ToString();
-        if (eventName != "check_suite")
+        var webhookEvent = new GitHubWebhookEvent(request.Headers[EventHeader].ToString(), validDelivery ? loggedDelivery : string.Empty, body);
+        var outcome = await router.RouteAsync(webhookEvent, cancellationToken).ConfigureAwait(false);
+        if (outcome == GitHubEventOutcome.Malformed)
         {
-            return Results.Ok();
+            LogMalformed(logger, loggedDelivery, webhookEvent.Name);
         }
 
-        IReadOnlyList<CheckSuiteCompletedSignal> signals;
-        try
+        return outcome switch
         {
-            signals = CheckSuiteEvent.ToSignals(body, validDelivery ? loggedDelivery : string.Empty, GitHubAppOptions.RequireAppId(options.Value.AppId));
-        }
-        catch (JsonException)
-        {
-            LogMalformed(logger, loggedDelivery);
-            return Results.StatusCode(StatusCodes.Status400BadRequest);
-        }
-
-        foreach (var signal in signals)
-        {
-            await signaler.SignalAsync(signal, cancellationToken).ConfigureAwait(false);
-            LogForwarded(logger, signal.Repo, signal.PrNumber, loggedDelivery);
-        }
-
-        return signals.Count > 0 ? Results.StatusCode(StatusCodes.Status202Accepted) : Results.Ok();
+            GitHubEventOutcome.Malformed => Results.StatusCode(StatusCodes.Status400BadRequest),
+            GitHubEventOutcome.Accepted => Results.StatusCode(StatusCodes.Status202Accepted),
+            _ => Results.Ok(),
+        };
     }
 
     private static async Task<byte[]?> ReadBodyAsync(Stream stream, CancellationToken cancellationToken)
@@ -118,11 +105,8 @@ public static partial class GitHubWebhookEndpoint
     [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub webhook delivery {DeliveryId} rejected: body over the size limit.")]
     private static partial void LogTooLarge(ILogger logger, string deliveryId);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub webhook delivery {DeliveryId} has a malformed check_suite body.")]
-    private static partial void LogMalformed(ILogger logger, string deliveryId);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Forwarded check_suite completion for {Repo}#{PrNumber} from delivery {DeliveryId}.")]
-    private static partial void LogForwarded(ILogger logger, string repo, int prNumber, string deliveryId);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub webhook delivery {DeliveryId} has a malformed {EventName} body.")]
+    private static partial void LogMalformed(ILogger logger, string deliveryId, string eventName);
 }
 
 public sealed class GitHubWebhookLog;
