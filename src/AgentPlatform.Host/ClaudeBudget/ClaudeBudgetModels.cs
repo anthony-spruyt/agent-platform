@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace AgentPlatform.Host.RenovateTriage;
+namespace AgentPlatform.Host.ClaudeBudget;
 
 [JsonConverter(typeof(JsonStringEnumConverter<ClaudeRunOutcome>))]
 public enum ClaudeRunOutcome
@@ -19,7 +19,7 @@ public enum ClaudeRunOutcome
 
 public static class ClaudeRunOutcomes
 {
-    // Cancelled (head moved) and NotStarted (no pod) say nothing about the head; UsageLimit counts as a try.
+    // Cancelled (the work moved on) and NotStarted (no pod) say nothing about the revision; UsageLimit counts as a try.
     public static bool IsFailure(this ClaudeRunOutcome outcome) => outcome is not (ClaudeRunOutcome.Succeeded or ClaudeRunOutcome.Cancelled or ClaudeRunOutcome.NotStarted);
 }
 
@@ -35,6 +35,8 @@ public static class ClaudeBudgetCauses
 {
     public const string HourlyCap = "hourly-cap";
     public const string DailyCap = "daily-cap";
+
+    // The wire value is shown to people, so it stays as it was when the cap was per pull request.
     public const string PrDailyCap = "pr-daily-cap";
     public const string BreakerOpen = "breaker-open";
     public const string AttemptsExhausted = "attempts-exhausted";
@@ -50,9 +52,10 @@ public sealed record ClaudeReservation(ClaudeReservationKind Kind, Guid? RunId, 
     public static ClaudeReservation Owner(string cause) => new(ClaudeReservationKind.Owner, null, 0, cause, null);
 }
 
-public sealed record RedriveCandidate(string Repo, int PrNumber, bool Security = false);
+// Subject caps count per Kind; Scope groups the breaker and the scoped cooldown; failed attempts count per Revision.
+public sealed record ReserveClaudeRunInput(Guid RunId, string Kind, string Subject, string Scope, string? Revision, string Model, bool ExemptFromGlobalCaps = false);
 
-public sealed record ReserveClaudeRunInput(Guid RunId, string Repo, int PrNumber, string HeadSha, string Model, bool Security = false);
+public sealed record RedriveCandidate(string Kind, string Subject, string Scope, bool ExemptFromGlobalCaps = false);
 
 public sealed record FinishClaudeRunInput(Guid RunId, ClaudeRunOutcome Outcome, string? Model = null, long? InputTokens = null, long? OutputTokens = null, decimal? CostUsd = null);
 
@@ -62,11 +65,20 @@ public sealed class ClaudeRun
 {
     public Guid Id { get; set; }
 
-    public required string Repo { get; set; }
+    public required string Kind { get; set; }
 
-    public int PrNumber { get; set; }
+    public required string Subject { get; set; }
 
-    public required string HeadSha { get; set; }
+    public required string Scope { get; set; }
+
+    public string? Revision { get; set; }
+
+    // Scope, Subject and Revision of a RenovateTriage run under the old column names, so the previous image can still read the row.
+    public string? LegacyRepo { get; set; }
+
+    public int? LegacyPrNumber { get; set; }
+
+    public string? LegacyHeadSha { get; set; }
 
     public required string WorkflowId { get; set; }
 
@@ -98,13 +110,4 @@ public sealed class ClaudeCooldown
     public DateTimeOffset Until { get; set; }
 
     public required string Cause { get; set; }
-}
-
-public sealed class SweeperState
-{
-    public int Id { get; set; }
-
-    public DateTimeOffset? LastSeenDeliveredAt { get; set; }
-
-    public DateTimeOffset? LastSuccessAt { get; set; }
 }

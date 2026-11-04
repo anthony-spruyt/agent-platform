@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Tests.Support;

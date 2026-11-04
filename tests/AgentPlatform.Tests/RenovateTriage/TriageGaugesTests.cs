@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Tests.Support;
@@ -20,7 +21,7 @@ public class TriageGaugesTests
         var data = InMemoryRunData.Create();
         var factory = new FlakyFactory(data.Factory);
         var pending = new TriagePendingStore(factory, TimeProvider.System);
-        var budget = new ClaudeBudgetStore(factory, Options.Create(new RenovateTriageOptions()), TimeProvider.System);
+        var budget = RenovateBudgetFixtures.Store(factory, TimeProvider.System);
         return (new TriageGauges(pending, budget, new SweeperStore(factory, TimeProvider.System)), data, factory);
     }
 

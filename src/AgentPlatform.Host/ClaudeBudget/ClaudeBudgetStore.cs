@@ -4,17 +4,16 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
-namespace AgentPlatform.Host.RenovateTriage;
+namespace AgentPlatform.Host.ClaudeBudget;
 
 public sealed class UnknownClaudeRunException(Guid runId) : InvalidOperationException($"Claude run {runId} does not exist.");
 
-public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factory, IOptions<RenovateTriageOptions> options, TimeProvider time)
+public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factory, IOptions<ClaudeBudgetOptions> options, TimeProvider time, IEnumerable<IClaudeAttemptLedger> ledgers)
 {
     // An open reservation that never reached MarkPodCreated or Finish (a crashed workflow) counts against the caps this long.
     public static readonly TimeSpan OpenReservationLease = TimeSpan.FromHours(2);
 
     private const int BreakerThreshold = 3;
-    private const int MaxFailedAttemptsPerHead = 2;
     private const int MaxTransactionTries = 5;
     private const string SerializationFailure = "40001";
     private const string DeadlockDetected = "40P01";
@@ -25,14 +24,16 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
     private static readonly TimeSpan _breakerOpenFor = TimeSpan.FromHours(1);
     private static readonly TimeSpan _minCooldown = TimeSpan.FromMinutes(15);
 
+    private readonly Dictionary<string, IClaudeAttemptLedger> _ledgers = ledgers.ToDictionary(l => l.Kind, StringComparer.Ordinal);
+
     // One serializable transaction decides, so concurrent reservations can't both take the last slot.
     public async Task<ClaudeReservation> ReserveAsync(string workflowId, ReserveClaudeRunInput input, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workflowId);
         ArgumentNullException.ThrowIfNull(input);
-        ArgumentException.ThrowIfNullOrWhiteSpace(input.Repo);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(input.PrNumber);
-        ArgumentException.ThrowIfNullOrWhiteSpace(input.HeadSha);
+        ArgumentException.ThrowIfNullOrWhiteSpace(input.Kind);
+        ArgumentException.ThrowIfNullOrWhiteSpace(input.Subject);
+        ArgumentException.ThrowIfNullOrWhiteSpace(input.Scope);
         ArgumentException.ThrowIfNullOrWhiteSpace(input.Model);
         if (input.RunId == Guid.Empty)
         {
@@ -102,10 +103,11 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
 
         if (input.Outcome.IsFailure())
         {
-            await db.TriagePending
-                .Where(p => db.ClaudeRuns.Any(r => r.Id == input.RunId && r.Repo == p.Repo && r.PrNumber == p.PrNumber && r.HeadSha == p.HeadSha))
-                .ExecuteUpdateAsync(s => s.SetProperty(p => p.Attempts, p => p.Attempts + 1).SetProperty(p => p.UpdatedAt, now), cancellationToken)
-                .ConfigureAwait(false);
+            var run = await db.ClaudeRuns.AsNoTracking().SingleAsync(r => r.Id == input.RunId, cancellationToken).ConfigureAwait(false);
+            if (_ledgers.TryGetValue(run.Kind, out var ledger))
+            {
+                await ledger.RecordFailureAsync(db, run, now, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -147,21 +149,21 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             return [];
         }
 
-        var caps = options.Value.Claude;
+        var caps = options.Value;
         var counted = await CountedRunsAsync(db, now, cancellationToken).ConfigureAwait(false);
         var slots = Math.Min(caps.MaxPerHour - counted.Count(r => r.At > now - _hour), caps.MaxPerDay - counted.Count);
         var picked = new List<RedriveCandidate>();
-        // Security candidates go first and ignore the slot count, but each still uses one.
-        foreach (var candidate in candidates.Where(c => c.Security).Concat(candidates.Where(c => !c.Security)))
+        // Exempt candidates go first and ignore the slot count, but each still uses one.
+        foreach (var candidate in candidates.Where(c => c.ExemptFromGlobalCaps).Concat(candidates.Where(c => !c.ExemptFromGlobalCaps)))
         {
-            if (!candidate.Security && picked.Count >= slots)
+            if (!candidate.ExemptFromGlobalCaps && picked.Count >= slots)
             {
                 break;
             }
 
-            if (cooldowns.Contains(candidate.Repo, StringComparer.Ordinal)
-                || counted.Count(r => r.Repo == candidate.Repo && r.PrNumber == candidate.PrNumber) >= caps.MaxPerPrPerDay
-                || await BreakerOpenAsync(db, candidate.Repo, now, cancellationToken).ConfigureAwait(false))
+            if (cooldowns.Contains(candidate.Scope, StringComparer.Ordinal)
+                || counted.Count(r => r.Kind == candidate.Kind && r.Subject == candidate.Subject) >= caps.For(candidate.Kind).MaxPerSubjectPerDay
+                || await BreakerOpenAsync(db, candidate.Kind, candidate.Scope, now, cancellationToken).ConfigureAwait(false))
             {
                 continue;
             }
@@ -216,7 +218,7 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
         var now = time.GetUtcNow();
         var cooldown = await db.ClaudeCooldowns
             .AsNoTracking()
-            .Where(c => c.Until > now && (c.Scope == ClaudeCooldown.Global || c.Scope == input.Repo))
+            .Where(c => c.Until > now && (c.Scope == ClaudeCooldown.Global || c.Scope == input.Scope))
             .OrderByDescending(c => c.Until)
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -230,51 +232,77 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             return block;
         }
 
-        if (await BreakerOpenAsync(db, input.Repo, now, cancellationToken).ConfigureAwait(false))
+        if (await BreakerOpenAsync(db, input.Kind, input.Scope, now, cancellationToken).ConfigureAwait(false))
         {
             return ClaudeReservation.Owner(ClaudeBudgetCauses.BreakerOpen);
         }
 
-        var failedAttempts = await db.TriagePending
-            .AsNoTracking()
-            .Where(p => p.Repo == input.Repo && p.PrNumber == input.PrNumber && p.HeadSha == input.HeadSha)
-            .Select(p => p.Attempts)
-            .SingleOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
-        if (failedAttempts >= MaxFailedAttemptsPerHead)
+        var failedAttempts = await FailedAttemptsAsync(db, input, now, cancellationToken).ConfigureAwait(false);
+        if (failedAttempts >= options.Value.For(input.Kind).MaxFailedAttemptsPerRevision)
         {
             return ClaudeReservation.Owner(ClaudeBudgetCauses.AttemptsExhausted);
         }
 
         var attempt = failedAttempts + 1;
-        db.ClaudeRuns.Add(new ClaudeRun
+        var run = new ClaudeRun
         {
             Id = input.RunId,
-            Repo = input.Repo,
-            PrNumber = input.PrNumber,
-            HeadSha = input.HeadSha,
+            Kind = input.Kind,
+            Subject = input.Subject,
+            Scope = input.Scope,
+            Revision = input.Revision,
             WorkflowId = workflowId,
             Attempt = attempt,
             ReservedAt = now,
             Model = input.Model,
-        });
+        };
+        if (_ledgers.TryGetValue(input.Kind, out var ledger))
+        {
+            ledger.MirrorLegacyColumns(run);
+        }
+
+        db.ClaudeRuns.Add(run);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return ClaudeReservation.Reserved(input.RunId, attempt);
     }
 
+    private async Task<int> FailedAttemptsAsync(RunDataDbContext db, ReserveClaudeRunInput input, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (_ledgers.TryGetValue(input.Kind, out var ledger))
+        {
+            return await ledger.FailedAttemptsAsync(db, input, cancellationToken).ConfigureAwait(false);
+        }
+
+        var dayStart = now - _day;
+        var runs = db.ClaudeRuns
+            .AsNoTracking()
+            .Where(r => r.Kind == input.Kind && r.Subject == input.Subject && r.Revision == input.Revision && r.Outcome != null);
+        if (input.Revision is null)
+        {
+            // Nothing resets this count when no revision moves on, so it ages out with the subject cap's rolling day.
+            runs = runs.Where(r => (r.PodCreatedAt ?? r.ReservedAt) > dayStart);
+        }
+
+        var outcomes = await runs
+            .Select(r => r.Outcome!.Value)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return outcomes.Count(o => o.IsFailure());
+    }
+
     private async Task<ClaudeReservation?> CapBlockAsync(RunDataDbContext db, ReserveClaudeRunInput input, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var caps = options.Value.Claude;
+        var caps = options.Value;
         var counted = await CountedRunsAsync(db, now, cancellationToken).ConfigureAwait(false);
 
-        // Security PRs skip the hourly and daily caps; their runs still count toward them for every other PR.
+        // Exempt runs skip the hourly and daily caps; they still count toward them for every other run.
         ClaudeReservation? latest = null;
         foreach (var (cause, until) in new[]
         {
-            (ClaudeBudgetCauses.HourlyCap, input.Security ? null : FreeAt(counted.Where(r => r.At > now - _hour), caps.MaxPerHour, _hour)),
-            (ClaudeBudgetCauses.DailyCap, input.Security ? null : FreeAt(counted, caps.MaxPerDay, _day)),
-            (ClaudeBudgetCauses.PrDailyCap, FreeAt(counted.Where(r => r.Repo == input.Repo && r.PrNumber == input.PrNumber), caps.MaxPerPrPerDay, _day)),
+            (ClaudeBudgetCauses.HourlyCap, input.ExemptFromGlobalCaps ? null : FreeAt(counted.Where(r => r.At > now - _hour), caps.MaxPerHour, _hour)),
+            (ClaudeBudgetCauses.DailyCap, input.ExemptFromGlobalCaps ? null : FreeAt(counted, caps.MaxPerDay, _day)),
+            (ClaudeBudgetCauses.PrDailyCap, FreeAt(counted.Where(r => r.Kind == input.Kind && r.Subject == input.Subject), caps.For(input.Kind).MaxPerSubjectPerDay, _day)),
         })
         {
             if (until is { } freeAt && (latest is null || freeAt > latest.Until))
@@ -294,16 +322,16 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             .AsNoTracking()
             .Where(r => (r.PodCreatedAt != null && r.PodCreatedAt > dayStart)
                 || (r.PodCreatedAt == null && r.FinishedAt == null && r.ReservedAt > leaseStart))
-            .Select(r => new CountedRun(r.Repo, r.PrNumber, r.PodCreatedAt ?? r.ReservedAt, r.PodCreatedAt == null))
+            .Select(r => new CountedRun(r.Kind, r.Subject, r.PodCreatedAt ?? r.ReservedAt, r.PodCreatedAt == null))
             .ToListAsync(cancellationToken);
     }
 
-    // A usage limit is global, not the repo's fault: the global cooldown covers it, so it neither opens nor closes the repo breaker.
-    private static async Task<bool> BreakerOpenAsync(RunDataDbContext db, string repo, DateTimeOffset now, CancellationToken cancellationToken)
+    // A usage limit is global, not the scope's fault: the global cooldown covers it, so it neither opens nor closes the breaker.
+    private static async Task<bool> BreakerOpenAsync(RunDataDbContext db, string kind, string scope, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var recent = await db.ClaudeRuns
             .AsNoTracking()
-            .Where(r => r.Repo == repo && r.Outcome != null && r.Outcome != ClaudeRunOutcome.Cancelled && r.Outcome != ClaudeRunOutcome.UsageLimit && r.Outcome != ClaudeRunOutcome.NotStarted)
+            .Where(r => r.Kind == kind && r.Scope == scope && r.Outcome != null && r.Outcome != ClaudeRunOutcome.Cancelled && r.Outcome != ClaudeRunOutcome.UsageLimit && r.Outcome != ClaudeRunOutcome.NotStarted)
             .OrderByDescending(r => r.FinishedAt)
             .Take(BreakerThreshold)
             .Select(r => new { r.Outcome, r.FinishedAt })
@@ -314,5 +342,5 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             && recent[0].FinishedAt + _breakerOpenFor > now;
     }
 
-    private sealed record CountedRun(string Repo, int PrNumber, DateTimeOffset At, bool Open);
+    private sealed record CountedRun(string Kind, string Subject, DateTimeOffset At, bool Open);
 }
