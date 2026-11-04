@@ -24,6 +24,17 @@ public static class GitHubServiceCollectionExtensions
 
         services.Configure<GitHubWebhookOptions>(section);
         services.AddSingleton<IRenovateTriageSignaler, TemporalRenovateTriageSignaler>();
+        services.AddGitHubEventHandler<RenovateTriageCheckSuiteHandler>();
+        return services;
+    }
+
+    public static IServiceCollection AddGitHubEventHandler<THandler>(this IServiceCollection services)
+        where THandler : class, IGitHubEventHandler
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton<IGitHubEventRouter, GitHubEventRouter>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IGitHubEventHandler, THandler>());
         return services;
     }
 

@@ -69,6 +69,7 @@ public static class WorkerServiceCollectionExtensions
         services.AddHostedService<TriageGaugeRefresher>();
         services.AddTemporalClient(temporal.Address, temporal.Namespace);
         services.TryAddSingleton<IRenovateTriageSignaler, TemporalRenovateTriageSignaler>();
+        services.AddGitHubEventHandler<RenovateTriageCheckSuiteHandler>();
         services.TryAddSingleton<ITriageWorkflowProbe, TemporalTriageWorkflowProbe>();
         services.AddHostedService<SweeperScheduleService>();
 

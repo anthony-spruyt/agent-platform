@@ -20,6 +20,7 @@ public sealed partial class SweeperActivities(
     TriageVerdictStore verdicts,
     SweeperStore state,
     IRenovateTriageSignaler signaler,
+    IGitHubEventRouter router,
     ITriageWorkflowProbe probe,
     IOptions<RenovateTriageOptions> options,
     TimeProvider time,
@@ -120,7 +121,7 @@ public sealed partial class SweeperActivities(
             cursor = page.NextCursor;
         }
 
-        var plan = HookRedeliveryPlanner.Plan(deliveries, windowStart);
+        var plan = HookRedeliveryPlanner.Plan(deliveries, windowStart, router.AcceptedEvents);
         var redelivered = 0;
         foreach (var deliveryId in plan)
         {
