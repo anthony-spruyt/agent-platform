@@ -70,4 +70,14 @@ public class SweeperConfigurationTests
         Assert.IsType<TemporalTriageWorkflowProbe>(provider.GetRequiredService<ITriageWorkflowProbe>());
         Assert.NotNull(provider.GetRequiredService<IGitHubAppClient>());
     }
+
+    [Fact]
+    public void TheWorker_RedeliversTheEventsTheTriageHandlerAccepts()
+    {
+        using var provider = Build();
+
+        var router = provider.GetRequiredService<IGitHubEventRouter>();
+
+        Assert.True(router.AcceptedEvents.SetEquals(["check_suite"]));
+    }
 }

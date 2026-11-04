@@ -17,7 +17,7 @@ public class SweeperActivitiesTests
 
     internal sealed class Rig
     {
-        public Rig(TriageMode mode = TriageMode.Live, int perHour = 2)
+        public Rig(TriageMode mode = TriageMode.Live, int perHour = 2, IGitHubEventRouter? router = null)
         {
             Now = DateTimeOffset.UtcNow;
             var options = Options.Create(new RenovateTriageOptions { Mode = mode, Claude = new ClaudeBudgetOptions { MaxPerHour = perHour } });
@@ -31,6 +31,7 @@ public class SweeperActivitiesTests
                 Data.Verdicts,
                 Sweeper,
                 Signaler,
+                router ?? Router("check_suite"),
                 Probe,
                 options,
                 time,
@@ -82,6 +83,9 @@ public class SweeperActivitiesTests
     }
 
     private static Task<T> Run<T>(Func<Task<T>> action) => new ActivityEnvironment().RunAsync(action);
+
+    private static GitHubEventRouter Router(params string[] events) =>
+        new([new RecordingEventHandler(events)], NullLogger<GitHubWebhookLog>.Instance);
 
     [Fact]
     public async Task AParkedPullRequest_IsRedrivenWithASignal_AndMarkedRedriven()
@@ -584,6 +588,21 @@ public class SweeperActivitiesTests
         await Run(rig.Activities.RedeliverAsync);
 
         Assert.Empty(rig.App.Redelivered);
+    }
+
+    [Fact]
+    public async Task EveryEventSomeHandlerAccepts_IsRedelivered_AndTheOthersAreNot()
+    {
+        var rig = new Rig(router: Router("check_suite", "issues"));
+        rig.App.Pages.Add([
+            Delivery(1, "g-1", TimeSpan.FromMinutes(5), rig.Now, evt: "issues"),
+            Delivery(2, "g-2", TimeSpan.FromMinutes(6), rig.Now, evt: "check_suite"),
+            Delivery(3, "g-3", TimeSpan.FromMinutes(7), rig.Now, evt: "ping"),
+        ]);
+
+        await Run(rig.Activities.RedeliverAsync);
+
+        Assert.Equal([2L, 1L], rig.App.Redelivered);
     }
 
     [Fact]

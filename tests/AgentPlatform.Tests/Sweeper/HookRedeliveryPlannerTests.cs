@@ -6,6 +6,7 @@ public class HookRedeliveryPlannerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 15, 12, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset Start = Now.AddHours(-1);
+    private static readonly HashSet<string> CheckSuiteOnly = ["check_suite"];
 
     private static HookDelivery Delivery(long id, string guid, int minutesAgo, int status = 502, bool redelivery = false, string eventName = "check_suite") =>
         new(id, guid, Now.AddMinutes(-minutesAgo), redelivery, status, eventName);
@@ -13,7 +14,7 @@ public class HookRedeliveryPlannerTests
     [Fact]
     public void AFailedCheckSuiteDelivery_IsPlannedForRedelivery()
     {
-        var plan = HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, 502)], Start);
+        var plan = HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, 502)], Start, CheckSuiteOnly);
 
         Assert.Equal([1L], plan);
     }
@@ -24,7 +25,7 @@ public class HookRedeliveryPlannerTests
     [InlineData(299)]
     public void ASuccessfulDelivery_IsLeftAlone(int status)
     {
-        Assert.Empty(HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, status)], Start));
+        Assert.Empty(HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, status)], Start, CheckSuiteOnly));
     }
 
     [Fact]
@@ -32,7 +33,7 @@ public class HookRedeliveryPlannerTests
     {
         var plan = HookRedeliveryPlanner.Plan(
             [Delivery(3, "g1", 5, 200, redelivery: true), Delivery(2, "g1", 20, 502, redelivery: true), Delivery(1, "g1", 30, 502)],
-            Start);
+            Start, CheckSuiteOnly);
 
         Assert.Empty(plan);
     }
@@ -47,7 +48,7 @@ public class HookRedeliveryPlannerTests
                 Delivery(2, "g1", 25, 502, redelivery: true),
                 Delivery(1, "g1", 35, 502),
             ],
-            Start);
+            Start, CheckSuiteOnly);
 
         Assert.Empty(plan);
     }
@@ -57,7 +58,7 @@ public class HookRedeliveryPlannerTests
     {
         var plan = HookRedeliveryPlanner.Plan(
             [Delivery(3, "g1", 5, 502, redelivery: true), Delivery(2, "g1", 15, 502, redelivery: true), Delivery(1, "g1", 25, 502)],
-            Start);
+            Start, CheckSuiteOnly);
 
         Assert.Equal([3L], plan);
     }
@@ -67,7 +68,7 @@ public class HookRedeliveryPlannerTests
     {
         var plan = HookRedeliveryPlanner.Plan(
             [Delivery(2, "g1", 5, 502, redelivery: true), Delivery(1, "g1", 90, 502)],
-            Start);
+            Start, CheckSuiteOnly);
 
         Assert.Equal([2L], plan);
     }
@@ -77,7 +78,7 @@ public class HookRedeliveryPlannerTests
     {
         var plan = HookRedeliveryPlanner.Plan(
             [Delivery(2, "g1", 80, 502, redelivery: true), Delivery(1, "g1", 90, 502)],
-            Start);
+            Start, CheckSuiteOnly);
 
         Assert.Empty(plan);
     }
@@ -85,13 +86,38 @@ public class HookRedeliveryPlannerTests
     [Fact]
     public void ARedeliveryWhoseOriginalIsNotInTheList_IsRetriedOnItsOwnId()
     {
-        Assert.Equal([2L], HookRedeliveryPlanner.Plan([Delivery(2, "g1", 5, 502, redelivery: true)], Start));
+        Assert.Equal([2L], HookRedeliveryPlanner.Plan([Delivery(2, "g1", 5, 502, redelivery: true)], Start, CheckSuiteOnly));
     }
 
     [Fact]
     public void OtherEvents_AreNeverRedelivered()
     {
-        Assert.Empty(HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, 500, eventName: "ping")], Start));
+        Assert.Empty(HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, 500, eventName: "ping")], Start, CheckSuiteOnly));
+    }
+
+    [Fact]
+    public void EveryEventInTheSet_IsRedelivered_ButNoOtherEvent()
+    {
+        HashSet<string> events = ["check_suite", "issues"];
+
+        var plan = HookRedeliveryPlanner.Plan(
+            [Delivery(1, "g1", 20, eventName: "issues"), Delivery(2, "g2", 15, eventName: "check_suite"), Delivery(3, "g3", 10, eventName: "ping")],
+            Start,
+            events);
+
+        Assert.Equal([1L, 2L], plan);
+    }
+
+    [Fact]
+    public void AnEventOutsideTheSet_IsLeftAlone_EvenWhenItFailed()
+    {
+        Assert.Empty(HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, 500, eventName: "check_suite")], Start, new HashSet<string> { "issues" }));
+    }
+
+    [Fact]
+    public void WithAnEmptySet_NothingIsRedelivered()
+    {
+        Assert.Empty(HookRedeliveryPlanner.Plan([Delivery(1, "g1", 10, 500)], Start, new HashSet<string>()));
     }
 
     [Fact]
@@ -99,7 +125,7 @@ public class HookRedeliveryPlannerTests
     {
         var plan = HookRedeliveryPlanner.Plan(
             [Delivery(3, "g3", 5), Delivery(2, "g2", 15), Delivery(1, "g1", 25), Delivery(4, "g2", 4, redelivery: true)],
-            Start);
+            Start, CheckSuiteOnly);
 
         Assert.Equal([1L, 3L, 4L], plan);
     }

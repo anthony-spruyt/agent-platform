@@ -24,7 +24,16 @@ public static class GitHubServiceCollectionExtensions
 
         services.Configure<GitHubWebhookOptions>(section);
         services.AddSingleton<IRenovateTriageSignaler, TemporalRenovateTriageSignaler>();
+        services.AddGitHubEventHandlers();
         return services;
+    }
+
+    public static IServiceCollection AddGitHubEventHandlers(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton<IGitHubEventRouter, GitHubEventRouter>();
+        return services.AddGitHubEventHandler<RenovateTriageCheckSuiteHandler>();
     }
 
     public static IServiceCollection AddGitHubAppClient(this IServiceCollection services, IConfiguration configuration)
@@ -70,6 +79,13 @@ public static class GitHubServiceCollectionExtensions
                 provider.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IRunSecretContributor>(provider =>
             new ReadAppSecretContributor(provider.GetRequiredKeyedService<IGitHubTokenMinter>(ReadAppKey)));
+        return services;
+    }
+
+    private static IServiceCollection AddGitHubEventHandler<THandler>(this IServiceCollection services)
+        where THandler : class, IGitHubEventHandler
+    {
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IGitHubEventHandler, THandler>());
         return services;
     }
 
