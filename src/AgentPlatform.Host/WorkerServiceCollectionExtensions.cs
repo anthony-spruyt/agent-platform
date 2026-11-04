@@ -1,4 +1,5 @@
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.Gateway;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.PullRequests;
@@ -51,6 +52,7 @@ public static class WorkerServiceCollectionExtensions
         services.AddGitHubAppClient(configuration);
         services.AddPullRequests(configuration);
         services.AddGitHubReadApp(configuration);
+        services.AddClaudeBudget(configuration);
         services.AddRenovateTriage(configuration);
         services.AddSingleton(pods);
         services.AddSingleton(prompts);

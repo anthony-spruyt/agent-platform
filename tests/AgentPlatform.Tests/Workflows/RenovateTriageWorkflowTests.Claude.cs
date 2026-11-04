@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentPlatform.Host.Agents;
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;

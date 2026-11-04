@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
@@ -20,14 +21,14 @@ public class SweeperActivitiesTests
         public Rig(TriageMode mode = TriageMode.Live, int perHour = 2, IGitHubEventRouter? router = null)
         {
             Now = DateTimeOffset.UtcNow;
-            var options = Options.Create(new RenovateTriageOptions { Mode = mode, Claude = new ClaudeBudgetOptions { MaxPerHour = perHour } });
+            var options = Options.Create(new RenovateTriageOptions { Mode = mode });
             var time = new FixedTimeProvider(Now);
             Sweeper = new SweeperStore(Data.Factory, time);
             Activities = new SweeperActivities(
                 Github,
                 App,
                 Data.Pending,
-                new ClaudeBudgetStore(Data.Factory, options, time),
+                RenovateBudgetFixtures.Store(Data.Factory, time, RenovateBudgetFixtures.Caps(perHour: perHour)),
                 Data.Verdicts,
                 Sweeper,
                 Signaler,

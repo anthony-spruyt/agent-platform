@@ -1,4 +1,5 @@
 using System.Text;
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 using Microsoft.EntityFrameworkCore;
 
@@ -50,15 +51,17 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             claudeRun.ToTable("claude_runs");
             claudeRun.HasKey(r => r.Id);
             claudeRun.Property(r => r.Id).ValueGeneratedNever();
-            claudeRun.Property(r => r.Repo).HasMaxLength(200);
-            claudeRun.Property(r => r.HeadSha).HasMaxLength(64);
+            claudeRun.Property(r => r.Kind).HasMaxLength(100);
+            claudeRun.Property(r => r.Subject).HasMaxLength(300);
+            claudeRun.Property(r => r.Scope).HasMaxLength(200);
+            claudeRun.Property(r => r.Revision).HasMaxLength(64);
             claudeRun.Property(r => r.WorkflowId).HasMaxLength(300);
             claudeRun.Property(r => r.Outcome).HasConversion<string>().HasMaxLength(16);
             claudeRun.Property(r => r.Model).HasMaxLength(100);
             claudeRun.Property(r => r.CostUsd).HasColumnType(Money);
             claudeRun.HasIndex(r => r.PodCreatedAt);
-            claudeRun.HasIndex(r => new { r.Repo, r.PrNumber, r.HeadSha });
-            claudeRun.HasIndex(r => new { r.Repo, r.FinishedAt });
+            claudeRun.HasIndex(r => new { r.Kind, r.Subject, r.Revision });
+            claudeRun.HasIndex(r => new { r.Kind, r.Scope, r.FinishedAt });
         });
 
         modelBuilder.Entity<TriagePending>(pending =>

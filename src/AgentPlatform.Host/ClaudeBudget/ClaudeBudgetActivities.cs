@@ -1,7 +1,7 @@
 using Temporalio.Activities;
 using Temporalio.Exceptions;
 
-namespace AgentPlatform.Host.RenovateTriage;
+namespace AgentPlatform.Host.ClaudeBudget;
 
 public sealed class ClaudeBudgetActivities(ClaudeBudgetStore store)
 {

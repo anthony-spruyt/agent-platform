@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.Workflows;
 using Microsoft.Extensions.Logging;
@@ -81,12 +82,12 @@ public sealed partial class SweeperActivities(
             }
         }
 
-        var picked = await budget.PickRedrivesAsync([.. candidates.Select(c => new RedriveCandidate(c.Row.Repo, c.Row.PrNumber, TriageRules.IsSecurity(c.Pr.Labels)))], cancellationToken).ConfigureAwait(false);
+        var picked = await budget.PickRedrivesAsync([.. candidates.Select(c => RenovateBudget.Redrive(c.Row.Repo, c.Row.PrNumber, TriageRules.IsSecurity(c.Pr.Labels)))], cancellationToken).ConfigureAwait(false);
         var redriven = 0;
         foreach (var pick in picked)
         {
-            var (row, pr) = candidates.First(c => c.Row.Repo == pick.Repo && c.Row.PrNumber == pick.PrNumber);
-            await SignalAsync(pick.Repo, pick.PrNumber, pr.HeadSha, cancellationToken).ConfigureAwait(false);
+            var (row, pr) = candidates.First(c => RenovateBudget.Subject(c.Row.Repo, c.Row.PrNumber) == pick.Subject);
+            await SignalAsync(row.Repo, row.PrNumber, pr.HeadSha, cancellationToken).ConfigureAwait(false);
             await pendings.MarkRedrivenAsync(row.Repo, row.PrNumber, row.HeadSha, cancellationToken).ConfigureAwait(false);
             redriven++;
         }

@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using Microsoft.EntityFrameworkCore;
@@ -43,8 +44,7 @@ internal sealed class InMemoryRunData
     public static (ClaudeBudgetStore Store, InMemoryRunData Data) CreateWithBudget(DateTimeOffset now, int perHour, int perDay, int perPr)
     {
         var data = Create();
-        var options = Options.Create(new RenovateTriageOptions { Claude = new ClaudeBudgetOptions { MaxPerHour = perHour, MaxPerDay = perDay, MaxPerPrPerDay = perPr } });
-        return (new ClaudeBudgetStore(data.Factory, options, new FixedTimeProvider(now)), data);
+        return (RenovateBudgetFixtures.Store(data.Factory, new FixedTimeProvider(now), RenovateBudgetFixtures.Caps(perHour, perDay, perPr)), data);
     }
 
     public async Task SeedRunAsync(string repo, int prNumber, DateTimeOffset at, CancellationToken cancellationToken, ClaudeRunOutcome? outcome = ClaudeRunOutcome.Succeeded)
@@ -53,9 +53,10 @@ internal sealed class InMemoryRunData
         db.ClaudeRuns.Add(new ClaudeRun
         {
             Id = Guid.NewGuid(),
-            Repo = repo,
-            PrNumber = prNumber,
-            HeadSha = FakeGitHubApi.Sha,
+            Kind = RenovateBudget.Kind,
+            Subject = RenovateBudget.Subject(repo, prNumber),
+            Scope = repo,
+            Revision = FakeGitHubApi.Sha,
             WorkflowId = "wf",
             Attempt = 1,
             ReservedAt = at,

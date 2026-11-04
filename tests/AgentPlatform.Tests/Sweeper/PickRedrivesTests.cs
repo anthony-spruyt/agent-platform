@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Tests.Support;
 
@@ -12,9 +13,9 @@ public class PickRedrivesTests
     private static (ClaudeBudgetStore Store, InMemoryRunData Data) Create(int perHour = 2, int perDay = 8, int perPr = 2) =>
         InMemoryRunData.CreateWithBudget(Now, perHour, perDay, perPr);
 
-    private static RedriveCandidate C(string repo, int pr) => new(repo, pr);
+    private static RedriveCandidate C(string repo, int pr) => RenovateBudget.Redrive(repo, pr);
 
-    private static RedriveCandidate S(string repo, int pr) => new(repo, pr, Security: true);
+    private static RedriveCandidate S(string repo, int pr) => RenovateBudget.Redrive(repo, pr, security: true);
 
     private static Task RunAsync(InMemoryRunData data, string repo, int pr, TimeSpan ago, ClaudeRunOutcome? outcome = ClaudeRunOutcome.Succeeded) =>
         data.SeedRunAsync(repo, pr, Now - ago, Ct, outcome);

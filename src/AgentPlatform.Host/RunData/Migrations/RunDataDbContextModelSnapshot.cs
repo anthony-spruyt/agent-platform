@@ -17,12 +17,12 @@ namespace AgentPlatform.Host.RunData.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.13")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.ClaudeCooldown", b =>
+            modelBuilder.Entity("AgentPlatform.Host.ClaudeBudget.ClaudeCooldown", b =>
                 {
                     b.Property<string>("Scope")
                         .HasMaxLength(200)
@@ -44,7 +44,7 @@ namespace AgentPlatform.Host.RunData.Migrations
                     b.ToTable("claude_cooldowns", (string)null);
                 });
 
-            modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.ClaudeRun", b =>
+            modelBuilder.Entity("AgentPlatform.Host.ClaudeBudget.ClaudeRun", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
@@ -62,15 +62,15 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("finished_at");
 
-                    b.Property<string>("HeadSha")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("head_sha");
-
                     b.Property<long?>("InputTokens")
                         .HasColumnType("bigint")
                         .HasColumnName("input_tokens");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("kind");
 
                     b.Property<string>("Model")
                         .HasMaxLength(100)
@@ -90,19 +90,26 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("pod_created_at");
 
-                    b.Property<int>("PrNumber")
-                        .HasColumnType("integer")
-                        .HasColumnName("pr_number");
-
-                    b.Property<string>("Repo")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("repo");
-
                     b.Property<DateTimeOffset>("ReservedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("reserved_at");
+
+                    b.Property<string>("Revision")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("subject");
 
                     b.Property<string>("WorkflowId")
                         .IsRequired()
@@ -114,9 +121,9 @@ namespace AgentPlatform.Host.RunData.Migrations
 
                     b.HasIndex("PodCreatedAt");
 
-                    b.HasIndex("Repo", "FinishedAt");
+                    b.HasIndex("Kind", "Scope", "FinishedAt");
 
-                    b.HasIndex("Repo", "PrNumber", "HeadSha");
+                    b.HasIndex("Kind", "Subject", "Revision");
 
                     b.ToTable("claude_runs", (string)null);
                 });
