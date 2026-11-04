@@ -237,14 +237,14 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             return ClaudeReservation.Owner(ClaudeBudgetCauses.BreakerOpen);
         }
 
-        var failedAttempts = await FailedAttemptsAsync(db, input, cancellationToken).ConfigureAwait(false);
+        var failedAttempts = await FailedAttemptsAsync(db, input, now, cancellationToken).ConfigureAwait(false);
         if (failedAttempts >= options.Value.For(input.Kind).MaxFailedAttemptsPerRevision)
         {
             return ClaudeReservation.Owner(ClaudeBudgetCauses.AttemptsExhausted);
         }
 
         var attempt = failedAttempts + 1;
-        db.ClaudeRuns.Add(new ClaudeRun
+        var run = new ClaudeRun
         {
             Id = input.RunId,
             Kind = input.Kind,
@@ -255,22 +255,36 @@ public sealed class ClaudeBudgetStore(IDbContextFactory<RunDataDbContext> factor
             Attempt = attempt,
             ReservedAt = now,
             Model = input.Model,
-        });
+        };
+        if (_ledgers.TryGetValue(input.Kind, out var ledger))
+        {
+            ledger.MirrorLegacyColumns(run);
+        }
+
+        db.ClaudeRuns.Add(run);
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return ClaudeReservation.Reserved(input.RunId, attempt);
     }
 
-    private async Task<int> FailedAttemptsAsync(RunDataDbContext db, ReserveClaudeRunInput input, CancellationToken cancellationToken)
+    private async Task<int> FailedAttemptsAsync(RunDataDbContext db, ReserveClaudeRunInput input, DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (_ledgers.TryGetValue(input.Kind, out var ledger))
         {
             return await ledger.FailedAttemptsAsync(db, input, cancellationToken).ConfigureAwait(false);
         }
 
-        var outcomes = await db.ClaudeRuns
+        var dayStart = now - _day;
+        var runs = db.ClaudeRuns
             .AsNoTracking()
-            .Where(r => r.Kind == input.Kind && r.Subject == input.Subject && r.Revision == input.Revision && r.Outcome != null)
+            .Where(r => r.Kind == input.Kind && r.Subject == input.Subject && r.Revision == input.Revision && r.Outcome != null);
+        if (input.Revision is null)
+        {
+            // Nothing resets this count when no revision moves on, so it ages out with the subject cap's rolling day.
+            runs = runs.Where(r => (r.PodCreatedAt ?? r.ReservedAt) > dayStart);
+        }
+
+        var outcomes = await runs
             .Select(r => r.Outcome!.Value)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

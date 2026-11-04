@@ -45,6 +45,15 @@ public sealed class TriageAttemptLedger : IClaudeAttemptLedger
             .ConfigureAwait(false);
     }
 
+    public void MirrorLegacyColumns(ClaudeRun run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+
+        run.LegacyRepo = run.Scope;
+        run.LegacyPrNumber = RenovateBudget.PrNumber(run.Subject);
+        run.LegacyHeadSha = run.Revision;
+    }
+
     public async Task RecordFailureAsync(RunDataDbContext db, ClaudeRun run, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(db);

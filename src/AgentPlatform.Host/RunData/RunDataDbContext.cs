@@ -10,6 +10,13 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
     private const string Jsonb = "jsonb";
     private const string Money = "numeric(18,8)";
 
+    private static readonly Dictionary<string, string> _legacyColumnNames = new(StringComparer.Ordinal)
+    {
+        [nameof(ClaudeRun.LegacyRepo)] = "repo",
+        [nameof(ClaudeRun.LegacyPrNumber)] = "pr_number",
+        [nameof(ClaudeRun.LegacyHeadSha)] = "head_sha",
+    };
+
     public DbSet<Prompt> Prompts => Set<Prompt>();
 
     public DbSet<Run> Runs => Set<Run>();
@@ -55,6 +62,8 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             claudeRun.Property(r => r.Subject).HasMaxLength(300);
             claudeRun.Property(r => r.Scope).HasMaxLength(200);
             claudeRun.Property(r => r.Revision).HasMaxLength(64);
+            claudeRun.Property(r => r.LegacyRepo).HasMaxLength(200);
+            claudeRun.Property(r => r.LegacyHeadSha).HasMaxLength(64);
             claudeRun.Property(r => r.WorkflowId).HasMaxLength(300);
             claudeRun.Property(r => r.Outcome).HasConversion<string>().HasMaxLength(16);
             claudeRun.Property(r => r.Model).HasMaxLength(100);
@@ -62,6 +71,8 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             claudeRun.HasIndex(r => r.PodCreatedAt);
             claudeRun.HasIndex(r => new { r.Kind, r.Subject, r.Revision });
             claudeRun.HasIndex(r => new { r.Kind, r.Scope, r.FinishedAt });
+            claudeRun.HasIndex(r => new { r.LegacyRepo, r.LegacyPrNumber, r.LegacyHeadSha });
+            claudeRun.HasIndex(r => new { r.LegacyRepo, r.FinishedAt });
         });
 
         modelBuilder.Entity<TriagePending>(pending =>
@@ -131,7 +142,7 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
 
         foreach (var property in modelBuilder.Model.GetEntityTypes().SelectMany(e => e.GetProperties()))
         {
-            property.SetColumnName(ToSnakeCase(property.Name));
+            property.SetColumnName(_legacyColumnNames.GetValueOrDefault(property.Name) ?? ToSnakeCase(property.Name));
         }
     }
 

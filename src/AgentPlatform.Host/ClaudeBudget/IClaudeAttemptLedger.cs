@@ -11,4 +11,9 @@ public interface IClaudeAttemptLedger
 
     // Runs in the transaction that records the failed outcome.
     Task RecordFailureAsync(RunDataDbContext db, ClaudeRun run, DateTimeOffset now, CancellationToken cancellationToken);
+
+    // Fills the old repo, pr_number and head_sha columns while the previous image can still read the table; a kind with no old rows leaves them empty.
+    void MirrorLegacyColumns(ClaudeRun run)
+    {
+    }
 }

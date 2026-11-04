@@ -72,6 +72,20 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("kind");
 
+                    b.Property<string>("LegacyHeadSha")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("head_sha");
+
+                    b.Property<int?>("LegacyPrNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("pr_number");
+
+                    b.Property<string>("LegacyRepo")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("repo");
+
                     b.Property<string>("Model")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
@@ -121,9 +135,13 @@ namespace AgentPlatform.Host.RunData.Migrations
 
                     b.HasIndex("PodCreatedAt");
 
+                    b.HasIndex("LegacyRepo", "FinishedAt");
+
                     b.HasIndex("Kind", "Scope", "FinishedAt");
 
                     b.HasIndex("Kind", "Subject", "Revision");
+
+                    b.HasIndex("LegacyRepo", "LegacyPrNumber", "LegacyHeadSha");
 
                     b.ToTable("claude_runs", (string)null);
                 });

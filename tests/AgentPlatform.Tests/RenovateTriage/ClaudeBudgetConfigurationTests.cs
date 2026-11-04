@@ -55,9 +55,9 @@ public class ClaudeBudgetConfigurationTests
             [RenovateBudgetFixtures.Key("MaxPerPrPerDay")] = "4",
         });
 
-        var options = new { Claude = RenovateBudgetFixtures.CapsOf(provider) };
+        var caps = RenovateBudgetFixtures.CapsOf(provider);
 
-        Assert.Equal((3, 12, 4), (options.Claude.MaxPerHour, options.Claude.MaxPerDay, options.Claude.MaxPerPrPerDay));
+        Assert.Equal((3, 12, 4), (caps.MaxPerHour, caps.MaxPerDay, caps.MaxPerPrPerDay));
     }
 
     [Theory]

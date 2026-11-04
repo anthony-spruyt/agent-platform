@@ -73,6 +73,13 @@ public sealed class ClaudeRun
 
     public string? Revision { get; set; }
 
+    // Scope, Subject and Revision of a RenovateTriage run under the old column names, so the previous image can still read the row.
+    public string? LegacyRepo { get; set; }
+
+    public int? LegacyPrNumber { get; set; }
+
+    public string? LegacyHeadSha { get; set; }
+
     public required string WorkflowId { get; set; }
 
     public int Attempt { get; set; }

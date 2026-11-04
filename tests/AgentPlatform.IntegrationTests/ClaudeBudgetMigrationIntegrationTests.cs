@@ -4,6 +4,7 @@ using AgentPlatform.Host.RunData;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.IntegrationTests;
 
@@ -28,7 +29,36 @@ public class ClaudeBudgetMigrationIntegrationTests(AppHostFixture fixture)
         public string? Outcome { get; set; }
     }
 
+    private sealed class LegacyRow
+    {
+        public string? Repo { get; init; }
+
+        public int? PrNumber { get; init; }
+
+        public string? HeadSha { get; init; }
+    }
+
+    private sealed class FixedFactory(DbContextOptions<RunDataDbContext> options) : IDbContextFactory<RunDataDbContext>
+    {
+        public RunDataDbContext CreateDbContext() => new(options);
+    }
+
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
     private sealed record Seeded(Guid Finished, Guid Open);
+
+    private static ClaudeBudgetStore StoreOver(RunDataDbContext db, DateTimeOffset now, int maxPerSubjectPerDay)
+    {
+        var options = new DbContextOptionsBuilder<RunDataDbContext>().UseNpgsql(db.Database.GetConnectionString()!).Options;
+        var caps = new ClaudeBudgetOptions { Kinds = { [RenovateBudget.Kind] = new ClaudeKindOptions { MaxPerSubjectPerDay = maxPerSubjectPerDay } } };
+        return new ClaudeBudgetStore(new FixedFactory(options), Options.Create(caps), new FixedTime(now), [new TriageAttemptLedger()]);
+    }
+
+    private static Task<LegacyRow> LegacyColumnsAsync(RunDataDbContext db, Guid id, CancellationToken ct) =>
+        db.Database.SqlQuery<LegacyRow>($"SELECT repo AS \"Repo\", pr_number AS \"PrNumber\", head_sha AS \"HeadSha\" FROM claude_runs WHERE id = {id}").SingleAsync(ct);
 
     private static string BeforeTheKeyMigration(RunDataDbContext db)
     {
@@ -133,5 +163,83 @@ public class ClaudeBudgetMigrationIntegrationTests(AppHostFixture fixture)
         await migrator.MigrateAsync(null, ct);
 
         Assert.Equal(first, await db.ClaudeRuns.AsNoTracking().OrderBy(r => r.Attempt).Select(r => new { r.Id, r.Kind, r.Subject, r.Scope, r.Revision }).ToListAsync(ct));
+    }
+
+    [Fact]
+    public async Task Up_KeepsTheOldColumnsFilled_SoTheImageBeforeTheMigrationCanStillReadThem()
+    {
+        using var _ = Timeout(out var ct);
+        var (db, migrator) = await OpenAsync(ct);
+        await using var __ = db;
+        await migrator.MigrateAsync(BeforeTheKeyMigration(db), ct);
+        var seeded = await SeedOldShapeAsync(db, ct);
+
+        await migrator.MigrateAsync(null, ct);
+
+        var finished = await LegacyColumnsAsync(db, seeded.Finished, ct);
+        var open = await LegacyColumnsAsync(db, seeded.Open, ct);
+        Assert.Equal((Repo, 7, Revision), (finished.Repo, finished.PrNumber, finished.HeadSha));
+        Assert.Equal(("anthony-spruyt/other", 1234, "rev-two"), (open.Repo, open.PrNumber, open.HeadSha));
+    }
+
+    [Fact]
+    public async Task ARowInsertedWithOnlyTheOldColumns_AfterTheMigration_IsAcceptedAndCountedByTheNewStore()
+    {
+        using var _ = Timeout(out var ct);
+        var (db, migrator) = await OpenAsync(ct);
+        await using var __ = db;
+        await migrator.MigrateAsync(null, ct);
+        var oldImageRow = Guid.NewGuid();
+        await db.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO claude_runs (id, repo, pr_number, head_sha, workflow_id, attempt, reserved_at)
+            VALUES ({oldImageRow}, {Repo}, {7}, {Revision}, {"wf-7"}, {1}, {Reserved})
+            """,
+            ct);
+
+        var row = await db.ClaudeRuns.AsNoTracking().SingleAsync(r => r.Id == oldImageRow, ct);
+        var reservation = await StoreOver(db, Reserved.AddMinutes(30), maxPerSubjectPerDay: 1)
+            .ReserveAsync("wf-7", RenovateBudget.Reserve(Guid.NewGuid(), Repo, 7, Revision, "opus"), ct);
+
+        Assert.Equal((RenovateBudget.Kind, $"{Repo}#7", Repo, Revision), (row.Kind, row.Subject, row.Scope, row.Revision));
+        Assert.Equal((ClaudeReservationKind.Park, ClaudeBudgetCauses.PrDailyCap), (reservation.Kind, reservation.Cause));
+    }
+
+    [Fact]
+    public async Task Down_RebuildsTheOldColumnsOfARenovateRunThatLacksThem()
+    {
+        using var _ = Timeout(out var ct);
+        var (db, migrator) = await OpenAsync(ct);
+        await using var __ = db;
+        var before = BeforeTheKeyMigration(db);
+        await migrator.MigrateAsync(null, ct);
+        var runId = Guid.NewGuid();
+        db.ClaudeRuns.Add(new ClaudeRun { Id = runId, Kind = RenovateBudget.Kind, Subject = $"{Repo}#31", Scope = Repo, Revision = Revision, WorkflowId = "wf-31", Attempt = 1, ReservedAt = Reserved });
+        await db.SaveChangesAsync(ct);
+
+        await migrator.MigrateAsync(before, ct);
+
+        var row = await db.Database
+            .SqlQuery<OldRow>($"SELECT repo AS \"Repo\", pr_number AS \"PrNumber\", head_sha AS \"HeadSha\", outcome AS \"Outcome\" FROM claude_runs WHERE id = {runId}")
+            .SingleAsync(ct);
+        Assert.Equal((Repo, 31, Revision), (row.Repo, row.PrNumber, row.HeadSha));
+    }
+
+    [Fact]
+    public async Task ARunFromTheNewStore_FillsTheOldColumnsForRenovate_AndLeavesThemEmptyForAnotherKind()
+    {
+        using var _ = Timeout(out var ct);
+        var (db, migrator) = await OpenAsync(ct);
+        await using var __ = db;
+        await migrator.MigrateAsync(null, ct);
+        var store = StoreOver(db, Reserved, maxPerSubjectPerDay: 2);
+
+        var renovate = await store.ReserveAsync("wf-7", RenovateBudget.Reserve(Guid.NewGuid(), Repo, 7, Revision, "opus"), ct);
+        var other = await store.ReserveAsync("wf-x", new ReserveClaudeRunInput(Guid.NewGuid(), "other-kind", "thing-1", "thing", "rev-1", "opus"), ct);
+
+        var renovateRow = await LegacyColumnsAsync(db, renovate.RunId!.Value, ct);
+        var otherRow = await LegacyColumnsAsync(db, other.RunId!.Value, ct);
+        Assert.Equal((Repo, 7, Revision), (renovateRow.Repo, renovateRow.PrNumber, renovateRow.HeadSha));
+        Assert.Equal((null, null, null), (otherRow.Repo, otherRow.PrNumber, otherRow.HeadSha));
     }
 }

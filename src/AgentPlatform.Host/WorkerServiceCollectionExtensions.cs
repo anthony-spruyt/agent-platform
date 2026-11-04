@@ -54,6 +54,7 @@ public static class WorkerServiceCollectionExtensions
         services.AddGitHubReadApp(configuration);
         services.AddClaudeBudget(configuration);
         services.AddRenovateTriage(configuration);
+        services.AddHostedService(provider => new LegacyClaudeCapsWarning(configuration, provider.GetRequiredService<ILogger<LegacyClaudeCapsWarning>>()));
         services.AddSingleton(pods);
         services.AddSingleton(prompts);
         services.AddSingleton(new AgentSessionTokens(gateway.SessionTokenKey));

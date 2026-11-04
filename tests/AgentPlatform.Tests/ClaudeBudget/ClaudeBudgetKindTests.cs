@@ -156,13 +156,26 @@ public class ClaudeBudgetKindTests
     }
 
     [Fact]
-    public async Task ASubjectWithoutARevision_CountsItsFailedAttemptsTogether()
+    public async Task ASubjectWithoutARevision_CountsItsFailedAttemptsTogetherWithinTheDay()
     {
         var (store, data) = Create(configure: o => o.Kinds[KindA] = new ClaudeKindOptions { MaxFailedAttemptsPerRevision = 1, MaxPerSubjectPerDay = 20 });
-        await SeedAsync(data, KindA, TimeSpan.FromMinutes(5), revision: null, outcome: ClaudeRunOutcome.PodFailed);
+        await SeedAsync(data, KindA, TimeSpan.FromHours(23), revision: null, outcome: ClaudeRunOutcome.PodFailed);
 
         Assert.Equal(ClaudeBudgetCauses.AttemptsExhausted, (await ReserveAsync(store, KindA, revision: null)).Cause);
         Assert.Equal(ClaudeReservationKind.Reserved, (await ReserveAsync(store, KindA, revision: "rev-1")).Kind);
+    }
+
+    [Fact]
+    public async Task ASubjectWithoutARevision_StopsCountingAFailureOlderThanTheDay_WhileARevisionNeverForgets()
+    {
+        var (store, data) = Create(configure: o => o.Kinds[KindA] = new ClaudeKindOptions { MaxFailedAttemptsPerRevision = 1, MaxPerSubjectPerDay = 20 });
+        await SeedAsync(data, KindA, TimeSpan.FromHours(25), revision: null, outcome: ClaudeRunOutcome.PodFailed);
+        await SeedAsync(data, KindA, TimeSpan.FromHours(25), revision: "rev-1", outcome: ClaudeRunOutcome.PodFailed);
+
+        var withoutRevision = await ReserveAsync(store, KindA, revision: null);
+
+        Assert.Equal((ClaudeReservationKind.Reserved, 1), (withoutRevision.Kind, withoutRevision.Attempt));
+        Assert.Equal(ClaudeBudgetCauses.AttemptsExhausted, (await ReserveAsync(store, KindA, revision: "rev-1")).Cause);
     }
 
     [Fact]
