@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.20.4](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.3...v1.20.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* **deps:** update .NET base images to 10.0.14 ([#244](https://github.com/anthony-spruyt/agent-platform/issues/244)) ([2defcd1](https://github.com/anthony-spruyt/agent-platform/commit/2defcd181616800ae5633566f5baee4f576a2d2c))
+* **deps:** update opentelemetry-dotnet-contrib monorepo to 1.20.1 ([#212](https://github.com/anthony-spruyt/agent-platform/issues/212)) ([8ffd835](https://github.com/anthony-spruyt/agent-platform/commit/8ffd83515d98ddc37d6932e6261871b529f31e44))
+
 ## [1.20.3](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.2...v1.20.3) (2026-11-04)
 
 
