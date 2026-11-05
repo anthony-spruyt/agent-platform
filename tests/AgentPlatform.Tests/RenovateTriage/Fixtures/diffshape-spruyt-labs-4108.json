@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "fc293ac47c6819da5ca3fe835b969e46da12acfb",
+  "files": [
+    {
+      "path": "cluster/apps/kube-system/coredns/app/values.yaml",
+      "status": "modified",
+      "patch": "@@ -5,7 +5,7 @@\n fullnameOverride: coredns\n image:\n   repository: registry.k8s.io/coredns/coredns\n-  tag: v1.14.6\n+  tag: v1.14.7@sha256:7efd3c635b03efd68c4e8398fc45f0d993d0e9ab016f72c1cefb0fd6d01aa286\n replicaCount: 2\n k8sAppLabelOverride: kube-dns\n priorityClassName: system-cluster-critical"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "fc293ac47c6819da5ca3fe835b969e46da12acfb",
+      "message": "chore(deps): update container image registry.k8s.io/coredns/coredns to v1.14.7\n\n| datasource | package                         | from    | to      |\n| ---------- | ------------------------------- | ------- | ------- |\n| docker     | registry.k8s.io/coredns/coredns | v1.14.6 | v1.14.7 |"
+    }
+  ]
+}

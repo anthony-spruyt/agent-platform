@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AgentPlatform.Host.PullRequests;
 
 namespace AgentPlatform.Tests.PullRequests;
@@ -547,9 +548,7 @@ public class DiffShapeTests
     private static string Hash(char c) => $"    --hash=sha256:{new string(c, 64)}";
 
     private static DiffShapeResult Requirements(string[] removed, string[] added, string rows = "8.0>8.1") =>
-        Classify(
-            [new DiffFile("docs/requirements.txt", "modified", "@@ -1,1 +1,1 @@\n" + string.Join("\n", removed.Select(l => "-" + l)) + "\n" + string.Join("\n", added.Select(l => "+" + l)))],
-            Message(DefaultSubject, rows));
+        Classify([new DiffFile("docs/requirements.txt", "modified", Changes(removed, added))], Message(DefaultSubject, rows));
 
     [Fact]
     public void APipPinWithADifferentNumberOfHashLines_PassesWhenThePinIsStated()
@@ -996,5 +995,336 @@ public class DiffShapeTests
         var result = Classify([new DiffFile("go.mod", "modified", patch)], Message(DefaultSubject, "v1.24.1>v1.25.0", "go"));
 
         Assert.Equal(DiffShapeFailure.UnpairedLines, result.Failure);
+    }
+
+    private const string PipRefreshSubject = "chore(deps): refresh pip-compile outputs";
+    private const string LockMaintenanceSubject = "chore(deps): lock file maintenance";
+
+    private static string Changes(string[] removed, string[] added) =>
+        "@@ -1,1 +1,1 @@\n" + string.Join("\n", removed.Select(l => "-" + l).Concat(added.Select(l => "+" + l)));
+
+    private static DiffShapeResult LockMaintenance(string[] removed, string[] added, string subject = PipRefreshSubject, string path = "docs/requirements.txt") =>
+        Classify([new DiffFile(path, "modified", Changes(removed, added))], Message(subject, null));
+
+    private static string[] PinLines(string pin, string via, params char[] hashes) =>
+        [pin + " \\", .. hashes.Select((h, i) => Hash(h) + (i < hashes.Length - 1 ? " \\" : string.Empty)), via];
+
+    [Theory]
+    [InlineData(PipRefreshSubject)]
+    [InlineData(LockMaintenanceSubject)]
+    public void ALockMaintenance_PassesWithNoTable_WhenOnlyPinHashAndViaLinesChange(string subject)
+    {
+        string[] removed =
+        [
+            .. PinLines("filelock==4.2.1", "    # via huggingface-hub", '1', '2'),
+            .. PinLines("platformdirs==4.13.6", "    # via mkdocs-get-deps", '3', '4'),
+            .. PinLines("python-dateutil==2.9.0.post0", "    # via ghp-import", '5', '6'),
+            .. PinLines("gone==1.0", "    # via -r requirements.in", '7'),
+        ];
+        string[] added =
+        [
+            .. PinLines("filelock==4.2.4", "    # via huggingface-hub", 'a', 'b'),
+            .. PinLines("platformdirs==4.13.5", "    # via mkdocs-get-deps", 'c', 'd'),
+            .. PinLines("python-dateutil==3.0.0", "    # via ghp-import", 'e', 'f'),
+            .. PinLines("tzdata==2026.5", "    # via python-dateutil", '8', '9'),
+        ];
+
+        Assert.True(LockMaintenance(removed, added, subject).Passed);
+    }
+
+    [Theory]
+    [InlineData("tzdata==2026.5 \\")]
+    [InlineData("tzdata==2026.5")]
+    [InlineData("torch==2.15.0+cpu \\")]
+    [InlineData("numpy==1!2.0.0rc1.post2.dev3 \\")]
+    [InlineData("pkg[extra,other.x]==1.0 \\")]
+    [InlineData("colorama==0.4.6 ; sys_platform == 'win32' \\")]
+    [InlineData("hf-xet==1.7.0 ; platform_machine == 'AMD64' or (python_version >= \"3.9\" and platform_system != 'Windows') \\")]
+    [InlineData("    # via")]
+    [InlineData("    # via tqdm")]
+    [InlineData("    # via -r requirements.in")]
+    [InlineData("    # via -r requirements/base.in")]
+    [InlineData("    #   httpcore2")]
+    [InlineData("    #   -r requirements.in")]
+    public void ALockMaintenance_AcceptsEveryLineFormThePipToolsWrite(string line)
+    {
+        Assert.True(LockMaintenance([], [line]).Passed);
+        Assert.True(LockMaintenance([line], []).Passed);
+    }
+
+    [Fact]
+    public void ALockMaintenance_AcceptsHashLinesWithAndWithoutAContinuation()
+    {
+        Assert.True(LockMaintenance([Hash('1') + " \\", Hash('2')], [Hash('3') + " \\", Hash('4')]).Passed);
+    }
+
+    [Fact]
+    public void ALockMaintenance_AcceptsCrlfLineEndings()
+    {
+        var result = LockMaintenance(
+            ["backrefs==8.0 \\\r", Hash('1') + " \\\r", Hash('2') + "\r", "    # via mkdocs\r"],
+            ["backrefs==8.1 \\\r", Hash('3') + "\r", "    # via mkdocs\r"]);
+
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void ALockMaintenance_AcceptsALockfileBesideARequirementsAndAConstraintsFile()
+    {
+        var files = new[]
+        {
+            new DiffFile("uv.lock", "modified", Patch(("a = 1", "a = 2"))),
+            new DiffFile("docs/requirements.txt", "modified", Changes(["a==1.0 \\"], ["a==2.0 \\", "b==1.0 \\"])),
+            new DiffFile("tools/constraints.txt", "modified", Changes(["c==1.0"], ["c==1.1"])),
+        };
+
+        Assert.True(Classify(files, Message(LockMaintenanceSubject, null)).Passed);
+    }
+
+    [Theory]
+    [InlineData("docs/requirements.txt")]
+    [InlineData(".github/ci-requirements.txt")]
+    [InlineData("requirements-dev.txt")]
+    [InlineData("tools/constraints.txt")]
+    [InlineData("constraints-3.14.txt")]
+    public void ALockMaintenance_AcceptsATxtFileNamedForRequirementsOrConstraints(string path)
+    {
+        Assert.True(LockMaintenance(["a==1.0 \\"], ["a==2.0 \\"], path: path).Passed);
+    }
+
+    [Theory]
+    [InlineData("--index-url https://pypi.org/simple")]
+    [InlineData("--extra-index-url https://evil.example/simple")]
+    [InlineData("--find-links https://evil.example/wheels")]
+    [InlineData("--trusted-host evil.example")]
+    [InlineData("-e .")]
+    [InlineData("-e git+https://example.com/x.git#egg=x")]
+    [InlineData("-r other.txt")]
+    [InlineData("-c constraints.txt")]
+    [InlineData("git+https://example.com/x.git@main#egg=x")]
+    [InlineData("pkg @ https://example.com/pkg-1.0-py3-none-any.whl")]
+    [InlineData("pkg @ git+https://example.com/pkg.git")]
+    [InlineData("pkg==1.0 @ https://example.com/pkg.whl")]
+    [InlineData("pkg==1.0 \\ https://example.com")]
+    [InlineData("pkg==https://example.com/pkg.whl")]
+    [InlineData("pkg==1.0+local/evil")]
+    [InlineData("pkg==1.0+local@evil")]
+    [InlineData("pkg==1.0 ; python_version > 'https://evil.example'")]
+    [InlineData("pkg==1.0 ; extra == 'a@b'")]
+    [InlineData("pkg==1.0 ; extra == 'a/b'")]
+    [InlineData("pkg==1.0 ; extra == 'a;b'")]
+    [InlineData("pkg==1.0 ; python_version > \"0\" --global-option=--x")]
+    [InlineData("pkg==1.0 ; python_version > \"0\" --config-settings=--build-option=x \\")]
+    [InlineData("pkg==1.0 ; python_version > \"0\" -C build-option=x")]
+    [InlineData("pkg==1.0 ; --global-option=--x")]
+    [InlineData("pkg===1.0")]
+    [InlineData("pkg>=1.0")]
+    [InlineData("pkg")]
+    [InlineData("pkg[ex tra]==1.0")]
+    [InlineData("pkg[extra==1.0")]
+    [InlineData("  pkg==1.0")]
+    [InlineData("# This file was autogenerated by uv via the following command:")]
+    [InlineData("#    uv pip compile --universal --generate-hashes requirements.in --output-file=requirements.txt")]
+    [InlineData("")]
+    [InlineData("    ")]
+    [InlineData("--hash=md5:0123456789abcdef0123456789abcdef")]
+    [InlineData("    --hash=sha256:0123")]
+    [InlineData("    --hash=sha256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789")]
+    [InlineData("    # from https://pypi.org/simple")]
+    [InlineData("    # via evil; curl http://example.com")]
+    [InlineData("    # via foo bar")]
+    [InlineData("    # via foo, bar")]
+    [InlineData("    # via https://evil.example/x")]
+    [InlineData("    # via $(whoami)")]
+    [InlineData("    # via -r ../x?y")]
+    [InlineData("    # via -r requirements.in # more")]
+    [InlineData("    # via -x requirements.in")]
+    [InlineData("    #   foo, bar")]
+    [InlineData("    #   -r a b")]
+    [InlineData("    #    indented")]
+    [InlineData("#   unindented")]
+    public void ALockMaintenance_FailsOnAnyOtherChangedLine(string line)
+    {
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, LockMaintenance([], [line]).Failure);
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, LockMaintenance([line], []).Failure);
+    }
+
+    [Fact]
+    public void ALockMaintenance_FailsWhenOneBadLineSitsAmongGoodPins()
+    {
+        var result = LockMaintenance(
+            PinLines("a==1.0", "    # via -r requirements.in", '1'),
+            [.. PinLines("a==2.0", "    # via -r requirements.in", '2'), "--extra-index-url https://evil.example/simple"]);
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("values.yaml")]
+    [InlineData("requirements.in")]
+    [InlineData("requirements.txt.bak")]
+    [InlineData("Gemfile.lock")]
+    [InlineData("src/pin.py")]
+    [InlineData("CMakeLists.txt")]
+    [InlineData("docs/notes.txt")]
+    public void ALockMaintenance_FailsOnAFileThatIsNeitherALockfileNorARequirementsOrConstraintsFile(string path)
+    {
+        var requirements = new DiffFile("docs/requirements.txt", "modified", Changes(["a==1.0 \\"], ["a==2.0 \\"]));
+        var other = new DiffFile(path, "modified", Changes(["a==1.0 \\"], ["a==2.0 \\"]));
+
+        var result = Classify([requirements, other], Message(PipRefreshSubject, null));
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+        Assert.Equal(path, result.Detail);
+    }
+
+    [Fact]
+    public void ALockMaintenance_FailsOnAYamlVersionBumpWithNoTable()
+    {
+        var result = Classify([new DiffFile("values.yaml", "modified", Patch(("tag: 1.2.3", "tag: 1.2.4")))], Message(LockMaintenanceSubject, null));
+
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void ALockMaintenance_StillNeedsEachRequirementsFileToBeModifiedWithAPatch()
+    {
+        Assert.Equal(DiffShapeFailure.FileNotModified, Classify([new DiffFile("requirements.txt", "added", Changes([], ["a==1.0"]))], Message(PipRefreshSubject, null)).Failure);
+        Assert.Equal(DiffShapeFailure.MissingPatch, Classify([new DiffFile("requirements.txt", "modified", null)], Message(PipRefreshSubject, null)).Failure);
+    }
+
+    [Theory]
+    [InlineData("chore(deps): update docs requirements")]
+    [InlineData("chore(deps): refresh pip-compile outputs and bump x")]
+    [InlineData("fix(deps): refresh pip-compile outputs")]
+    [InlineData("chore(deps): lock file maintenance of everything")]
+    [InlineData("chore: refresh pip-compile outputs")]
+    public void ARequirementsChangeWithNoTable_FailsUnlessTheSubjectIsALockMaintenanceSubject(string subject)
+    {
+        var result = LockMaintenance(PinLines("a==1.0", "    # via -r requirements.in", '1'), PinLines("a==2.0", "    # via -r requirements.in", '2'), subject);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Fact]
+    public void ARequirementsFileGainingAPackageUnderANormalCommit_IsUnpaired()
+    {
+        var result = LockMaintenance([], PinLines("tzdata==2026.5", "    # via python-dateutil", '1'), "chore(deps): update docs requirements");
+
+        Assert.Equal(DiffShapeFailure.UnpairedLines, result.Failure);
+    }
+
+    [Theory]
+    [InlineData(PipRefreshSubject)]
+    [InlineData(LockMaintenanceSubject)]
+    public void ALockMaintenanceSubjectWithATable_IsHeldToTheTable(string subject)
+    {
+        var message = Message(subject, "8.0>8.1");
+
+        var unstated = Classify([new DiffFile("docs/requirements.txt", "modified", Changes(PinLines("a==8.0", "    # via b", '1'), PinLines("a==8.2", "    # via b", '2')))], message);
+        var added = Classify([new DiffFile("docs/requirements.txt", "modified", Changes([], PinLines("tzdata==2026.5", "    # via b", '3')))], message);
+        var stated = Classify([new DiffFile("docs/requirements.txt", "modified", Changes(PinLines("a==8.0", "    # via b", '1'), PinLines("a==8.1", "    # via b", '2')))], message);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, unstated.Failure);
+        Assert.Equal(DiffShapeFailure.UnpairedLines, added.Failure);
+        Assert.True(stated.Passed);
+    }
+
+    [Fact]
+    public void AnUnstatedRequirementsVersion_StillFailsUnderANormalUpdateCommitWithATable()
+    {
+        var result = Requirements(PinLines("backrefs==8.0", "    # via mkdocs", '1'), PinLines("backrefs==8.2", "    # via mkdocs", '2'));
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("  tag: v1.14.6", "  tag: v1.14.6{D}")]
+    [InlineData("  tag: 1.2.3", "  tag: 1.2.3{D}")]
+    [InlineData("  tag: \"1.2.3\"", "  tag: \"1.2.3{D}\"")]
+    [InlineData("image: r/x:1.2.3", "image: r/x:1.2.3{D}")]
+    [InlineData("image: \"r/x:v4\"", "image: \"r/x:v4{D}\"")]
+    [InlineData("image: node:22", "image: node:22{D}")]
+    [InlineData("FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble", "FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble{D}")]
+    public void AddingADigestToAnUnchangedVersion_PassesWithNoRow(string oldLine, string newLine)
+    {
+        var result = Line(oldLine, newLine.Replace("{D}", "@" + _digestOne, StringComparison.Ordinal), subject: "chore(deps): pin container image r/x to v");
+
+        Assert.True(result.Passed);
+    }
+
+    [Theory]
+    [InlineData("  tag: v1.14.6", "  tag: v1.14.7{D}", "v1.14.6>v1.14.7")]
+    [InlineData("image: r/x:1.2.3", "image: r/x:1.2.4{D}", "1.2.3>1.2.4")]
+    [InlineData("image: r/x:v4", "image: r/x:v5{D}", "v4.1>5.0")]
+    public void AddingADigestBesideAStatedVersionChange_Passes(string oldLine, string newLine, string rows)
+    {
+        Assert.True(Line(oldLine, newLine.Replace("{D}", "@" + _digestOne, StringComparison.Ordinal), rows).Passed);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("1.0.0>1.0.1")]
+    public void AddingADigestBesideAnUnstatedVersionChange_Fails(string? rows)
+    {
+        var result = Line("  tag: v1.14.6", "  tag: v1.14.7@" + _digestOne, rows);
+
+        Assert.Equal(DiffShapeFailure.VersionNotStated, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("tag: v1.2.3{D}", "tag: v1.2.3")]
+    [InlineData("image: r/x:1.2.3{D}", "image: r/x:1.2.3")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3{D} # evil")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3{D}x")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3{D}{D}")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3{D} {D}")]
+    [InlineData("tag: v1.2.3{D}", "tag: v1.2.3{D}{E}")]
+    [InlineData("cmd: r/x:1.2.3 --flag", "cmd: r/x:1.2.3 --flag{D}")]
+    [InlineData("image: r/x:1.2.3", "image: r/y:1.2.3{D}")]
+    [InlineData("image: r/x:1.2.3", "image: r/x:1.2.3{D} extra")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3 sha256:{H}")]
+    [InlineData("name: foo", "name: foo{D}")]
+    [InlineData("ref: abcdef123456", "ref: abcdef123456{D}")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3@sha256:{U}")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3@sha256:{S}")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3@sha256:{L}")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3@sha512:{H}")]
+    [InlineData("tag: v1.2.3", "tag: v1.2.3 {D}")]
+    public void ADigestThatIsRemovedOrAddsOtherTextOrDoesNotFollowAVersion_IsNotAVersionChange(string oldLine, string newLine)
+    {
+        var hex = new string('1', 64);
+        var result = Line(
+            oldLine.Replace("{D}", "@" + _digestOne, StringComparison.Ordinal),
+            newLine
+                .Replace("{D}", "@" + _digestOne, StringComparison.Ordinal)
+                .Replace("{E}", "@" + _digestTwo, StringComparison.Ordinal)
+                .Replace("{H}", hex, StringComparison.Ordinal)
+                .Replace("{U}", hex.ToUpperInvariant().Replace('1', 'A'), StringComparison.Ordinal)
+                .Replace("{S}", hex[..63], StringComparison.Ordinal)
+                .Replace("{L}", hex + "1", StringComparison.Ordinal));
+
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+    }
+
+    [Fact]
+    public void AddingADigestOnALineThatAlreadyHasOne_PassesWithNoRow()
+    {
+        var result = Line($"image: r/x:1.2.3@{_digestOne} r/y:2.0.0", $"image: r/x:1.2.3@{_digestOne} r/y:2.0.0@{_digestTwo}", subject: "chore(deps): pin container image r/y to v");
+
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void ALineWithManyDigestsAndAChangeThatIsNotADigest_FailsQuickly()
+    {
+        var oldLine = string.Join(' ', Enumerable.Range(0, 1000).Select(i => $"tag: v1.2.3@sha256:{i:x64}"));
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = Line(oldLine, oldLine + " # changed");
+
+        stopwatch.Stop();
+        Assert.Equal(DiffShapeFailure.NotAVersionChange, result.Failure);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500), $"took {stopwatch.Elapsed}");
     }
 }

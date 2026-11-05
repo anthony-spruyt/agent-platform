@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "c49115e9b8745d4c0645bcfd832c61e4c8ea913d",
+  "files": [
+    {
+      "path": "llm-tool-guard-model/requirements.txt",
+      "status": "modified",
+      "patch": "@@ -12,9 +12,9 @@ colorama==0.4.6 ; sys_platform == 'win32' \\\n     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \\\n     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6\n     # via tqdm\n-filelock==4.2.1 \\\n-    --hash=sha256:7be2662e9e826b9bba28afc0f843a123280d799a2ea44bb5d35ccec67905ae44 \\\n-    --hash=sha256:c4c937ccac2a813cee448e662a56366cfb374c0f8702e75f295c412cc1c5d5a3\n+filelock==4.2.4 \\\n+    --hash=sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e \\\n+    --hash=sha256:c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d\n     # via huggingface-hub\n fsspec==2026.9.0 \\\n     --hash=sha256:0f08147951c8cb31d844c3547d631053b127863b60be04cf06e121333ee0e2fe \\\n@@ -43,13 +43,13 @@ hf-xet==1.7.0 ; platform_machine == 'AMD64' or platform_machine == 'ARM64' or pl\n     --hash=sha256:fa029678be1ba7f953c409b0b27bf15cc69cd1c9b3a674fbd78856ebefca1052 \\\n     --hash=sha256:fcfd6c22418e57dd5b3aea649e813b2e2cfb2aebf317b210d90f1fe4b3018b52\n     # via huggingface-hub\n-httpcore2==2.13.1 ; sys_platform != 'emscripten' \\\n-    --hash=sha256:e0aa977abe17e69a3b820a24542a6fa88702676d83880b8d194dcd18408e5103 \\\n-    --hash=sha256:e1e05d4f25f7d7d496bfb96748f6f4b67657b03da069b3a68c36069f3db73d0a\n+httpcore2==2.16.0 ; sys_platform != 'emscripten' \\\n+    --hash=sha256:5c4358319f2602d984ad93182c9fee5160f22e9da7babdda870a5e7c4e2dc34f \\\n+    --hash=sha256:c72cd0413563b17e1cd8354677dff887466f8ec2551679759e93126534428643\n     # via httpx2\n-httpx2==2.13.1 \\\n-    --hash=sha256:6dff50fabc270ee5fd25d845d0b078ed20564579744d6d962850975996d2f9a4 \\\n-    --hash=sha256:e48744a19e3af5ee48313d0ce5fe941d5422fae5705ea922a4aabf94d7800dfa\n+httpx2==2.16.0 \\\n+    --hash=sha256:0d54c98128e8f2ff7fbbde0fca8c359e5f032edeaaaac443cdb7f31f685bcd7f \\\n+    --hash=sha256:fd2c5d7909e8d86fe92d53020c310ca0e4e431b838c207c5754b9bbf0308d49a\n     # via huggingface-hub\n httpx2-jsfetch==1.0 ; sys_platform == 'emscripten' \\\n     --hash=sha256:70a0e3eabfef7cce5ad9c629f7d01ca05e418f586646f4ddf14782e4c1454c60 \\\n@@ -148,9 +148,9 @@ tqdm==4.70.1 \\\n     --hash=sha256:c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73 \\\n     --hash=sha256:cefd0eca11b2a37a3aee776544d4f4ae913f02688135b5556b8788dfa474afc4\n     # via huggingface-hub\n-truststore==0.10.4 ; sys_platform != 'emscripten' \\\n-    --hash=sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301 \\\n-    --hash=sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981\n+truststore==0.10.5 ; sys_platform != 'emscripten' \\\n+    --hash=sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd \\\n+    --hash=sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c\n     # via\n     #   httpcore2\n     #   httpx2"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "c49115e9b8745d4c0645bcfd832c61e4c8ea913d",
+      "message": "chore(deps): refresh pip-compile outputs"
+    }
+  ]
+}

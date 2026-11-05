@@ -43,6 +43,13 @@ public static partial class DiffShape
     private const string ImageTagContext = "image-tag";
     private const string QuotedNumberContext = "quoted-number";
 
+    // Renovate's default lockFileMaintenance commit subjects: the pip-compile manager's own, and the generic one.
+    private static readonly string[] _lockMaintenanceSubjects =
+    [
+        "chore(deps): refresh pip-compile outputs",
+        "chore(deps): lock file maintenance",
+    ];
+
     private static readonly HashSet<string> _lockfiles = new(StringComparer.Ordinal)
     {
         "package-lock.json",
@@ -100,6 +107,7 @@ public static partial class DiffShape
             return new DiffShapeResult(DiffShapeFailure.MalformedTable);
         }
 
+        var lockMaintenance = IsLockMaintenance(stated, statedMessage);
         var pairs = new List<VersionPair>();
         foreach (var file in files)
         {
@@ -118,7 +126,7 @@ public static partial class DiffShape
                 return new DiffShapeResult(DiffShapeFailure.MissingPatch, file.Path);
             }
 
-            var failure = CheckPatch(file, pairs);
+            var failure = lockMaintenance ? CheckLockMaintenancePatch(file) : CheckPatch(file, pairs);
             if (failure is not null)
             {
                 return failure;
@@ -141,6 +149,24 @@ public static partial class DiffShape
 
         return DiffShapeResult.Pass;
     }
+
+    private static bool IsLockMaintenance(StatedVersions stated, string statedMessage) =>
+        stated.Rows is null && _lockMaintenanceSubjects.Contains(LineBreak().Split(statedMessage)[0].Trim(), StringComparer.Ordinal);
+
+    private static DiffShapeResult? CheckLockMaintenancePatch(DiffFile file) =>
+        IsPipLockFile(file.Path)
+        && ChangeRuns(file.Patch!).TrueForAll(run => run.Removed.Concat(run.Added).All(IsPipLockLine))
+            ? null
+            : new DiffShapeResult(DiffShapeFailure.NotAVersionChange, file.Path);
+
+    private static bool IsPipLockFile(string path)
+    {
+        var name = FileName(path);
+        return name.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)
+            && (name.Contains("requirements", StringComparison.OrdinalIgnoreCase) || name.Contains("constraints", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsPipLockLine(string line) => PipHashLine().IsMatch(line) || PipPin().IsMatch(line) || PipVia().IsMatch(line);
 
     private static DiffShapeResult? CheckPatch(DiffFile file, List<VersionPair> pairs)
     {
@@ -177,15 +203,19 @@ public static partial class DiffShape
     {
         var (oldMask, oldTokens) = Tokenize(oldLine);
         var (newMask, newTokens) = Tokenize(newLine);
-        var line = new object();
-        var indirectAt = FileName(path) == "go.mod" ? IndirectVersionStart(oldLine, newLine) : null;
-        if (!string.Equals(oldMask, newMask, StringComparison.Ordinal)
-            || oldTokens.Count != newTokens.Count
-            || oldTokens.Zip(newTokens).Any(t => t.First.Kind != t.Second.Kind))
+        if (!SameShape(oldMask, oldTokens, newMask, newTokens))
         {
-            return new DiffShapeResult(DiffShapeFailure.NotAVersionChange, path);
+            var unpinned = WithoutAddedDigest(oldLine, newLine).Select(l => (Line: l, Shape: Tokenize(l))).FirstOrDefault(c => SameShape(oldMask, oldTokens, c.Shape.Mask, c.Shape.Tokens));
+            if (unpinned.Line is null)
+            {
+                return new DiffShapeResult(DiffShapeFailure.NotAVersionChange, path);
+            }
+
+            newTokens = unpinned.Shape.Tokens;
         }
 
+        var line = new object();
+        var indirectAt = FileName(path) == "go.mod" ? IndirectVersionStart(oldLine, newLine) : null;
         var shaChanged = oldTokens.Zip(newTokens).Any(t =>
             t.First.Kind == Kind.Sha
             && t.First.Context == UsesShaContext
@@ -219,6 +249,31 @@ public static partial class DiffShape
         }
 
         return null;
+    }
+
+    private static bool SameShape(string oldMask, List<Token> oldTokens, string newMask, List<Token> newTokens) =>
+        string.Equals(oldMask, newMask, StringComparison.Ordinal)
+        && oldTokens.Count == newTokens.Count
+        && oldTokens.Zip(newTokens).All(t => t.First.Kind == t.Second.Kind);
+
+    // Pinning appends a digest to the version it follows; only a digest straight after a version token counts.
+    private static IEnumerable<string> WithoutAddedDigest(string oldLine, string newLine)
+    {
+        var digests = DigestPin().Matches(newLine);
+        if (digests.Count != DigestPin().Count(oldLine) + 1)
+        {
+            yield break;
+        }
+
+        foreach (Match digest in digests)
+        {
+            var unpinned = newLine.Remove(digest.Index, digest.Length);
+            if (!unpinned.AsSpan(digest.Index).StartsWith("@sha256:", StringComparison.Ordinal)
+                && Tokenize(unpinned).Tokens.Exists(t => t.End == digest.Index && t.Kind is Kind.Multi or Kind.Single))
+            {
+                yield return unpinned;
+            }
+        }
     }
 
     private static List<(List<string> Removed, List<string> Added)> ChangeRuns(string patch)
@@ -607,6 +662,15 @@ public static partial class DiffShape
 
     [GeneratedRegex(@"^\s*--hash=sha256:[0-9a-f]{64}(?: \\)?\r?$", RegexOptions.CultureInvariant)]
     private static partial Regex PipHashLine();
+
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._-]+(?:,[A-Za-z0-9._-]+)*\])?==[A-Za-z0-9][A-Za-z0-9._+!-]*(?: ; (?:[A-Za-z0-9 _.'""<>=!~()]|(?<! )-)+?)?(?: \\)?\r?$", RegexOptions.CultureInvariant)]
+    private static partial Regex PipPin();
+
+    [GeneratedRegex(@"^ +#(?: via(?: (?:-r [A-Za-z0-9_./-]+|[A-Za-z0-9][A-Za-z0-9._-]*))?| {3}(?:-r [A-Za-z0-9_./-]+|[A-Za-z0-9][A-Za-z0-9._-]*))\r?$", RegexOptions.CultureInvariant)]
+    private static partial Regex PipVia();
+
+    [GeneratedRegex("@sha256:[0-9a-f]{64}(?![0-9A-Za-z])", RegexOptions.CultureInvariant)]
+    private static partial Regex DigestPin();
 
     [GeneratedRegex(@"^\s*(?:require\s+)?(?<mod>\S*[./]\S*)\s+(?<ver>v\S+)\s+// indirect\r?$", RegexOptions.CultureInvariant)]
     private static partial Regex GoIndirectRequire();
