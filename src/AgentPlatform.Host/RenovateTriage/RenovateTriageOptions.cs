@@ -22,7 +22,7 @@ public sealed class MigrationOptions
 {
     public static readonly string[] DefaultPathGlobs = ["talos/**", "**/topf.yaml"];
 
-    public static readonly string[] DefaultDependencyGlobs = ["siderolabs/*", "kubelet", "kube-apiserver", "kubernetes/*"];
+    public static readonly string[] DefaultDependencyGlobs = ["siderolabs/*", "kubelet", "kube-apiserver"];
 
     // Nullable so a configured list replaces the default instead of binding on top of it
     public string[]? PathGlobs { get; set; }
