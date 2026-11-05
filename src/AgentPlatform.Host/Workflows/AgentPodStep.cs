@@ -87,9 +87,16 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
         AgentTier tier,
         AgentRepoContext? repo,
         int deadlineSeconds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AgentRunOverrides? overrides = null,
+        TimeSpan? scheduleToClose = null)
     {
-        var agent = await RunPodAsync(prompt, tier, repo, deadlineSeconds, cancellationToken);
+        if (scheduleToClose is { } cap && cap <= TimeSpan.Zero)
+        {
+            throw new ApplicationFailureException("The schedule-to-close of an agent run must be positive.", nonRetryable: true);
+        }
+
+        var agent = await RunPodAsync(prompt, tier, repo, deadlineSeconds, overrides, scheduleToClose ?? AgentRunTimeouts.ActivityScheduleToClose, cancellationToken);
         await DeletePodAsync();
 
         var status = AgentPodStepStatus.AgentFailed;
@@ -128,17 +135,24 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
             PromptBody: promptBody));
     }
 
-    private async Task<AgentRunResult> RunPodAsync(string prompt, AgentTier tier, AgentRepoContext? repo, int deadline, CancellationToken cancellationToken)
+    private async Task<AgentRunResult> RunPodAsync(
+        string prompt,
+        AgentTier tier,
+        AgentRepoContext? repo,
+        int deadline,
+        AgentRunOverrides? overrides,
+        TimeSpan scheduleToClose,
+        CancellationToken cancellationToken)
     {
         try
         {
             return await Workflow.ExecuteActivityAsync(
-                (AgentPodActivities activities) => activities.RunAgentPodAsync(new RunAgentPodInput(Step, prompt, tier, deadline, Attempt, repo)),
+                (AgentPodActivities activities) => activities.RunAgentPodAsync(new RunAgentPodInput(Step, prompt, tier, deadline, Attempt, repo, overrides)),
                 new ActivityOptions
                 {
                     TaskQueue = TaskQueues.AgentPods,
                     StartToCloseTimeout = AgentRunTimeouts.ActivityStartToClose(deadline),
-                    ScheduleToCloseTimeout = AgentRunTimeouts.ActivityScheduleToClose,
+                    ScheduleToCloseTimeout = scheduleToClose,
                     HeartbeatTimeout = AgentRunTimeouts.HeartbeatTimeout,
                     CancellationType = ActivityCancellationType.WaitCancellationCompleted,
                     CancellationToken = cancellationToken,

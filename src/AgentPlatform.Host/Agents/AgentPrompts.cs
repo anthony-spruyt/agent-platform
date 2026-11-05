@@ -7,6 +7,8 @@ public static class AgentPrompts
 {
     public const string RenovateTriage = "renovate-triage";
 
+    private const string PullRequestPlaceholder = "{{pr}}";
+
     public static bool Exists(string name) =>
         typeof(AgentPrompts).Assembly.GetManifestResourceInfo(ResourceName(name)) is not null;
 
@@ -22,9 +24,14 @@ public static class AgentPrompts
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(repo);
+        if (repo.PullRequest is null && template.Contains(PullRequestPlaceholder, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The prompt names a pull request, but the run has none.");
+        }
+
         return template
             .Replace("{{repo}}", repo.Repo, StringComparison.Ordinal)
-            .Replace("{{pr}}", repo.PullRequest.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            .Replace(PullRequestPlaceholder, repo.PullRequest?.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{{head_sha}}", repo.HeadSha, StringComparison.Ordinal);
     }
 

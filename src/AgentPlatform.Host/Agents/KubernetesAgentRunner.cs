@@ -22,6 +22,7 @@ public sealed partial class KubernetesAgentRunner(
     public async Task<AgentRunResult> RunAsync(AgentRunRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        request.Overrides?.Validate();
         var name = AgentPodNaming.PodName(request.WorkflowId, request.RunId, request.Step);
 
         var pod = await StartAsync(request, name, cancellationToken).ConfigureAwait(false);
@@ -44,7 +45,7 @@ public sealed partial class KubernetesAgentRunner(
         }
 
         LogRunEnded(logger, name, result.Outcome);
-        return result with { Model = options.Model };
+        return result with { Model = request.Overrides?.Model ?? options.Model };
     }
 
     public Task CancelAsync(AgentRunRequest request, CancellationToken cancellationToken)

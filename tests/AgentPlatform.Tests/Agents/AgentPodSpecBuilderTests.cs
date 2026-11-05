@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentPlatform.Host.Agents;
+using k8s;
 using k8s.Models;
 
 namespace AgentPlatform.Tests.Agents;
@@ -299,6 +300,36 @@ public class AgentPodSpecBuilderTests
     }
 
     [Fact]
+    public void Container_TakesModelTurnsAndBudgetFromTheRunOverridesBeforeTheOptions()
+    {
+        var overrides = new AgentRunOverrides(Model: "opus", MaxTurns: 90, MaxBudgetUsd: 7.5m);
+
+        var container = Agent(Build(Request with { Overrides = overrides }, o => { o.Model = "haiku"; o.MaxTurns = 12; o.MaxBudgetUsd = 1m; }));
+
+        Assert.Equal("opus", ArgAfter(container, "--model"));
+        Assert.Equal("90", ArgAfter(container, "--max-turns"));
+        Assert.Equal("7.5", ArgAfter(container, "--max-budget-usd"));
+    }
+
+    [Fact]
+    public void Container_KeepsTheOptionForEachValueTheOverridesLeaveUnset()
+    {
+        var container = Agent(Build(Request with { Overrides = new AgentRunOverrides(MaxTurns: 90) }, o => { o.Model = "haiku"; o.MaxBudgetUsd = 1m; }));
+
+        Assert.Equal("haiku", ArgAfter(container, "--model"));
+        Assert.Equal("90", ArgAfter(container, "--max-turns"));
+        Assert.Equal("1", ArgAfter(container, "--max-budget-usd"));
+    }
+
+    [Fact]
+    public void Pod_WithEmptyOverrides_IsTheSamePodAsWithNone()
+    {
+        Assert.Equal(
+            KubernetesJson.Serialize(Build(RepoRequest)),
+            KubernetesJson.Serialize(Build(RepoRequest with { Overrides = new AgentRunOverrides() })));
+    }
+
+    [Fact]
     public void Container_UsesOnlyTheMcpConfigFileFromTheSecret()
     {
         var pod = Build();
@@ -434,6 +465,18 @@ public class AgentPodSpecBuilderTests
         Assert.Equal("octo/widgets", clone.Command[4]);
         Assert.Equal(Repo.HeadSha, clone.Command[5]);
         Assert.DoesNotContain("--branch", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Pod_WithARepoAndNoPullRequest_ClonesTheShaTheSameWay()
+    {
+        var withPullRequest = Build(RepoRequest);
+
+        var withoutPullRequest = Build(Request with { Repo = Repo with { PullRequest = null } });
+
+        Assert.Equal(KubernetesJson.Serialize(withPullRequest), KubernetesJson.Serialize(withoutPullRequest));
+        var clone = Assert.Single(withoutPullRequest.Spec.InitContainers, c => c.Name == "git-clone");
+        Assert.Equal(Repo.HeadSha, clone.Command[5]);
     }
 
     [Fact]

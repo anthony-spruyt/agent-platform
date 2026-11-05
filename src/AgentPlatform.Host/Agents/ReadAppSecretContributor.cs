@@ -4,16 +4,6 @@ namespace AgentPlatform.Host.Agents;
 
 public sealed class ReadAppSecretContributor(IGitHubTokenMinter minter) : IRunSecretContributor
 {
-    private static readonly Dictionary<string, string> _readPermissions = new()
-    {
-        ["contents"] = "read",
-        ["pull_requests"] = "read",
-        ["checks"] = "read",
-        ["statuses"] = "read",
-        ["issues"] = "read",
-        ["actions"] = "read",
-    };
-
     public async Task<RunSecretContribution> ContributeAsync(AgentRunRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -22,7 +12,9 @@ public sealed class ReadAppSecretContributor(IGitHubTokenMinter minter) : IRunSe
             return new RunSecretContribution(new Dictionary<string, string>());
         }
 
-        var token = await minter.MintTokenAsync(request.Repo.Repo, _readPermissions, cancellationToken).ConfigureAwait(false);
+        IReadOnlyDictionary<string, string> permissions = request.Overrides?.TokenPermissions ?? ReadTokenPermissions.Default;
+        ReadTokenPermissions.EnsureNarrowsDefault(permissions);
+        var token = await minter.MintTokenAsync(request.Repo.Repo, permissions, cancellationToken).ConfigureAwait(false);
         return new RunSecretContribution(
             new Dictionary<string, string>
             {
