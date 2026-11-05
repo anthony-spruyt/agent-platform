@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.5](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.4...v1.20.5) (2026-11-05)
+
+
+### Bug Fixes
+
+* **triage:** stop flagging lock refreshes, kubectl pins and digest pins ([#252](https://github.com/anthony-spruyt/agent-platform/issues/252)) ([d07507c](https://github.com/anthony-spruyt/agent-platform/commit/d07507cb5a53a7b91e081c91d47e7e96bd9f8126))
+
 ## [1.20.4](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.3...v1.20.4) (2026-11-04)
 
 
