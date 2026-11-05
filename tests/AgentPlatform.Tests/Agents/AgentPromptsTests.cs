@@ -27,4 +27,21 @@ public partial class AgentPromptsTests
 
         Assert.Contains($"repos/{Repo}/commits/{Sha}/check-runs", rendered, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ARunWithoutAPullRequest_FillsTheRepositoryAndTheShaOfAPromptThatNeedsNoPullRequest()
+    {
+        var rendered = AgentPrompts.Render("Read {{repo}} at {{head_sha}}.", new AgentRepoContext(Repo, null, Sha));
+
+        Assert.Equal($"Read {Repo} at {Sha}.", rendered);
+    }
+
+    [Fact]
+    public void ARunWithoutAPullRequest_RejectsAPromptThatNamesOne()
+    {
+        var failure = Assert.Throws<InvalidOperationException>(
+            () => AgentPrompts.Render(AgentPrompts.Load(AgentPrompts.RenovateTriage), new AgentRepoContext(Repo, null, Sha)));
+
+        Assert.Contains("pull request", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -97,6 +97,16 @@ The Claude rung runs the `renovate-triage` prompt (embedded under `Prompts/`, wh
 - For `renovate-triage` the workflow validates the submitted result (verdict `SAFE`, `FIXABLE`, `BLOCKED` or `NEEDS_REVIEW`, the echoed `head_sha`, and field length caps). An invalid result comes back to the agent as a tool error, so it can resubmit once; a second invalid result ends the attempt as failed, and the workflow keeps the parsed result, not the raw payload.
 - The runner reads pod logs line by line with a 1 MiB cap per line (longer lines are skipped and counted) and caps the final read in bytes. A failed or unpullable init container ends the run as `PodFailed`, naming the container. Runs stop at the configured turn (`AgentPods:MaxTurns`) and budget (`AgentPods:MaxBudgetUsd`) limits and end as `LimitExceeded`.
 
+### Run inputs
+
+A step starts its pod through `AgentPodStep`. Everything beyond the prompt, tier and deadline is optional, and a step that sets none of it runs as described above.
+
+- The repository context names the repository and the sha to fetch. The pull request number is optional. A run without one clones and fetches the same way (the default branch in `/workspace/repo`, the sha in `/workspace/pr`). Rendering a prompt that names `{{pr}}` for such a run fails.
+- `AgentRunOverrides` replaces `AgentPods:Model`, `AgentPods:MaxTurns` and `AgentPods:MaxBudgetUsd` for one run, each value on its own. The model a run reports is the one it used.
+- `AgentRunOverrides` can also set the permissions of the run's GitHub token. A permission override can only narrow the read tier's default set (`ReadTokenPermissions.Default`): it names at least one permission, every name is exactly one of that set's names (the match is case-sensitive) and every level is `read`.
+- An invalid override (a blank model, fewer than one turn, a budget of zero or less, or a permission set that breaks the rule above) fails the run as a configuration error without retries, before the runner mints a token or creates a pod. The token contributor checks the permission set again right before it mints.
+- The step can also set the schedule-to-close of the `RunAgentPod` activity. The default is `AgentRunTimeouts.ActivityScheduleToClose`. The value must be positive: a step that passes zero or less fails the workflow with a non-retryable failure before it schedules the activity. It is a workflow-side option and is not part of the activity input.
+
 ## GitHub webhook intake and App client
 
 The Web role serves `POST /webhooks/github` on the webhook port only (`/mcp` stays on the gateway port). The handler checks the `X-Hub-Signature-256` HMAC-SHA256 over the raw body with a constant-time compare before it parses anything; a missing or wrong signature gets `401` and no body is logged. Bodies over 1 MiB get `413`.

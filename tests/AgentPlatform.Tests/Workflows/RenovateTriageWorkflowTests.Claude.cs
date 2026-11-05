@@ -123,6 +123,29 @@ public partial class RenovateTriageWorkflowTests
         Assert.Equal(AgentPrompts.RenovateTriage, prompt.Name);
     }
 
+    [Fact]
+    public async Task TheAgentPodOfAClimb_RunsWithNoOverridesAndTheStandardActivityTimeouts()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = Climbing();
+        var answer = Answers(env);
+        ActivityInfo? info = null;
+        rig.Pods.OnRun = (input, activity) =>
+        {
+            info = activity;
+            return answer(input, activity);
+        };
+
+        await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        var pod = Assert.Single(rig.Pods.Inputs);
+        Assert.Null(pod.Overrides);
+        Assert.Equal(AgentRunTimeouts.ActivityScheduleToClose, info!.ScheduleToCloseTimeout);
+        Assert.Equal(AgentRunTimeouts.ActivityStartToClose(AgentRunTimeouts.DefaultPodDeadlineSeconds), info.StartToCloseTimeout);
+        Assert.Equal(AgentRunTimeouts.DefaultPodDeadlineSeconds, pod.DeadlineSeconds);
+        Assert.Equal(7, pod.Repo!.PullRequest);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

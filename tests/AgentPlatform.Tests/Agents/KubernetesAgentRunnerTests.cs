@@ -321,6 +321,42 @@ public class KubernetesAgentRunnerTests
     }
 
     [Fact]
+    public async Task Run_ReportsTheModelOfTheRunOverrideOrElseTheConfiguredOne()
+    {
+        var overridden = await NewRunner(ApiWith(Success), o => o.Model = "haiku").RunAsync(Request with { Overrides = new AgentRunOverrides(Model: "opus") }, Ct);
+        var configured = await NewRunner(ApiWith(Success), o => o.Model = "haiku").RunAsync(Request, Ct);
+
+        Assert.Equal("opus", overridden.Model);
+        Assert.Equal("haiku", configured.Model);
+    }
+
+    [Fact]
+    public async Task Run_StartsThePodWithTheOverriddenLimits()
+    {
+        var api = ApiWith(Success);
+
+        await NewRunner(api).RunAsync(Request with { Overrides = new AgentRunOverrides(Model: "opus", MaxTurns: 90, MaxBudgetUsd: 7.5m) }, Ct);
+
+        var args = api.Pods[PodName].Spec.Containers.Single().Args.ToList();
+        Assert.Equal("opus", args[args.IndexOf("--model") + 1]);
+        Assert.Equal("90", args[args.IndexOf("--max-turns") + 1]);
+        Assert.Equal("7.5", args[args.IndexOf("--max-budget-usd") + 1]);
+    }
+
+    [Fact]
+    public async Task Run_WithInvalidOverrides_FailsAsAConfigurationErrorBeforeMintingOrCreatingAnything()
+    {
+        var api = ApiWith(Success);
+        var contributor = ReadToken();
+        var request = Request with { Repo = Repo, Overrides = new AgentRunOverrides(MaxTurns: 0) };
+
+        await Assert.ThrowsAsync<AgentConfigurationException>(() => NewRunner(api, contributors: [contributor]).RunAsync(request, Ct));
+
+        Assert.Equal(0, contributor.Calls);
+        Assert.Empty(api.Operations);
+    }
+
+    [Fact]
     public async Task Run_PutsTheMcpConfigPromptAndSessionNonceInTheSecretButNotInThePodArgs()
     {
         var api = ApiWith(Success);
