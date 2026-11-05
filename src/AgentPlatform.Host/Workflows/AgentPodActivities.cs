@@ -4,7 +4,14 @@ using Temporalio.Exceptions;
 
 namespace AgentPlatform.Host.Workflows;
 
-public sealed record RunAgentPodInput(string Step, string Prompt, AgentTier Tier, int DeadlineSeconds, int Attempt = 1, AgentRepoContext? Repo = null);
+public sealed record RunAgentPodInput(
+    string Step,
+    string Prompt,
+    AgentTier Tier,
+    int DeadlineSeconds,
+    int Attempt = 1,
+    AgentRepoContext? Repo = null,
+    AgentRunOverrides? Overrides = null);
 
 public sealed partial class AgentPodActivities(IAgentRunner runner, AgentPodsOptions options, ILogger<AgentPodActivities> logger)
 {
@@ -31,7 +38,8 @@ public sealed partial class AgentPodActivities(IAgentRunner runner, AgentPodsOpt
             input.Tier,
             input.DeadlineSeconds,
             input.Attempt,
-            input.Repo);
+            input.Repo,
+            input.Overrides);
 
         using var heartbeatTimer = new PeriodicTimer(options.HeartbeatInterval);
         var heartbeats = HeartbeatAsync(context, heartbeatTimer);

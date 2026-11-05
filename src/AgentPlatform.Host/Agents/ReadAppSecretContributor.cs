@@ -17,12 +17,13 @@ public sealed class ReadAppSecretContributor(IGitHubTokenMinter minter) : IRunSe
     public async Task<RunSecretContribution> ContributeAsync(AgentRunRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        request.Overrides?.Validate();
         if (request.Repo is null)
         {
             return new RunSecretContribution(new Dictionary<string, string>());
         }
 
-        var token = await minter.MintTokenAsync(request.Repo.Repo, _readPermissions, cancellationToken).ConfigureAwait(false);
+        var token = await minter.MintTokenAsync(request.Repo.Repo, request.Overrides?.TokenPermissions ?? _readPermissions, cancellationToken).ConfigureAwait(false);
         return new RunSecretContribution(
             new Dictionary<string, string>
             {

@@ -107,7 +107,7 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
                     SeccompProfile = new V1SeccompProfile { Type = "RuntimeDefault" },
                 },
                 InitContainers = repo is null ? null : [BuildCloneContainer(repo), BuildPluginsContainer()],
-                Containers = [BuildContainer(name, tier, repo)],
+                Containers = [BuildContainer(name, tier, repo, request.Overrides)],
                 Volumes = BuildVolumes(name, repo),
             },
         };
@@ -160,7 +160,7 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
         }
 
         GitHubRepoName.Parse(repo.Repo, nameof(repo));
-        if (repo.PullRequest < 1)
+        if (repo.PullRequest is < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(repo), repo.PullRequest, "The pull request number must be positive.");
         }
@@ -247,12 +247,12 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
         Capabilities = new V1Capabilities { Drop = ["ALL"] },
     };
 
-    private V1Container BuildContainer(string podName, TierSettings tier, AgentRepoContext? repo) => new()
+    private V1Container BuildContainer(string podName, TierSettings tier, AgentRepoContext? repo, AgentRunOverrides? overrides) => new()
     {
         Name = AgentContainerName,
         Image = options.Image,
         Command = ["sh", "-c", StdinLauncher, "claude"],
-        Args = BuildArgs(),
+        Args = BuildArgs(overrides),
         WorkingDir = repo is null ? "/workspace" : RepoDirectory,
         Env = BuildEnvironment(podName, tier, repo is not null),
         Resources = new V1ResourceRequirements
@@ -278,7 +278,7 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
         ],
     };
 
-    private List<string> BuildArgs() =>
+    private List<string> BuildArgs(AgentRunOverrides? overrides) =>
     [
         "-p",
         "--output-format",
@@ -287,11 +287,11 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
         "--permission-mode",
         "bypassPermissions",
         "--model",
-        options.Model,
+        overrides?.Model ?? options.Model,
         "--max-turns",
-        options.MaxTurns.ToString(CultureInfo.InvariantCulture),
+        (overrides?.MaxTurns ?? options.MaxTurns).ToString(CultureInfo.InvariantCulture),
         "--max-budget-usd",
-        options.MaxBudgetUsd.ToString(CultureInfo.InvariantCulture),
+        (overrides?.MaxBudgetUsd ?? options.MaxBudgetUsd).ToString(CultureInfo.InvariantCulture),
         "--setting-sources",
         "user,project",
         "--append-system-prompt",

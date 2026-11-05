@@ -145,6 +145,20 @@ public class AgentPodActivitiesTests
     }
 
     [Fact]
+    public async Task RunAgentPod_PassesTheOverridesAndARepoWithoutAPullRequestToTheRunner()
+    {
+        var runner = new FakeRunner();
+        var repo = new AgentRepoContext("octo/widgets", null, new string('a', 40));
+        var overrides = new AgentRunOverrides("opus", 90, 7.5m, new Dictionary<string, string> { ["contents"] = "read" });
+
+        await Environment().RunAsync(() => Activities(runner).RunAgentPodAsync(Input with { Repo = repo, Overrides = overrides }));
+
+        var request = Assert.Single(runner.Runs);
+        Assert.Equal(repo, request.Repo);
+        Assert.Same(overrides, request.Overrides);
+    }
+
+    [Fact]
     public async Task RunAgentPod_WhenCancelledByTheWorkflow_DeletesThePod()
     {
         var runner = new FakeRunner { OnRun = async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return null!; } };
