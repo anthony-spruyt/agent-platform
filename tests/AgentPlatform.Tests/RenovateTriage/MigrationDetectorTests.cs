@@ -33,8 +33,6 @@ public class MigrationDetectorTests
     [InlineData("siderolabs/installer")]
     [InlineData("kubelet")]
     [InlineData("kube-apiserver")]
-    [InlineData("kubernetes/kubernetes")]
-    [InlineData("Kubernetes/Kubernetes")]
     public void Dependencies_MatchingTheDefaultGlobs_AreHandsOn(string dependency)
     {
         var match = _defaults.Detect([], [dependency]);
@@ -44,11 +42,20 @@ public class MigrationDetectorTests
 
     [Theory]
     [InlineData("kubernetes-sigs/kustomize")]
+    [InlineData("kubernetes/kubernetes")]
+    [InlineData("Kubernetes/Kubernetes")]
     [InlineData("siderolabs/talos/extra")]
     [InlineData("grafana/grafana")]
     public void Dependencies_OutsideTheDefaultGlobs_AreNot(string dependency)
     {
         Assert.Null(_defaults.Detect([], [dependency]));
+    }
+
+    [Fact]
+    public void AKubectlPin_IsNotHandsOn_ButATopfChangeStillIs()
+    {
+        Assert.Null(_defaults.Detect(["images/tools/Dockerfile"], ["kubernetes/kubernetes"]));
+        Assert.Equal("talos/topf.yaml", _defaults.Detect(["talos/topf.yaml"], ["kubernetes/kubernetes"])?.Path);
     }
 
     [Fact]

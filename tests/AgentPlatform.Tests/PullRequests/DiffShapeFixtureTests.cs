@@ -54,6 +54,10 @@ public class DiffShapeFixtureTests
     [InlineData("xfg-1314")]
     [InlineData("spruyt-labs-3890")]
     [InlineData("xfg-1311")]
+    [InlineData("container-images-2685")]
+    [InlineData("xfg-1334")]
+    [InlineData("spruyt-labs-4107")]
+    [InlineData("spruyt-labs-4108")]
     public void RenovatePrs_Pass(string name)
     {
         Assert.True(Classify(name).Passed);

@@ -1,0 +1,17 @@
+{
+  "expectedFileCount": 1,
+  "head": "f10d3e9d15cf114fddcfede559e5a8d3985f806d",
+  "files": [
+    {
+      "path": "docs/requirements.txt",
+      "status": "modified",
+      "patch": "@@ -423,9 +423,9 @@ pathspec==1.1.1 \\\n     --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \\\n     --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189\n     # via mkdocs\n-platformdirs==4.13.6 \\\n-    --hash=sha256:211d176e24674b5895dedf9021c262bcf9fad008a70610bfb147d4a8d6d8fe1b \\\n-    --hash=sha256:21fc198fb09f3e78cadcdfd8a6ae4fd65cadc64a3cba78b694321c2996114a3e\n+platformdirs==4.13.5 \\\n+    --hash=sha256:05831adf87d392760f4b5c3a0a95579ab5a10b18b9b9bd43680dcb47544788a0 \\\n+    --hash=sha256:53d3ec4280b815c1e0b02edad7f9ee8fda1ba9c0865dd9c2e6e63849ce82fc1e\n     # via mkdocs-get-deps\n pygments==2.21.0 \\\n     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \\\n@@ -439,9 +439,9 @@ pyparsing==3.3.3 \\\n     --hash=sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36 \\\n     --hash=sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4\n     # via mike\n-python-dateutil==2.9.0.post0 \\\n-    --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \\\n-    --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427\n+python-dateutil==3.0.0 \\\n+    --hash=sha256:3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd \\\n+    --hash=sha256:7ebcb3c29a92f3ceafe79a7a48a5c45677e9e004bbeec5742ac0bbb00560b7a2\n     # via ghp-import\n pyyaml==6.0.3 \\\n     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \\\n@@ -537,6 +537,10 @@ six==1.17.0 \\\n     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \\\n     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81\n     # via python-dateutil\n+tzdata==2026.5 \\\n+    --hash=sha256:8cc73c0a0bfca7dbfa59235d60b2eff82231dee33f53d206db1acd9173cfc0a7 \\\n+    --hash=sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac\n+    # via python-dateutil\n urllib3==2.8.0 \\\n     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \\\n     --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
+    }
+  ],
+  "commits": [
+    {
+      "sha": "f10d3e9d15cf114fddcfede559e5a8d3985f806d",
+      "message": "chore(deps): refresh pip-compile outputs"
+    }
+  ]
+}
