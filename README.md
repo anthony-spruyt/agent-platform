@@ -103,9 +103,9 @@ A step starts its pod through `AgentPodStep`. Everything beyond the prompt, tier
 
 - The repository context names the repository and the sha to fetch. The pull request number is optional. A run without one clones and fetches the same way (the default branch in `/workspace/repo`, the sha in `/workspace/pr`). Rendering a prompt that names `{{pr}}` for such a run fails.
 - `AgentRunOverrides` replaces `AgentPods:Model`, `AgentPods:MaxTurns` and `AgentPods:MaxBudgetUsd` for one run, each value on its own. The model a run reports is the one it used.
-- `AgentRunOverrides` can also set the permissions of the run's GitHub token, in place of the read tier's default set. It must name at least one permission and every level must be `read`.
-- An invalid override (a blank model, fewer than one turn, a budget of zero or less, or a permission set that breaks the rule above) fails the run as a configuration error without retries, before the runner mints a token or creates a pod.
-- The step can also set the schedule-to-close of the `RunAgentPod` activity. The default is `AgentRunTimeouts.ActivityScheduleToClose`. It is a workflow-side option and is not part of the activity input.
+- `AgentRunOverrides` can also set the permissions of the run's GitHub token. A permission override can only narrow the read tier's default set (`ReadTokenPermissions.Default`): it names at least one permission, every name is exactly one of that set's names (the match is case-sensitive) and every level is `read`.
+- An invalid override (a blank model, fewer than one turn, a budget of zero or less, or a permission set that breaks the rule above) fails the run as a configuration error without retries, before the runner mints a token or creates a pod. The token contributor checks the permission set again right before it mints.
+- The step can also set the schedule-to-close of the `RunAgentPod` activity. The default is `AgentRunTimeouts.ActivityScheduleToClose`. The value must be positive: a step that passes zero or less fails the workflow with a non-retryable failure before it schedules the activity. It is a workflow-side option and is not part of the activity input.
 
 ## GitHub webhook intake and App client
 

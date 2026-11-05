@@ -27,10 +27,9 @@ public sealed record AgentRunOverrides(
             throw new AgentConfigurationException("The max budget override must be positive.");
         }
 
-        if (TokenPermissions is not null
-            && (TokenPermissions.Count == 0 || TokenPermissions.Any(p => string.IsNullOrWhiteSpace(p.Key) || p.Value != "read")))
+        if (TokenPermissions is not null)
         {
-            throw new AgentConfigurationException("The token permission override must name at least one permission, each at the read level.");
+            ReadTokenPermissions.EnsureNarrowsDefault(TokenPermissions);
         }
     }
 }

@@ -99,6 +99,23 @@ public class ReadAppSecretContributorTests
         Assert.Empty(minter.Calls);
     }
 
+    [Theory]
+    [InlineData("administration")]
+    [InlineData("workflows")]
+    [InlineData("Contents")]
+    [InlineData("PULL_REQUESTS")]
+    public async Task ContributeAsync_RefusesToMintAnOverriddenPermissionOutsideTheDefaultSet(string name)
+    {
+        var minter = new RecordingMinter();
+        var contributor = new ReadAppSecretContributor(minter);
+        var permissions = new Dictionary<string, string> { [name] = "read" };
+        var request = Request(new AgentRepoContext("octo/widgets", null, new string('a', 40))) with { Overrides = new AgentRunOverrides(TokenPermissions: permissions) };
+
+        await Assert.ThrowsAsync<AgentConfigurationException>(() => contributor.ContributeAsync(request, Ct));
+
+        Assert.Empty(minter.Calls);
+    }
+
     [Fact]
     public async Task ContributeAsync_MintsNothingForARunWithoutARepository()
     {

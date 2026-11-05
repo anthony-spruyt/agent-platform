@@ -91,6 +91,11 @@ public sealed partial class AgentPodStep(string step, int attempt, Func<SubmitRe
         AgentRunOverrides? overrides = null,
         TimeSpan? scheduleToClose = null)
     {
+        if (scheduleToClose is { } cap && cap <= TimeSpan.Zero)
+        {
+            throw new ApplicationFailureException("The schedule-to-close of an agent run must be positive.", nonRetryable: true);
+        }
+
         var agent = await RunPodAsync(prompt, tier, repo, deadlineSeconds, overrides, scheduleToClose ?? AgentRunTimeouts.ActivityScheduleToClose, cancellationToken);
         await DeletePodAsync();
 
