@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.21.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.5...v1.21.0) (2026-11-07)
+
+
+### Features
+
+* **agent-pods:** add optional pull request and run overrides to agent runs ([#256](https://github.com/anthony-spruyt/agent-platform/issues/256)) ([792de07](https://github.com/anthony-spruyt/agent-platform/commit/792de077ec7c6348f0c767138b86633be58f95f9))
+
+
+### Bug Fixes
+
+* **deps:** update temporalio-dotnet to 1.21.1 ([#265](https://github.com/anthony-spruyt/agent-platform/issues/265)) ([d2e5180](https://github.com/anthony-spruyt/agent-platform/commit/d2e51800cd4bec5e4213392165e77609495be0ec))
+
 ## [1.20.5](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.4...v1.20.5) (2026-11-05)
 
 
