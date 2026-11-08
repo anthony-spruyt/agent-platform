@@ -2,6 +2,7 @@ using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.Gateway;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.Livemap;
 using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
@@ -32,6 +33,7 @@ public static class WorkerServiceCollectionExtensions
             .AddWorkflow<PingWorkflow>()
             .AddWorkflow<RenovateTriageWorkflow>()
             .AddWorkflow<RenovateTriageSweeperWorkflow>()
+            .AddWorkflow<LivemapPollWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<PromptActivities>()
             .AddSingletonActivities<RunDataActivities>()
@@ -41,6 +43,7 @@ public static class WorkerServiceCollectionExtensions
             .AddScopedActivities<ClaudeRungActivities>()
             .AddScopedActivities<TriageCheckActivities>()
             .AddScopedActivities<SweeperActivities>()
+            .AddScopedActivities<LivemapPollActivities>()
             .AddScopedActivities<AgentPodActivities>();
 
         services
@@ -54,6 +57,7 @@ public static class WorkerServiceCollectionExtensions
         services.AddGitHubReadApp(configuration);
         services.AddClaudeBudget(configuration);
         services.AddRenovateTriage(configuration);
+        services.AddLivemap(configuration);
         services.AddHostedService(provider => new LegacyClaudeCapsWarning(configuration, provider.GetRequiredService<ILogger<LegacyClaudeCapsWarning>>()));
         services.AddSingleton(pods);
         services.AddSingleton(prompts);
