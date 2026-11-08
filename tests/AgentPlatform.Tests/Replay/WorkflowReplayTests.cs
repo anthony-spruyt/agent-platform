@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using AgentPlatform.Host.Livemap;
 using AgentPlatform.Host.Workflows;
 using Temporalio.Common;
 using Temporalio.Worker;
@@ -23,7 +24,7 @@ public class WorkflowReplayTests
     public async Task CommittedHistory_ReplaysWithoutNondeterminism(string name)
     {
         var replayer = new WorkflowReplayer(
-            new WorkflowReplayerOptions().AddWorkflow<PingWorkflow>().AddWorkflow<RenovateTriageWorkflow>().AddWorkflow<RenovateTriageSweeperWorkflow>());
+            new WorkflowReplayerOptions().AddWorkflow<PingWorkflow>().AddWorkflow<RenovateTriageWorkflow>().AddWorkflow<RenovateTriageSweeperWorkflow>().AddWorkflow<LivemapPollWorkflow>());
         var history = WorkflowHistory.FromJson(name, HistoryStore.Read(name));
 
         var result = await replayer.ReplayWorkflowAsync(history, cancellationToken: TestContext.Current.CancellationToken);
@@ -65,6 +66,7 @@ public class WorkflowReplayTests
     [InlineData("ping-")]
     [InlineData("renovate-triage-")]
     [InlineData("renovate-triage-sweeper-")]
+    [InlineData("livemap-poll-")]
     public void EveryWorkflowHasAtLeastOneCommittedHistory(string prefix) =>
         Assert.Contains(HistoryStore.Names(), name => name.StartsWith(prefix, StringComparison.Ordinal));
 }

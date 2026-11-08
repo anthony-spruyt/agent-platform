@@ -146,6 +146,41 @@ namespace AgentPlatform.Host.RunData.Migrations
                     b.ToTable("claude_runs", (string)null);
                 });
 
+            modelBuilder.Entity("AgentPlatform.Host.Livemap.LivemapBuild", b =>
+                {
+                    b.Property<long>("BuildId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("build_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("ManifestGid")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("manifest_gid");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("state");
+
+                    b.Property<DateTimeOffset>("SteamUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("steam_updated_at");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("BuildId");
+
+                    b.ToTable("livemap_builds", (string)null);
+                });
+
             modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.RenovateTriageVerdict", b =>
                 {
                     b.Property<Guid>("Id")

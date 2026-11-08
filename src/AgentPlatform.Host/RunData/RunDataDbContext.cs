@@ -1,5 +1,6 @@
 using System.Text;
 using AgentPlatform.Host.ClaudeBudget;
+using AgentPlatform.Host.Livemap;
 using AgentPlatform.Host.RenovateTriage;
 using Microsoft.EntityFrameworkCore;
 
@@ -32,6 +33,8 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
     public DbSet<ClaudeCooldown> ClaudeCooldowns => Set<ClaudeCooldown>();
 
     public DbSet<SweeperState> SweeperState => Set<SweeperState>();
+
+    public DbSet<LivemapBuild> LivemapBuilds => Set<LivemapBuild>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -100,6 +103,15 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             state.ToTable("sweeper_state");
             state.HasKey(s => s.Id);
             state.Property(s => s.Id).ValueGeneratedNever();
+        });
+
+        modelBuilder.Entity<LivemapBuild>(build =>
+        {
+            build.ToTable("livemap_builds");
+            build.HasKey(b => b.BuildId);
+            build.Property(b => b.BuildId).ValueGeneratedNever();
+            build.Property(b => b.ManifestGid).HasMaxLength(20);
+            build.Property(b => b.State).HasConversion<string>().HasMaxLength(16);
         });
 
         modelBuilder.Entity<Prompt>(prompt =>
