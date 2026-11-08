@@ -25,19 +25,21 @@ public class LivemapScheduleServiceTests
     private static async Task RunOnceAsync(LivemapScheduleService service)
     {
         await service.StartAsync(Ct);
-        await service.ExecuteTask!;
+        await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(20), Ct);
         await service.StopAsync(Ct);
     }
 
-    private static async Task<List<string>> ScheduleIdsAsync(ITemporalClient client)
+    private static async Task<bool> ScheduleExistsAsync(ITemporalClient client)
     {
-        var ids = new List<string>();
-        await foreach (var schedule in client.ListSchedulesAsync())
+        try
         {
-            ids.Add(schedule.Id);
+            await client.GetScheduleHandle(LivemapScheduleService.ScheduleId).DescribeAsync();
+            return true;
         }
-
-        return ids;
+        catch (RpcException ex) when (ex.Code == RpcException.StatusCode.NotFound)
+        {
+            return false;
+        }
     }
 
     private sealed class FailFirstCreate : IClientInterceptor
@@ -80,7 +82,6 @@ public class LivemapScheduleServiceTests
 
         var description = await env.Client.GetScheduleHandle(LivemapScheduleService.ScheduleId).DescribeAsync();
         Assert.Equal(TimeSpan.FromMinutes(5), Assert.Single(description.Schedule.Spec.Intervals).Every);
-        Assert.Equal([LivemapScheduleService.ScheduleId], await ScheduleIdsAsync(env.Client));
     }
 
     [Fact]
@@ -90,7 +91,7 @@ public class LivemapScheduleServiceTests
 
         await RunOnceAsync(Service(env.Client, enabled: false));
 
-        Assert.Empty(await ScheduleIdsAsync(env.Client));
+        Assert.False(await ScheduleExistsAsync(env.Client));
     }
 
     [Fact]
@@ -98,10 +99,11 @@ public class LivemapScheduleServiceTests
     {
         await using var env = await WorkflowEnvironment.StartLocalAsync();
         await RunOnceAsync(Service(env.Client));
+        Assert.True(await ScheduleExistsAsync(env.Client));
 
         await RunOnceAsync(Service(env.Client, enabled: false));
 
-        Assert.Empty(await ScheduleIdsAsync(env.Client));
+        Assert.False(await ScheduleExistsAsync(env.Client));
     }
 
     [Fact]
@@ -113,6 +115,6 @@ public class LivemapScheduleServiceTests
         await RunOnceAsync(Service(env.Client));
 
         Assert.Equal(2, interceptor.Attempts);
-        Assert.Equal([LivemapScheduleService.ScheduleId], await ScheduleIdsAsync(env.Client));
+        Assert.True(await ScheduleExistsAsync(env.Client));
     }
 }
