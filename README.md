@@ -52,6 +52,11 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `ClaudeBudget:Kinds:<kind>:MaxPerSubjectPerDay`          | `2`                                                                   | Worker role. The same cap per subject (a pull request for `RenovateTriage`) over a rolling 24 hours; the `security` label does not skip it. `<kind>` matches the kind name exactly (ordinal, case-sensitive). At least 1, or startup fails |
 | `ClaudeBudget:Kinds:<kind>:MaxFailedAttemptsPerRevision` | `2`                                                                   | Worker role. Failed attempts on one revision (a head commit for `RenovateTriage`) before the work goes to the owner; without a revision they count over a rolling 24 hours. At least 1, or startup fails                                   |
 | `RenovateTriage:Sweeper:Interval`                        | `00:30:00`                                                            | Worker role. How often the sweeper runs (a .NET time span). At least one minute, or startup fails; a new value updates the schedule at start                                                                                               |
+| `Livemap:Enabled`                                        | `false`                                                               | Worker role. Turns the Livemap build poll on; while off, startup removes the poll schedule and nothing is read or written                                                                                                                  |
+| `Livemap:Repo`                                           | none, required when enabled                                           | Worker role. The Livemap fork as `owner/name`; its `data/builds.json` at the pinned release lists the builds already covered                                                                                                               |
+| `Livemap:PinRepo`                                        | none, required when enabled                                           | Worker role. The repository, as `owner/name`, that holds the Livemap pin file                                                                                                                                                              |
+| `Livemap:PinPath`                                        | none, required when enabled                                           | Worker role. Path of the pin file in `Livemap:PinRepo`: plain segments only, no leading slash, dot segment, query or fragment                                                                                                              |
+| `Livemap:PollInterval`                                   | `00:15:00`                                                            | Worker role. How often the poll runs (a .NET time span). At least one minute, or startup fails; a new value updates the schedule at start                                                                                                  |
 | `TextScanner:BaseUrl`                                    | `http://litellm-llm-tool-guard.litellm.svc:8080`                      | Worker role. The llm-tool-guard service that scans untrusted pull request text; an absolute http or https URL                                                                                                                              |
 | `TextScanner:RequestTimeout`                             | `00:05:30`                                                            | Worker role. Time allowed for one scan request; a slower one leaves the text unchecked                                                                                                                                                     |
 | `TextScanner:RetryBudget`                                | `00:10:00`                                                            | Worker role. How long a busy (503) or unreachable scanner is retried before the text is left unchecked                                                                                                                                     |
@@ -344,6 +349,25 @@ The comments:
 | Sticky edit           | **Auto-approved:** new commit `<short sha>`, `<reason>`. The reason is the review body's text with its first letter lowercased. |
 | Dismissal message     | A newer commit needs review.                                                                                                    |
 
+## Livemap
+
+The Livemap worker watches Steam for new Enshrouded server builds, so nobody has to notice them. It only detects and records builds; it writes nothing to GitHub.
+
+A hosted service on the worker creates the Temporal Schedule `livemap-poll` at startup, or updates it when it exists, so a changed `Livemap:PollInterval` takes effect on the next start. When `Livemap:Enabled` is `false` it deletes the schedule instead. Startup retries until Temporal answers.
+
+The schedule starts `LivemapPollWorkflow` on the `agent-platform` queue and skips a run while the previous one is still going.
+
+With the feature off, the other `Livemap:` keys are not checked, but a value that does not parse as its type still fails startup. With it on, an invalid or missing key fails startup.
+
+Each poll runs the `LivemapPoll` activity, tried up to 3 times:
+
+1. Read the public build of the server app from the Steam info API: build id, manifest id and update time. An answer that is not a success, has no valid ids or takes too long fails the attempt.
+2. When `livemap_builds` already has a row for the build id, the poll ends `Unchanged`.
+3. Otherwise read the pin file from the default branch of `Livemap:PinRepo`. It must hold exactly one `LIVEMAP_VERSION` line with a release tag. Then read `data/builds.json` of `Livemap:Repo` at that tag.
+4. A build id listed in that file is already supported: the row is recorded as `Done` and the poll ends `Shipped`. Any other build is recorded as `Detected` and the poll ends `Detected`.
+
+A failed read (Steam, GitHub, a missing pin or an unreadable build list) fails the attempt and records no row, so the next poll looks again. A row is written once and the first writer wins, so a repeated or concurrent poll never changes it.
+
 ## Run data
 
 Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF Core, so runs can be measured, compared and replayed later.
@@ -357,6 +381,7 @@ Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF C
 | `claude_cooldowns`         | scope                 | `scope` (primary key: `global` or a repo), `until`, `cause`; a write never shortens a running cooldown                                                                                                                                                                                                                                         |
 | `renovate_triage_pending`  | pull request          | `repo` + `pr_number` (unique), `head_sha`, `reason`, `status`, `attempts` (failed Claude runs on this head), `created_at`, `opened_at` (when the row was created or its head last moved), `held_at` (while `blocked`), `updated_at`; a head move carries the row and resets `attempts` and `held_at`                                           |
 | `sweeper_state`            | singleton             | `id`, `last_seen_delivered_at`, `last_success_at`; written by the sweeper (see Sweeper)                                                                                                                                                                                                                                                        |
+| `livemap_builds`           | Steam server build    | `build_id` (primary key), `manifest_gid`, `steam_updated_at`, `state` (`Detected` or `Done`), `created_at`, `updated_at`; written by the Livemap poll (see Livemap)                                                                                                                                                                            |
 | `prompts`                  | distinct prompt       | `hash` (SHA-256 of the body, primary key), `name`, `body`; a Claude step stores the prompt template it ran                                                                                                                                                                                                                                     |
 
 `claude_runs` keeps `repo`, `pr_number` and `head_sha` (filled for `RenovateTriage` runs) for one release so the previous image can still read and write the table; a trigger fills the key columns of an insert that names only those three.
@@ -378,6 +403,7 @@ CI fails when the model and the migrations differ (`dotnet ef migrations has-pen
 | Path                                   | Purpose                                                                                    |
 | -------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `src/AgentPlatform.Host`               | The executable: role selection, AgentGateway, Temporal workers, agent-pod runner, run data |
+| `src/AgentPlatform.Host/Livemap`       | The Livemap build poll: Steam client, build store, schedule and workflow                   |
 | `src/AgentPlatform.ServiceDefaults`    | Shared OpenTelemetry, health checks and resilience                                         |
 | `src/AgentPlatform.AppHost`            | Aspire AppHost for local development only                                                  |
 | `tests/AgentPlatform.Tests`            | xUnit unit, time-skipping workflow and replay tests                                        |
