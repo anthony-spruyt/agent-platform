@@ -26,6 +26,8 @@ public static class LivemapServiceCollectionExtensions
             client.Timeout = _steamTimeout;
             client.MaxResponseContentBufferSize = MaxSteamResponseBytes;
         });
+        services.AddHttpClient<ILivemapGitHub, LivemapGitHub>(GitHubHttp.Configure)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddSingleton<LivemapBuildStore>();
         services.AddTransient<IShippedBuilds, ShippedBuildsReader>();
         services.AddHostedService<LivemapScheduleService>();

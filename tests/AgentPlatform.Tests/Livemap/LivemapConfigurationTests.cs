@@ -127,6 +127,40 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void TheGitHubClient_TalksToTheGitHubApi_AtThePinnedVersion()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapGitHub));
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+    }
+
+    [Fact]
+    public void TheGitHubClient_LeavesRedirectsToItsOwnCode_SoTheTokenStaysOnTheFirstHop()
+    {
+        using var provider = Build(Enabled);
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapGitHub));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void TheGitHubClient_CanBeBuilt_ByTheActivitiesThatNeedIt()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<LivemapGitHub>(scope.ServiceProvider.GetRequiredService<ILivemapGitHub>());
+    }
+
+    [Fact]
     public void TheSteamClient_TalksToTheSteamInfoHost_WithABoundedResponse()
     {
         using var provider = Build();
