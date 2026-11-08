@@ -27,7 +27,7 @@ public static class LivemapServiceCollectionExtensions
             client.MaxResponseContentBufferSize = MaxSteamResponseBytes;
         });
         services.AddSingleton<LivemapBuildStore>();
-        services.AddSingleton<IShippedBuilds, ShippedBuildsReader>();
+        services.AddTransient<IShippedBuilds, ShippedBuildsReader>();
         services.AddHostedService<LivemapScheduleService>();
         return services;
     }

@@ -357,7 +357,7 @@ A hosted service on the worker creates the Temporal Schedule `livemap-poll` at s
 
 The schedule starts `LivemapPollWorkflow` on the `agent-platform` queue and skips a run while the previous one is still going.
 
-With the feature off, none of the other `Livemap:` keys is read. With it on, an invalid or missing key fails startup.
+With the feature off, the other `Livemap:` keys are not checked, but a value that does not parse as its type still fails startup. With it on, an invalid or missing key fails startup.
 
 Each poll runs the `LivemapPoll` activity, tried up to 3 times:
 

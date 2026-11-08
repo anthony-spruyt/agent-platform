@@ -150,6 +150,16 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void TheShippedBuildsReader_IsTransient_SoItsGitHubClientRotates()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddAgentPlatformWorker(new ConfigurationBuilder().AddInMemoryCollection(WorkerSettings()).Build());
+
+        Assert.Equal(ServiceLifetime.Transient, services.Last(d => d.ServiceType == typeof(IShippedBuilds)).Lifetime);
+    }
+
+    [Fact]
     public void ADisabledFeature_IgnoresItsSettings()
     {
         var settings = With("Livemap:Enabled", "false");
