@@ -356,7 +356,7 @@ The comments:
 
 ## Livemap
 
-The Livemap worker watches Steam for new Enshrouded server builds, so nobody has to notice them. It detects and records builds, then has the Livemap fork's own workflows check each new one and sorts it as known, easy or hard. It opens no pull request and merges nothing.
+The Livemap worker watches Steam for new Enshrouded server builds, so nobody has to notice them. It detects and records builds, then has the Livemap fork's own workflows check each new one and sorts it as known, easy or hard. For a known or easy build it opens a data pull request in the fork, and while `Livemap:AutoMerge` is on it merges that pull request once the fork's required checks pass.
 
 A hosted service on the worker creates the Temporal Schedule `livemap-poll` at startup, or updates it when it exists, so a changed `Livemap:PollInterval` takes effect on the next start. When `Livemap:Enabled` is `false` it deletes the schedule instead. Startup retries until Temporal answers.
 
@@ -370,16 +370,21 @@ Each poll runs the `LivemapPoll` activity, tried up to 3 times. Its result is `U
 2. When `livemap_builds` already has a row for the build id, nothing is recorded and the result is `Unchanged`. The poll goes on with step 5.
 3. Otherwise read the pin file from the default branch of `Livemap:PinRepo`. It must hold exactly one `LIVEMAP_VERSION` line with a release tag. Then read `data/builds.json` of `Livemap:Repo` at that tag.
 4. A build id listed in that file is already supported: the row is recorded as `Done` and the result is `Shipped`. Any other build is recorded as `Detected` and the result is `Detected`.
-5. Every older row that is still `Detected`, `Parked` or `Classified` becomes `Superseded`: only the newest public build matters.
-6. A `Parked` row whose retry time has passed goes back to `Detected`. A `Detected` row gets its build workflow started; one already running for the build is kept.
+5. Every older row that is still `Detected`, `Parked`, `Classified`, `PullRequestOpen` or `PullRequestWaiting` becomes `Superseded`: only the newest public build matters.
+6. A `Parked` row whose retry time has passed goes back to where it stopped, and so does a `PullRequestWaiting` row once `Livemap:AutoMerge` is on. A row that is `Detected`, `Classified`, `PullRequestOpen` or `Merging`, or was just put back, gets its build workflow started; one already running for the build is kept.
+7. Every `Superseded` row that still has a pull request gets that pull request closed and its branch deleted, and the row lets go of the pull request. This runs last, so a slow fork never holds up the newest build; a failure fails the attempt, and the next poll repeats it.
 
-A failed read (Steam, GitHub, a missing pin or an unreadable build list) fails the attempt and records no row, so the next poll looks again. A new row is written once and the first writer wins, so a repeated or concurrent poll never records a build twice or rewinds its state. A poll changes a row that already exists only in steps 5 and 6.
+A failed read (Steam, GitHub, a missing pin or an unreadable build list) fails the attempt and records no row, so the next poll looks again. A new row is written once and the first writer wins, so a repeated or concurrent poll never records a build twice or rewinds its state. A poll changes a row that already exists only in steps 5 to 7.
 
 Steam's info API is a community mirror, not Valve, so a `Detected` row is only a hint. Nothing more happens with a build until the fork's own check has confirmed it.
 
 ### Build workflow
 
-`LivemapBuildWorkflow` runs on the `agent-platform` queue, one per build, with the id `livemap-build-<build id>`; a workflow already running for the build is kept. It stops with `Superseded` when the row is no longer `Detected`, which it checks before each dispatch. Its steps:
+`LivemapBuildWorkflow` runs on the `agent-platform` queue, one per build, with the id `livemap-build-<build id>`; a workflow already running for the build is kept.
+The build's row says what is left to do: each turn the workflow reads it (`LivemapBuildPlan`), does the one step the state calls for and reads it again, until the state is one the worker leaves alone or 30 turns have passed, which parks the build.
+A `Detected` row is checked in the fork, a `Classified` row gets its pull request, and a row with an open pull request is watched until it merges. A `Superseded` row ends the workflow, and the check step looks for it before each dispatch.
+
+A `Detected` row goes through these steps:
 
 1. Dispatch the fork's `exe-capture.yaml` with the build id and manifest id, then wait for the run to succeed.
 2. Dispatch the fork's `compat.yaml` the same way.
@@ -396,16 +401,50 @@ The compat run is an input, not a verdict. The build is classified only when its
 
 A step that fails (a run that is missing, failed or too slow, an artifact that is missing) parks the build. The third parking flags it for the owner.
 
-| State        | Meaning                                                                                                                              |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `Detected`   | New and waiting for, or going through, its build workflow                                                                            |
-| `Done`       | Already covered by the pinned release; nothing to do                                                                                 |
-| `Classified` | The fork's check confirmed it is `Known` or `Easy`; `classification` and `compat_run_id` say which and from which run                |
-| `NeedsOwner` | A hard or invalid result, or a third parking; `detail` says why                                                                      |
-| `Parked`     | A step failed; `attempts` counts the failures and `next_retry_at` is 30 minutes later, when the poll puts the row back to `Detected` |
-| `Superseded` | A newer build appeared                                                                                                               |
+| State                | Meaning                                                                                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Detected`           | New and waiting for, or going through, its build workflow                                                                                                                    |
+| `Done`               | Already covered by the pinned release; nothing to do                                                                                                                         |
+| `Classified`         | The fork's check confirmed it is `Known` or `Easy`; `classification` and `compat_run_id` say which and from which run; its pull request is next                              |
+| `PullRequestOpen`    | The data pull request is open; `pull_request_number` and `head_sha` say which and at which commit, and the workflow waits for its checks                                     |
+| `PullRequestWaiting` | The data pull request is open and `Livemap:AutoMerge` is off, so the workflow has ended; the poll resumes the row once the switch is on                                      |
+| `Merging`            | The squash merge was begun; a retry goes on from here                                                                                                                        |
+| `Merged`             | The data pull request is merged                                                                                                                                              |
+| `NeedsOwner`         | A hard or invalid result, a required check that failed or did not finish, a pull request the gate refuses or that was closed unmerged, or a third parking; `detail` says why |
+| `Parked`             | A step failed; `attempts` counts the failures and `next_retry_at` is 30 minutes later, when the poll puts the row back where it stopped                                      |
+| `Superseded`         | A newer build appeared                                                                                                                                                       |
 
 Every state change is a write that expects the row's current state and `version`, so a workflow that lost a race changes nothing.
+
+### Data pull request
+
+A `Classified` row gets its pull request in the fork (`LivemapBuildOpenPullRequest`). The step starts from a clean branch each time: it closes the open pull requests of the branch `livemap/build-<build id>` and deletes the branch, so an attempt that stopped half way is repeated whole. Then:
+
+1. Read the compat run's artifact, the head of `main`, and the fork's `data/builds.json` and `data/builds.schema.json` at that head. The build must still classify the way it was when the artifact is compared with the file at that head; if it does not, or the artifact is gone, the row goes back to `Detected` (the third time it is flagged for the owner instead).
+2. Validate the proposed `data/builds.json` against the fork's schema. A file that fails, or a fork without the schema, flags the build for the owner.
+3. Create the branch at the head of `main` and commit the proposed file to it with the GraphQL `createCommitOnBranch` mutation, giving that head as `expectedHeadOid`, so GitHub signs the commit. The message is `fix(builds): add server build <build id>` for a `Known` build and `fix(builds): support server build <build id>` for an `Easy` one; the type is `fix` because release notes list it.
+4. Open the pull request into `main` with the commit message as its title. Its body links the compat run and the fork issue `Livemap:TrackingIssue`.
+
+The row then holds the pull request number and its head commit. Its state is `PullRequestOpen`, or `PullRequestWaiting` while `Livemap:AutoMerge` is off: the workflow ends there, and the poll resumes the row once the switch is on. Switching it off while a pull request is open also ends in `PullRequestWaiting`.
+
+An open pull request is watched by `LivemapBuildAdvance`, which reads the pull request, the head of `main`, the commit and the check runs from the GitHub API on every turn and applies the merge gate to the head commit it finds. The gate passes only when all of this holds:
+
+- The pull request is open, not a draft, and goes from the branch `livemap/build-<build id>` into `main`, with the fork as both its head and base repository.
+- The platform's GitHub App opened it, and its head is the one commit the worker made, whose parent is the head of `main`.
+- It changes exactly `data/builds.json`: status `modified`, no rename, and a plain file (mode `100644`) at the head and on `main`.
+- Every check run named in `Livemap:RequiredChecks` exists on the head, comes from GitHub Actions and concluded `success`. A skipped check does not pass, and check runs of other apps or other names are ignored.
+
+What the gate finds decides the turn:
+
+- **Passed**: the row becomes `Merging` and the pull request is squash merged with the head commit as `sha` and a title that ends with the pull request number, as `(#<number>)`. Just before it merges, the worker reads the head of `main` again, and a merge that GitHub refuses after `main` moved is handled as below. Once GitHub confirms the merge the row becomes `Merged`.
+- **Pending**: a required check is missing or still running. The workflow reads the checks again after 15 minutes, or at once when a check suite finishes at the pull request's head commit (see Waking a build); a wake for any other commit leaves the wait to the interval. A check still unfinished three hours after the row last changed flags the build for the owner.
+- **Failed**: a required check concluded with anything but `success`. The row becomes `NeedsOwner` with the names of the failed checks, and the pull request stays open.
+- **Main moved**: the parent of the head commit is no longer the head of `main`.
+  The row goes back to `Classified`, so the next turn closes the pull request, deletes its branch and opens a new one on the new head of `main`, without repeating the capture or the check.
+  A build that no longer classifies the same way on the new `main` starts again from `Detected`. Both are counted in `attempts`, and the third time the build is flagged for the owner.
+- **Refused**: anything else the gate finds, such as another author, another file, a draft, or a pull request that was closed without a merge, flags the build for the owner with the reason.
+
+Each call to the fork mints an installation token for the fork alone with only the permission that call needs (`contents`, `pull_requests` or `checks`, read or write), so the App installation must grant the fork those repository permissions.
 
 ### Waking a build
 
