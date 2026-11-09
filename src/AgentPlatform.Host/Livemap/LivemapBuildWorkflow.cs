@@ -107,6 +107,9 @@ public partial class LivemapBuildWorkflow
                 case LivemapStep.Ship:
                     await ShipAsync(input.BuildId);
                     break;
+                case LivemapStep.Patch when Workflow.Patched(HardPathPatch):
+                    await PatchAsync(input);
+                    break;
                 default:
                     await WatchAsync(input.BuildId, plan.HeadSha);
                     break;

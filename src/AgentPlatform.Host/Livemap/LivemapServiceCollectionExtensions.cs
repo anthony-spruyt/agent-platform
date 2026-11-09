@@ -47,6 +47,7 @@ public static class LivemapServiceCollectionExtensions
         services.AddHttpClient<ILivemapNotices, LivemapNotices>(GitHubHttp.Configure)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddTransient<LivemapReleaseVerifier>();
+        services.AddTransient<LivemapPatchValidator>();
         services.AddHttpClient(nameof(ILivemapPinPullRequests), GitHubHttp.Configure)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
             .AddTypedClient<ILivemapPinPullRequests>((http, provider) => new LivemapPullRequests(
