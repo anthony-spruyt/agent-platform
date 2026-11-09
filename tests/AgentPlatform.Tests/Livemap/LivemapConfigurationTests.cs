@@ -21,6 +21,9 @@ public class LivemapConfigurationTests
         ["Livemap:TrackingIssue"] = "12",
         ["Livemap:RequiredChecks:0"] = "lint / MegaLinter",
         ["Livemap:RequiredChecks:1"] = "repo / Build, test, package",
+        ["Livemap:ReleaseBot"] = "release-bot[bot]",
+        ["Livemap:ReleaseRequiredChecks:0"] = "lint / MegaLinter",
+        ["Livemap:ReleaseRequiredChecks:1"] = "summary / Check Results",
     };
 
     private static Dictionary<string, string?> WorkerSettings(Dictionary<string, string?>? extra = null)
@@ -78,6 +81,8 @@ public class LivemapConfigurationTests
         Assert.Equal(TimeSpan.FromMinutes(5), options.PollInterval);
         Assert.Equal(12, options.TrackingIssue);
         Assert.Equal(["lint / MegaLinter", "repo / Build, test, package"], options.RequiredChecks);
+        Assert.Equal("release-bot[bot]", options.ReleaseBot);
+        Assert.Equal(["lint / MegaLinter", "summary / Check Results"], options.ReleaseRequiredChecks);
     }
 
     [Fact]
@@ -94,6 +99,14 @@ public class LivemapConfigurationTests
     public void AnEnabledFeature_WithoutRequiredChecks_FailsAtStartup()
     {
         var settings = Enabled.Where(pair => !pair.Key.StartsWith("Livemap:RequiredChecks", StringComparison.Ordinal)).ToDictionary();
+
+        Assert.Throws<InvalidOperationException>(() => Build(settings));
+    }
+
+    [Fact]
+    public void AnEnabledFeature_WithoutReleaseRequiredChecks_FailsAtStartup()
+    {
+        var settings = Enabled.Where(pair => !pair.Key.StartsWith("Livemap:ReleaseRequiredChecks", StringComparison.Ordinal)).ToDictionary();
 
         Assert.Throws<InvalidOperationException>(() => Build(settings));
     }
@@ -121,6 +134,12 @@ public class LivemapConfigurationTests
     [InlineData("Livemap:RequiredChecks:1", "  ")]
     [InlineData("Livemap:RequiredChecks:1", " repo / Build, test, package ")]
     [InlineData("Livemap:RequiredChecks:1", "lint / MegaLinter")]
+    [InlineData("Livemap:ReleaseBot", null)]
+    [InlineData("Livemap:ReleaseBot", "release-bot")]
+    [InlineData("Livemap:ReleaseBot", " release-bot[bot]")]
+    [InlineData("Livemap:ReleaseRequiredChecks:1", "")]
+    [InlineData("Livemap:ReleaseRequiredChecks:1", " summary / Check Results")]
+    [InlineData("Livemap:ReleaseRequiredChecks:1", "lint / MegaLinter")]
     public void AnEnabledFeature_WithAnInvalidSetting_FailsAtStartup(string key, string? value)
     {
         Assert.Throws<InvalidOperationException>(() => Build(With(key, value)));
