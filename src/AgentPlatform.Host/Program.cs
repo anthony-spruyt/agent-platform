@@ -1,6 +1,7 @@
 using AgentPlatform.Host;
 using AgentPlatform.Host.Gateway;
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.Livemap;
 using AgentPlatform.Host.RunData;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,6 +22,7 @@ switch (role)
     default:
         builder.Services.AddAgentGateway(builder.Configuration);
         builder.Services.AddGitHubWebhookIntake(builder.Configuration);
+        builder.Services.AddLivemapEvents(builder.Configuration);
         break;
 }
 

@@ -11,7 +11,8 @@ public static class LivemapServiceCollectionExtensions
 
     private const long MaxSteamResponseBytes = 4 * 1024 * 1024;
 
-    public static IServiceCollection AddLivemap(this IServiceCollection services, IConfiguration configuration)
+    // Both roles: the web role has no database, so everything that needs one stays in AddLivemap.
+    public static IServiceCollection AddLivemapEvents(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
@@ -19,6 +20,14 @@ public static class LivemapServiceCollectionExtensions
         var section = configuration.GetSection(LivemapOptions.SectionName);
         Validate(section.Get<LivemapOptions>() ?? new LivemapOptions());
         services.Configure<LivemapOptions>(section);
+        services.TryAddSingleton<ILivemapWakeStarter, TemporalLivemapWakeStarter>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IGitHubEventHandler, LivemapCheckSuiteHandler>());
+        return services;
+    }
+
+    public static IServiceCollection AddLivemap(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddLivemapEvents(configuration);
         services.TryAddSingleton(TimeProvider.System);
         services.AddHttpClient<ISteamAppInfo, SteamAppInfoClient>(client =>
         {
