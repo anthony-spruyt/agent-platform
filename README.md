@@ -385,7 +385,7 @@ A dispatch is never retried, because a repeat would start the work twice; the ru
 The compat run is an input, not a verdict. The build is classified only when its run succeeded, the report names the build id and manifest id that were dispatched, and the proposed `data/builds.json` differs from the fork's file at the run's commit in exactly the way the report says:
 
 - `Known`: the report says the executable matches an existing row, and that row is the only one that changes. It gains the new build id after the ones it lists and its `steam.manifest` becomes the new manifest id.
-- `Easy`: the report says the build needs a new row, and one row is appended after the row the report names as its base. The other rows stay as they were. The new row has the build id, the executable's fingerprint, the depot, manifest and checksum of the build, the signature set and layout of its base, and one hex offset for each site the base has.
+- `Easy`: the report says the build needs a new row, and one row is appended after the row the report names as its base, and that base is the last row of the fork's file. The other rows stay as they were. The new row has the build id, the executable's fingerprint, the depot, manifest and checksum of the build, the signature set and layout of its base, and one hex offset for each site the base has.
 - `Hard`: the build is flagged for the owner with the first reasons the report gives.
 - Anything else is invalid and flagged for the owner at once, without another try: another build in the report, an artifact with files beyond `report.json` and `builds.json` or a file over 256 KiB, a `builds.json` that changes more than its rows or adds or drops more than one row.
 

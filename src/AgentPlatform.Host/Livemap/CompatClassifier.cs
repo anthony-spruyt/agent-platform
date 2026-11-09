@@ -125,7 +125,7 @@ public static class CompatClassifier
 
             var alteredRows = Enumerable.Range(0, forkRows.Count).Count(i => !JsonNode.DeepEquals(forkRows[i], proposedRows[i]));
             var models = forkRows.Select(row => row!.AsObject()).Where(row => Label(row) == report.BaseLabel).ToList();
-            if (alteredRows > 0 || models.Count != 1)
+            if (alteredRows > 0 || models.Count != 1 || !ReferenceEquals(models[0], forkRows[^1]))
             {
                 return CompatOutcome.Invalid("An easy build only appends a row after the one it is based on and leaves every other row alone.");
             }

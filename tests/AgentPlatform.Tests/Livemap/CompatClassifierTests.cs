@@ -337,6 +337,22 @@ public class CompatClassifierTests
     }
 
     [Fact]
+    public void ANewRow_BasedOnARowThatIsNotTheNewestOne_IsInvalid()
+    {
+        var scenario = Scenario.NewRow();
+        scenario.Report["base"]!["label"] = "100";
+        scenario.Report["base"]!["sigset"] = "s1";
+        scenario.Row(2)["sigset"] = "s1";
+        scenario.Row(2)["mining_layout"] = "inline_array";
+        scenario.Row(2).Remove("expected_operands");
+
+        var outcome = scenario.Run();
+
+        Assert.Equal(CompatOutcomeKind.Invalid, outcome.Kind);
+        Assert.Contains("after the one it is based on", outcome.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ARowTheSizeOfWhichIsWrittenWithAnotherCase_IsStillTheSameSize()
     {
         var scenario = Scenario.NewRow();
