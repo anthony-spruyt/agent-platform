@@ -38,6 +38,8 @@ public interface ILivemapPullRequests
 
     Task<string> CommitFileAsync(string branch, string expectedHeadOid, string headline, string path, string content, CancellationToken cancellationToken);
 
+    Task<string> CommitFilesAsync(string branch, string expectedHeadOid, string headline, IReadOnlyList<LivemapFile> files, CancellationToken cancellationToken);
+
     Task<int> OpenAsync(string branch, string title, string body, CancellationToken cancellationToken);
 
     Task<LivemapPullRequest?> GetAsync(int number, CancellationToken cancellationToken);

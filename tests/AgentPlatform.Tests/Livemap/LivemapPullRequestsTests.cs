@@ -149,6 +149,39 @@ public class LivemapPullRequestsTests
     }
 
     [Fact]
+    public async Task SeveralFiles_GoInOneCommit_EachAsItIs()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"data":{"createCommitOnBranch":{"commit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}"""));
+        LivemapFile[] files = [new("data/builds.json", "{\"a\":1}\n"), new("src/scan.cpp", "int x;\n// é\n")];
+
+        var oid = await client.CommitFilesAsync("livemap/build-400", Oid, "fix(builds): support server build 400", files, Ct);
+
+        Assert.Equal(new string('b', 40), oid);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/graphql", request.Uri.AbsolutePath);
+        var input = JsonNode.Parse(request.Body!)!["variables"]!["input"]!;
+        Assert.Equal(Oid, (string?)input["expectedHeadOid"]);
+        Assert.Equal("fix(builds): support server build 400", (string?)input["message"]!["headline"]);
+        var additions = input["fileChanges"]!["additions"]!.AsArray();
+        Assert.Equal(["data/builds.json", "src/scan.cpp"], additions.Select(a => (string?)a!["path"]));
+        Assert.Equal(files.Select(f => f.Content), additions.Select(a => Encoding.UTF8.GetString(Convert.FromBase64String((string)a!["contents"]!))));
+        Assert.Null(input["fileChanges"]!["deletions"]);
+        Assert.Equal(Perms("contents", "write"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Fact]
+    public async Task ACommitNeedsFiles_AndEachPathOnce()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CommitFilesAsync("livemap/build-400", Oid, "fix(builds): support server build 400", [], Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CommitFilesAsync("livemap/build-400", Oid, "fix(builds): support server build 400", [new("src/a.cpp", "1"), new("src/a.cpp", "2")], Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CommitFilesAsync("livemap/build-400", Oid, "fix(builds): support server build 400", [new("src/a.cpp", "1"), new("src/../b.cpp", "2")], Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CommitFilesAsync("main", Oid, "fix(builds): support server build 400", [new("src/a.cpp", "1")], Ct));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task ACommitThatGraphQlRefuses_IsAnError_EvenOnAn200()
     {
         var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"errors":[{"message":"Expected branch to point to abc"}],"data":{"createCommitOnBranch":null}}"""));
