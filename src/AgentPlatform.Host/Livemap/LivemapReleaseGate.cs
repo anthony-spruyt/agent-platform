@@ -20,7 +20,7 @@ public static partial class LivemapReleaseGate
 
     private const string MainBranch = "main";
 
-    private const string VersionPath = "version.txt";
+    internal const string VersionPath = "version.txt";
 
     private const string CMakePath = "CMakeLists.txt";
 

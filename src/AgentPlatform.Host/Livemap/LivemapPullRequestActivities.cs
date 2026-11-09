@@ -31,7 +31,7 @@ public sealed class LivemapPullRequestActivities(
     public const string OpenPullRequestName = "LivemapBuildOpenPullRequest";
     public const string AdvanceName = "LivemapBuildAdvance";
 
-    private const int MergeRetries = 3;
+    internal const int MergeRetries = 3;
 
     private const string MainMovedDetail = "Main moved on before the pull request was merged.";
 
@@ -284,13 +284,6 @@ public sealed class LivemapPullRequestActivities(
     private async Task StartOverAsync(long buildId, string detail, CancellationToken cancellationToken) =>
         await builds.RestartAsync(buildId, detail, LivemapBuildActivities.MaxAttempts, cancellationToken).ConfigureAwait(false);
 
-    private async Task RemoveAsync(string branch, CancellationToken cancellationToken)
-    {
-        foreach (var pull in await pullRequests.FindOpenByBranchAsync(branch, cancellationToken).ConfigureAwait(false))
-        {
-            await pullRequests.ClosePullRequestAsync(pull.Number, cancellationToken).ConfigureAwait(false);
-        }
-
-        await pullRequests.DeleteBranchAsync(branch, cancellationToken).ConfigureAwait(false);
-    }
+    private async Task RemoveAsync(string branch, CancellationToken cancellationToken) =>
+        await LivemapBranches.RemoveAsync(pullRequests, branch, cancellationToken).ConfigureAwait(false);
 }

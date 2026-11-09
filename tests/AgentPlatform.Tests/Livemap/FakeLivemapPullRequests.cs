@@ -4,7 +4,7 @@ using AgentPlatform.Host.Livemap;
 namespace AgentPlatform.Tests.Livemap;
 
 // Models the fork well enough that a pull request the worker opens passes the gate until a test changes one fact.
-internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
+internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
 {
     public const string Fork = "octo/livemap";
     public const string AppLogin = "skynet-rw[bot]";
@@ -15,6 +15,10 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
     private int _nextNumber = 6;
 
     private int _nextCommit;
+
+    public string Repo { get; init; } = Fork;
+
+    public string OpenedFile { get; init; } = LivemapMergeGate.BuildsPath;
 
     public string MainHead { get; set; } = StartMain;
 
@@ -62,7 +66,7 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
 
     public LivemapPullRequest Leftover(string branch)
     {
-        var pull = new LivemapPullRequest(++_nextNumber, "open", false, false, "main", Fork, branch, Fork, new string('9', 40), AppLogin, "Bot", 1);
+        var pull = new LivemapPullRequest(++_nextNumber, "open", false, false, "main", Repo, branch, Repo, new string('9', 40), AppLogin, "Bot", 1);
         Seed(pull);
         Branches[branch] = pull.HeadSha;
         return pull;
@@ -104,8 +108,8 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
         var number = ++_nextNumber;
         Opened.Add((number, branch, title, body));
         Seed(
-            new LivemapPullRequest(number, "open", false, false, "main", Fork, branch, Fork, Branches[branch], AppLogin, "Bot", 1),
-            new LivemapPullRequestFile(LivemapMergeGate.BuildsPath, "modified", null));
+            new LivemapPullRequest(number, "open", false, false, "main", Repo, branch, Repo, Branches[branch], AppLogin, "Bot", 1, title),
+            new LivemapPullRequestFile(OpenedFile, "modified", null));
         return number;
     }
 
