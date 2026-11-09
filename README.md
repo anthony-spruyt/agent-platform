@@ -121,6 +121,7 @@ A body that arrives too slowly for Kestrel (`BadHttpRequestException`) gets `408
 | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `ping`                                                                                                                             | `200`                                                    |
 | `check_suite` `completed`, branch `renovate/*` except `renovate/configure`, with pull requests whose head and base are in the repo | `202`, one `CheckSuiteCompleted` signal per pull request |
+| `check_suite` `completed` of `Livemap:Repo`, from GitHub Actions, on `main` or on a build pull request (see Waking a build)        | `202`, starts `LivemapWakeWorkflow`                      |
 | any other event or action, or a suite that fails a filter                                                                          | `200`, dropped, so GitHub never redelivers               |
 | `check_suite` with a malformed body                                                                                                | `400`                                                    |
 
@@ -129,7 +130,8 @@ Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`
 `RenovateTriageWorkflow` receives these signals; see Renovate triage below.
 
 The endpoint hands every verified event to `IGitHubEventRouter`. Each `IGitHubEventHandler` lists the event names it accepts, and the router runs every handler that accepts the event, one after another. The answer is `400` if any handler reported a malformed body, else `202` if any acted on the event, else `200`.
-A handler that throws does not stop the others. Once all have run, the failure is rethrown, so the delivery answers `500` and the sweeper redelivers it; handlers must therefore be idempotent. `RenovateTriageCheckSuiteHandler` is the only handler today. A new one is added to `AddGitHubEventHandlers()`, which both roles call, because the sweeper redelivers the events that the registered handlers accept.
+A handler that throws does not stop the others. Once all have run, the failure is rethrown, so the delivery answers `500` and the sweeper redelivers it; handlers must therefore be idempotent.
+`RenovateTriageCheckSuiteHandler` (added by `AddGitHubEventHandlers()`) and `LivemapCheckSuiteHandler` (added by `AddLivemapEvents()`, see Livemap) are the handlers today. Both roles call both methods, because the sweeper redelivers the events that the registered handlers accept. A new handler is added the same way.
 
 The Worker role talks to GitHub through `IGitHubApiClient`. Reads: pull request, all check runs, commit statuses and check suites of a sha, commits (with their parents), files, comparisons between two refs, reviews, labels, issue comments, releases and file contents of a changelog source repository, and job logs, all paged where listed.
 Writes: an approving review pinned to a commit, dismissing a review, adding and removing labels, creating or editing an issue comment (the `Live` triage path), creating or updating check runs, and rerunning failed jobs. Each call mints an installation token for one repository
@@ -359,16 +361,16 @@ The schedule starts `LivemapPollWorkflow` on the `agent-platform` queue and skip
 
 With the feature off, the other `Livemap:` keys are not checked, but a value that does not parse as its type still fails startup. With it on, an invalid or missing key fails startup.
 
-Each poll runs the `LivemapPoll` activity, tried up to 3 times:
+Each poll runs the `LivemapPoll` activity, tried up to 3 times. Its result is `Unchanged`, `Shipped` or `Detected`, depending on what happens to the build id:
 
 1. Read the public build of the server app from the Steam info API: build id, manifest id and update time. An answer that is not a success, has no valid ids or takes too long fails the attempt.
-2. When `livemap_builds` already has a row for the build id, the poll ends `Unchanged`.
+2. When `livemap_builds` already has a row for the build id, nothing is recorded and the result is `Unchanged`. The poll goes on with step 5.
 3. Otherwise read the pin file from the default branch of `Livemap:PinRepo`. It must hold exactly one `LIVEMAP_VERSION` line with a release tag. Then read `data/builds.json` of `Livemap:Repo` at that tag.
-4. A build id listed in that file is already supported: the row is recorded as `Done` and the poll ends `Shipped`. Any other build is recorded as `Detected` and the poll ends `Detected`.
+4. A build id listed in that file is already supported: the row is recorded as `Done` and the result is `Shipped`. Any other build is recorded as `Detected` and the result is `Detected`.
 5. Every older row that is still `Detected`, `Parked` or `Classified` becomes `Superseded`: only the newest public build matters.
-6. A `Detected` row gets its build workflow started. A `Parked` row whose retry time has passed goes back to `Detected` first.
+6. A `Parked` row whose retry time has passed goes back to `Detected`. A `Detected` row gets its build workflow started; one already running for the build is kept.
 
-A failed read (Steam, GitHub, a missing pin or an unreadable build list) fails the attempt and records no row, so the next poll looks again. A row is written once and the first writer wins, so a repeated or concurrent poll never changes it.
+A failed read (Steam, GitHub, a missing pin or an unreadable build list) fails the attempt and records no row, so the next poll looks again. A new row is written once and the first writer wins, so a repeated or concurrent poll never records a build twice or rewinds its state. A poll changes a row that already exists only in steps 5 and 6.
 
 Steam's info API is a community mirror, not Valve, so a `Detected` row is only a hint. Nothing more happens with a build until the fork's own check has confirmed it.
 
@@ -411,7 +413,7 @@ or ran on a branch named `livemap/build-` followed by digits whose listed pull r
 A hit starts `LivemapWakeWorkflow` with the id `livemap-wake-<check suite id>`: one still running for the suite is kept, a finished one starts again.
 On the worker, its `LivemapWake` activity reads the build in flight and signals that build's workflow with the commit and the suite id. With no build in flight, or no workflow running for it, the wake ends.
 The build workflow takes the check suite id of the run it waits on from the run itself (`check_suite_id` of the Actions run) and reads the run again only for a signal that carries that id. A signal for any other suite, and every signal while the run has no suite id, is logged and ignored.
-A failure to start the wake fails the delivery, so GitHub sends it again. A webhook never starts a build workflow, and a missed wake costs nothing: the poll starts the workflow and the workflow reads its run every 15 minutes.
+A failure to start the wake fails the delivery, so the platform's sweeper redelivers it (its `redeliver` step). A webhook never starts a build workflow, and a missed wake costs nothing: the poll starts the workflow and the workflow reads its run every 15 minutes.
 
 The Web role has no database, so it registers only the handler and the options (`AddLivemapEvents`, one line in `Program.cs`). The store, the Steam client, the schedule and the GitHub client stay on the worker. With the feature on, the Web role checks the same `Livemap:` keys as the worker.
 
