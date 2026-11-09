@@ -14,6 +14,8 @@ public sealed partial class LivemapCheckSuiteHandler(
 
     private const string MainBranch = "main";
 
+    private const string ActionsAppSlug = "github-actions";
+
     public IReadOnlySet<string> AcceptedEvents { get; } = new[] { "check_suite" }.ToFrozenSet(StringComparer.Ordinal);
 
     public async Task<GitHubEventOutcome> HandleAsync(GitHubWebhookEvent webhookEvent, CancellationToken cancellationToken)
@@ -48,9 +50,10 @@ public sealed partial class LivemapCheckSuiteHandler(
     }
 
     private static bool IsBuildRun(CheckSuiteEvent.Suite suite, long repositoryId) =>
-        suite.PullRequests is { Count: > 0 } pullRequests
+        suite.App?.Slug == ActionsAppSlug
+        && (suite.PullRequests is { Count: > 0 } pullRequests
             ? IsBuildBranch(suite.HeadBranch) && pullRequests.All(pullRequest => IsInRepository(pullRequest, repositoryId))
-            : suite.HeadBranch is null or MainBranch;
+            : suite.HeadBranch == MainBranch);
 
     private static bool IsInRepository(CheckSuiteEvent.PullRequestInfo pullRequest, long repositoryId) =>
         pullRequest is { Head.Repo: { } head, Base.Repo: { } @base } && head.Id == repositoryId && @base.Id == repositoryId;

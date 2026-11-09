@@ -405,8 +405,8 @@ Every state change is a write that expects the row's current state and `version`
 ### Waking a build
 
 A build waiting on a run also wakes when a check suite of the fork finishes, so it does not have to wait out the 15 minutes.
-The Web role hears `check_suite` deliveries with the other webhook handlers and ignores every one except a `completed` suite of `Livemap:Repo` that ran on its `main` branch,
-or on a branch named `livemap/build-` followed by digits whose listed pull requests all come from and go into the fork itself. With `Livemap:Enabled` off it ignores all of them.
+The Web role hears `check_suite` deliveries with the other webhook handlers and ignores every one except a `completed` suite of `Livemap:Repo` from the GitHub Actions app (app slug `github-actions`) that either ran on the `main` branch with no pull request,
+or ran on a branch named `livemap/build-` followed by digits whose listed pull requests all come from and go into the fork itself. With `Livemap:Enabled` off it ignores all of them.
 
 A hit starts `LivemapWakeWorkflow` with the id `livemap-wake-<check suite id>`: one still running for the suite is kept, a finished one starts again.
 On the worker, its `LivemapWake` activity reads the build in flight and signals that build's workflow with the commit and the suite id. With no build in flight, or no workflow running for it, the wake ends.

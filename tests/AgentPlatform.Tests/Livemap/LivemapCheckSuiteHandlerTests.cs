@@ -45,8 +45,14 @@ public class LivemapCheckSuiteHandlerTests
         }
     }
 
-    private static string Suite(string? branch = "main", string action = "completed", object[]? pullRequests = null, string repo = Fork, long suiteId = 4242) =>
-        GitHubPayloads.CheckSuite(action: action, branch: branch, pullRequests: pullRequests ?? [], suiteId: suiteId, repo: repo);
+    private static string Suite(
+        string? branch = "main",
+        string action = "completed",
+        object[]? pullRequests = null,
+        string repo = Fork,
+        long suiteId = 4242,
+        string? appSlug = "github-actions") =>
+        GitHubPayloads.CheckSuite(action: action, branch: branch, pullRequests: pullRequests ?? [], suiteId: suiteId, repo: repo, appSlug: appSlug);
 
     [Fact]
     public void TheHandler_ListensForCheckSuitesOnly()
@@ -68,12 +74,39 @@ public class LivemapCheckSuiteHandlerTests
     }
 
     [Fact]
-    public async Task AFinishedRunWithNoBranch_WakesTheBuild()
+    public async Task AFinishedRunWithNoBranch_IsIgnored()
     {
         var rig = new Rig();
 
-        Assert.Equal(GitHubEventOutcome.Accepted, await rig.DeliverAsync(Suite(branch: null)));
-        Assert.Single(rig.Starter.Started);
+        Assert.Equal(GitHubEventOutcome.Ignored, await rig.DeliverAsync(Suite(branch: null)));
+        Assert.Empty(rig.Starter.Started);
+    }
+
+    [Theory]
+    [InlineData("circleci")]
+    [InlineData("github-actions-bot")]
+    [InlineData("GitHub-Actions")]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task ASuiteOfAnotherApp_IsIgnored_OnTheMainBranch(string? appSlug)
+    {
+        var rig = new Rig();
+
+        Assert.Equal(GitHubEventOutcome.Ignored, await rig.DeliverAsync(Suite(appSlug: appSlug)));
+        Assert.Empty(rig.Starter.Started);
+    }
+
+    [Theory]
+    [InlineData("circleci")]
+    [InlineData(null)]
+    public async Task ASuiteOfAnotherApp_IsIgnored_ForABuildPullRequest(string? appSlug)
+    {
+        var rig = new Rig();
+
+        var outcome = await rig.DeliverAsync(Suite("livemap/build-400", pullRequests: [GitHubPayloads.PullRequest(5)], appSlug: appSlug));
+
+        Assert.Equal(GitHubEventOutcome.Ignored, outcome);
+        Assert.Empty(rig.Starter.Started);
     }
 
     [Theory]
@@ -147,6 +180,11 @@ public class LivemapCheckSuiteHandlerTests
     [InlineData("feature/x")]
     [InlineData("livemap/build-400")]
     [InlineData("renovate/foo")]
+    [InlineData("master")]
+    [InlineData("Main")]
+    [InlineData("main-2")]
+    [InlineData("refs/heads/main")]
+    [InlineData("")]
     public async Task AFinishedRunOnAnotherBranchWithoutAPullRequest_IsIgnored(string branch)
     {
         var rig = new Rig();
