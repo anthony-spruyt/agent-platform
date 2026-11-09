@@ -51,12 +51,14 @@ public class LivemapPullRequestsTests
         return result;
     }
 
-    private static string PullJson(int number = 7, string? headRepo = Fork)
+    // The pull request list leaves out the fields GitHub counts for a single pull request, such as commits and merged.
+    private static string PullJson(int number = 7, string? headRepo = Fork, bool listed = false)
     {
         var repo = headRepo is null ? "null" : $$"""{ "full_name": "{{headRepo}}" }""";
+        var counted = listed ? string.Empty : """ "merged": false, "commits": 1,""";
         return $$"""
             {
-              "number": {{number}}, "state": "open", "merged": false, "draft": false, "commits": 1,
+              "number": {{number}}, "state": "open", "draft": false,{{counted}}
               "user": { "login": "skynet-rw[bot]", "type": "Bot" },
               "base": { "ref": "main", "repo": { "full_name": "{{Fork}}" } },
               "head": { "ref": "livemap/build-400", "sha": "{{Oid}}", "repo": {{repo}} }
@@ -204,7 +206,7 @@ public class LivemapPullRequestsTests
     [Fact]
     public async Task TheOpenPullRequestsOfABranch_AreFoundByTheForkOwnedHead()
     {
-        var (client, handler, _) = Create(_ => StubHttpHandler.Json($"[{PullJson(9)}]"));
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json($"[{PullJson(9, listed: true)}]"));
 
         var found = await client.FindOpenByBranchAsync("livemap/build-400", Ct);
 
@@ -217,7 +219,7 @@ public class LivemapPullRequestsTests
     [Fact]
     public async Task APullRequestFromAnotherRepository_IsNotOneOfTheBranchesOpenPullRequests()
     {
-        var (client, _, _) = Create(_ => StubHttpHandler.Json($"[{PullJson(9, headRepo: "octo/other")},{PullJson(10)}]"));
+        var (client, _, _) = Create(_ => StubHttpHandler.Json($"[{PullJson(9, headRepo: "octo/other", listed: true)},{PullJson(10, listed: true)}]"));
 
         Assert.Equal(10, Assert.Single(await client.FindOpenByBranchAsync("livemap/build-400", Ct)).Number);
     }
@@ -240,6 +242,44 @@ public class LivemapPullRequestsTests
 
         Assert.Equal([Oid], await client.GetParentsAsync(new string('c', 40), Ct));
         Assert.Equal($"/repos/{Fork}/git/commits/{new string('c', 40)}", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task ACommit_ReadsItsParentsAndItsFilesWithTheirPatches_FromOneRead()
+    {
+        var sha = new string('c', 40);
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json($$"""
+            {"sha":"{{sha}}","parents":[{"sha":"{{Oid}}"}],"files":[{"filename":"version.txt","status":"modified","patch":"@@ -1 +1 @@"},{"filename":"b","status":"renamed","previous_filename":"a"}]}
+            """));
+
+        var commit = await client.GetCommitAsync(sha, Ct);
+
+        Assert.Equal([Oid], commit.Parents);
+        Assert.Equal([new("version.txt", "modified", null, "@@ -1 +1 @@"), new("b", "renamed", "a")], commit.Files);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal($"/repos/{Fork}/commits/{sha}", request.Uri.AbsolutePath);
+        Assert.Contains("per_page=100", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Equal(Perms("contents", "read"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Fact]
+    public async Task ACommitWithoutParentsOrFiles_ReadsAsEmpty()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        var commit = await client.GetCommitAsync(new string('c', 40), Ct);
+
+        Assert.Empty(commit.Parents);
+        Assert.Empty(commit.Files);
+    }
+
+    [Fact]
+    public async Task ACommitThatIsNotAHexSha_IsNeverRead()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.GetCommitAsync("main", Ct));
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]

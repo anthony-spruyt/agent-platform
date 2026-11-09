@@ -17,6 +17,8 @@ public sealed record LivemapPullRequest(
 
 public sealed record LivemapPullRequestFile(string Filename, string Status, string? PreviousFilename, string? Patch = null);
 
+public sealed record LivemapCommit(IReadOnlyList<string> Parents, IReadOnlyList<LivemapPullRequestFile> Files);
+
 public sealed record LivemapCheckRun(string Name, string Status, string? Conclusion, string? AppSlug, long CheckSuiteId);
 
 public enum LivemapMergeResult
@@ -45,6 +47,8 @@ public interface ILivemapPullRequests
     Task<IReadOnlyList<LivemapPullRequestFile>> ListFilesAsync(int number, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<string>> GetParentsAsync(string commitSha, CancellationToken cancellationToken);
+
+    Task<LivemapCommit> GetCommitAsync(string commitSha, CancellationToken cancellationToken);
 
     Task<string?> ReadFileAsync(string commitSha, string path, CancellationToken cancellationToken);
 

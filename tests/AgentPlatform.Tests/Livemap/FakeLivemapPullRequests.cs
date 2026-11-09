@@ -28,6 +28,8 @@ internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
 
     public Dictionary<int, List<LivemapPullRequestFile>> Files { get; } = [];
 
+    public Dictionary<string, List<LivemapPullRequestFile>> CommitFiles { get; } = [];
+
     public Dictionary<string, string[]> Parents { get; } = [];
 
     public Dictionary<string, string?> Modes { get; } = [];
@@ -62,6 +64,7 @@ internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
     {
         Pulls[pull.Number] = pull;
         Files[pull.Number] = [.. files];
+        CommitFiles[pull.HeadSha] = [.. files];
     }
 
     public LivemapPullRequest Leftover(string branch)
@@ -122,7 +125,7 @@ internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
     public async Task<IReadOnlyList<LivemapPullRequest>> FindOpenByBranchAsync(string branch, CancellationToken cancellationToken)
     {
         await EnterAsync($"find:{branch}");
-        return [.. Pulls.Values.Where(p => p.State == "open" && p.HeadRef == branch)];
+        return [.. Pulls.Values.Where(p => p.State == "open" && p.HeadRef == branch).Select(p => p with { Commits = 0 })];
     }
 
     public async Task<IReadOnlyList<LivemapPullRequestFile>> ListFilesAsync(int number, CancellationToken cancellationToken)
@@ -135,6 +138,12 @@ internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
     {
         await EnterAsync($"parents:{commitSha}");
         return Parents.GetValueOrDefault(commitSha) ?? [];
+    }
+
+    public async Task<LivemapCommit> GetCommitAsync(string commitSha, CancellationToken cancellationToken)
+    {
+        await EnterAsync($"commit:{commitSha}");
+        return new LivemapCommit(Parents.GetValueOrDefault(commitSha) ?? [], CommitFiles.GetValueOrDefault(commitSha) ?? []);
     }
 
     public async Task<string?> ReadFileAsync(string commitSha, string path, CancellationToken cancellationToken)

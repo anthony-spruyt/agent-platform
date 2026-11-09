@@ -21,7 +21,7 @@ public class LivemapReleaseGateTests
     private static readonly string[] _required = ["lint / MegaLinter", "repo / Build, test, package"];
 
     private static LivemapReleaseFacts Good() => new(
-        Pull: new LivemapPullRequest(33, "open", false, false, "main", Fork, Branch, Fork, Head, Bot, "Bot", 1, "chore(main): release 1.10.0"),
+        Pull: new LivemapPullRequest(33, "open", false, false, "main", Fork, Branch, Fork, Head, Bot, "Bot", 0, "chore(main): release 1.10.0"),
         Fork: Fork,
         ReleaseBot: Bot,
         MainHead: Main,
@@ -94,7 +94,6 @@ public class LivemapReleaseGateTests
         { "author named like the bot but a user", f => f with { Pull = f.Pull with { AuthorType = "User" } } },
         { "title is not a release", f => f with { Pull = f.Pull with { Title = "chore(main): bump the dependencies" } } },
         { "title has no title", f => f with { Pull = f.Pull with { Title = string.Empty } } },
-        { "more than one commit", f => f with { Pull = f.Pull with { Commits = 2 } } },
         { "the commit has two parents", f => f with { HeadParents = [Main, new string('d', 40)] } },
         { "the commit has no parent", f => f with { HeadParents = [] } },
         { "no files", f => f with { Files = [] } },

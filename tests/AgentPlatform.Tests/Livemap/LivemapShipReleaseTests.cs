@@ -19,7 +19,7 @@ public class LivemapShipReleaseTests
         { "checks from another workflow", rig => rig.GitHub.SuiteRunsBySuite[ReleaseSuiteId] = [CiRun(branch: "other")] },
         { "main moved on", rig => rig.Fork.Parents[ReleaseHead] = [new string('e', 40)] },
         { "not the release bot", rig => rig.Fork.Pulls[ReleaseNumber] = rig.Fork.Pulls[ReleaseNumber] with { AuthorLogin = "someone[bot]" } },
-        { "a file beyond the release files", rig => rig.Fork.Files[ReleaseNumber].Add(new LivemapPullRequestFile("data/builds.json", "modified", null, "@@")) },
+        { "a file beyond the release files", rig => rig.Fork.CommitFiles[ReleaseHead].Add(new LivemapPullRequestFile("data/builds.json", "modified", null, "@@")) },
         { "version.txt is not the release version", rig => rig.Fork.Contents[(ReleaseHead, "version.txt")] = "9.9.9\n" },
         { "draft", rig => rig.Fork.Pulls[ReleaseNumber] = rig.Fork.Pulls[ReleaseNumber] with { Draft = true } },
     };

@@ -48,6 +48,7 @@ public static partial class LivemapReleaseGate
             return LivemapGateVerdict.Refused(reason);
         }
 
+        // Files are the head commit's: they are the pull request's only while that commit's one parent is main's head.
         return facts.HeadParents[0] != facts.MainHead ? LivemapGateVerdict.MainMoved : LivemapMergeGate.Checks(facts.CheckRuns, facts.CiSuiteIds, requiredChecks);
     }
 
@@ -84,9 +85,9 @@ public static partial class LivemapReleaseGate
             return "The pull request title is not a plain release title.";
         }
 
-        if (pull.Commits != 1 || facts.HeadParents.Count != 1)
+        if (facts.HeadParents.Count != 1)
         {
-            return "The pull request is not a single commit.";
+            return "The pull request head is not a single commit on one parent.";
         }
 
         return FilesRefusal(facts.Files, version) ?? (facts.VersionAtHead?.Trim() == version ? null : $"{VersionPath} is not the release version at the head.");

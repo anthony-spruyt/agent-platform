@@ -202,6 +202,23 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
         return [.. (commit.Parents ?? []).Select(parent => parent.Sha ?? string.Empty)];
     }
 
+    // One page of files: the merge gate wants a handful, so a longer list fails it the same way.
+    public async Task<LivemapCommit> GetCommitAsync(string commitSha, CancellationToken cancellationToken)
+    {
+        RequireSha(commitSha, nameof(commitSha));
+
+        var (owner, name) = Repo();
+        var token = await tokens.GetTokenAsync($"{owner}/{name}", _contentsRead, cancellationToken).ConfigureAwait(false);
+        var commit = await GitHubHttp.SendAsync<CommitFilesDto>(
+            http,
+            GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}/commits/{commitSha}?per_page={PageSize}", token),
+            "commit files read",
+            cancellationToken).ConfigureAwait(false);
+        return new LivemapCommit(
+            [.. (commit.Parents ?? []).Select(parent => parent.Sha ?? string.Empty)],
+            [.. (commit.Files ?? []).Select(file => new LivemapPullRequestFile(file.Filename ?? string.Empty, file.Status ?? string.Empty, file.PreviousFilename, file.Patch))]);
+    }
+
     public async Task<string?> ReadFileAsync(string commitSha, string path, CancellationToken cancellationToken)
     {
         RequireSha(commitSha, nameof(commitSha));
@@ -421,6 +438,8 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
     private sealed record FileDto(string? Filename, string? Status, string? PreviousFilename, string? Patch);
 
     private sealed record CommitDto(List<ParentDto>? Parents);
+
+    private sealed record CommitFilesDto(List<ParentDto>? Parents, List<FileDto>? Files);
 
     private sealed record ParentDto(string? Sha);
 

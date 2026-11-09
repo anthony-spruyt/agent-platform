@@ -87,8 +87,7 @@ public sealed class LivemapShipActivities(
 
     private async Task<LivemapReleaseFacts> ReadReleaseFactsAsync(LivemapPullRequest pull, string mainHead, CancellationToken cancellationToken)
     {
-        var parents = await forkPulls.GetParentsAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false);
-        var files = await forkPulls.ListFilesAsync(pull.Number, cancellationToken).ConfigureAwait(false);
+        var commit = await forkPulls.GetCommitAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false);
         var version = await forkPulls.ReadFileAsync(pull.HeadSha, LivemapReleaseGate.VersionPath, cancellationToken).ConfigureAwait(false);
         var checkRuns = await forkPulls.ListCheckRunsAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false);
         return new LivemapReleaseFacts(
@@ -96,8 +95,8 @@ public sealed class LivemapShipActivities(
             Fork: options.Value.Repo,
             ReleaseBot: options.Value.ReleaseBot,
             MainHead: mainHead,
-            HeadParents: parents,
-            Files: files,
+            HeadParents: commit.Parents,
+            Files: commit.Files,
             VersionAtHead: version,
             CheckRuns: checkRuns,
             CiSuiteIds: await LivemapCiSuites.FindAsync(github, checkRuns, LivemapReleaseGate.Branch, options.Value.ReleaseRequiredChecks, cancellationToken).ConfigureAwait(false));
