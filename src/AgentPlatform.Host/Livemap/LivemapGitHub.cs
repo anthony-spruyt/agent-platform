@@ -69,7 +69,7 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
             GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}/actions/runs/{runId}", token),
             "workflow run read",
             cancellationToken).ConfigureAwait(false);
-        return run is null ? null : new LivemapRun(run.Id, run.Status ?? string.Empty, run.Conclusion, run.HeadSha ?? string.Empty);
+        return run is null ? null : new LivemapRun(run.Id, run.Status ?? string.Empty, run.Conclusion, run.HeadSha ?? string.Empty, run.CheckSuiteId ?? 0);
     }
 
     public async Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken)
@@ -202,5 +202,5 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
 
     private sealed record DispatchDto(long? WorkflowRunId);
 
-    private sealed record RunDto(long Id, string? Status, string? Conclusion, string? HeadSha);
+    private sealed record RunDto(long Id, string? Status, string? Conclusion, string? HeadSha, long? CheckSuiteId);
 }

@@ -65,12 +65,12 @@ public class LivemapBuildActivitiesTests
     public async Task ReadingARun_ReturnsWhatGitHubSays()
     {
         var rig = new LivemapBuildRig();
-        rig.GitHub.ScriptRun(FakeLivemapGitHub.ExeCaptureRunId, new LivemapRun(FakeLivemapGitHub.ExeCaptureRunId, "in_progress", null, Sha));
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.ExeCaptureRunId, Running(FakeLivemapGitHub.ExeCaptureRunId));
 
         var run = await new ActivityEnvironment().RunAsync(() => rig.Activities.GetRunAsync(FakeLivemapGitHub.ExeCaptureRunId));
         var missing = await new ActivityEnvironment().RunAsync(() => rig.Activities.GetRunAsync(1));
 
-        Assert.Equal(new LivemapRun(FakeLivemapGitHub.ExeCaptureRunId, "in_progress", null, Sha), run);
+        Assert.Equal(Running(FakeLivemapGitHub.ExeCaptureRunId), run);
         Assert.Null(missing);
     }
 
@@ -254,7 +254,7 @@ public class LivemapBuildActivitiesTests
     {
         var rig = new LivemapBuildRig();
         await rig.SeedAsync();
-        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, new LivemapRun(FakeLivemapGitHub.CompatRunId, "in_progress", null, Sha));
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Running(FakeLivemapGitHub.CompatRunId));
         rig.GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = KnownArtifact();
 
         Assert.Equal(LivemapBuildOutcome.Parked, await rig.ClassifyAsync());

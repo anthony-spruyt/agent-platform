@@ -33,7 +33,14 @@ internal sealed class LivemapBuildRig
 
     public static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static LivemapRun Finished(long id, string conclusion = "success") => new(id, "completed", conclusion, Sha);
+    public const long ExeCaptureSuiteId = 8001;
+    public const long CompatSuiteId = 8002;
+
+    public static long SuiteOf(long runId) => runId == FakeLivemapGitHub.ExeCaptureRunId ? ExeCaptureSuiteId : CompatSuiteId;
+
+    public static LivemapRun Finished(long id, string conclusion = "success") => new(id, "completed", conclusion, Sha, SuiteOf(id));
+
+    public static LivemapRun Running(long id) => new(id, "in_progress", null, Sha, SuiteOf(id));
 
     public static string ReportJson(string result, string exeSha, long stamp, string size, string? matched, params string[] reasons)
     {

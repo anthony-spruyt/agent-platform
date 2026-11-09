@@ -14,8 +14,6 @@ public class LivemapBuildWorkflowTests
     private const long ExeCapture = FakeLivemapGitHub.ExeCaptureRunId;
     private const long Compat = FakeLivemapGitHub.CompatRunId;
 
-    private static readonly LivemapRun Running = new(ExeCapture, "in_progress", null, Sha);
-
     private static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, LivemapBuildRig rig, Func<Task<T>> body)
     {
         using var worker = new TemporalWorker(
@@ -104,7 +102,7 @@ public class LivemapBuildWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = await SeededAsync();
         Succeed(rig, KnownArtifact());
-        rig.GitHub.ScriptRun(ExeCapture, Running, Running, Finished(ExeCapture));
+        rig.GitHub.ScriptRun(ExeCapture, Running(ExeCapture), Running(ExeCapture), Finished(ExeCapture));
 
         var outcome = await RunToTheEndAsync(env, rig);
 
@@ -112,26 +110,121 @@ public class LivemapBuildWorkflowTests
         Assert.Equal(3, rig.GitHub.ReadsOf(ExeCapture));
     }
 
+    private static async Task<TimeSpan> ElapsedAsync(WorkflowHandle<LivemapBuildWorkflow, LivemapBuildOutcome> handle)
+    {
+        var events = (await handle.FetchHistoryAsync()).Events.ToList();
+        return events[^1].EventTime.ToDateTimeOffset() - events[0].EventTime.ToDateTimeOffset();
+    }
+
     [Fact]
-    public async Task AWakeUp_MakesTheWorkflowReadTheRunAtOnce()
+    public async Task AWakeFromTheRunsOwnCheckSuite_MakesTheWorkflowReadTheRunAtOnce()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = await SeededAsync();
         Succeed(rig, KnownArtifact());
-        rig.GitHub.ScriptRun(ExeCapture, Running, Finished(ExeCapture));
+        rig.GitHub.ScriptRun(ExeCapture, Running(ExeCapture), Finished(ExeCapture));
 
-        var outcome = await InWorkerAsync(env, rig, async () =>
+        var (outcome, elapsed) = await InWorkerAsync(env, rig, async () =>
         {
             var handle = await StartAsync(env);
             await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 1);
-            await handle.SignalAsync(wf => wf.WakeAsync(new LivemapBuildWake(Sha, 77)));
+            await handle.SignalAsync(wf => wf.WakeAsync(new LivemapBuildWake(Sha, ExeCaptureSuiteId)));
             await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 2);
             var result = await ResultAsync(handle);
             await HistoryStore.RecordAsync(handle, "livemap-build-woken");
-            return result;
+            return (result, await ElapsedAsync(handle));
         });
 
         Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.True(elapsed < LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
+    }
+
+    [Theory]
+    [InlineData(CompatSuiteId, Sha)]
+    [InlineData(1234, Sha)]
+    [InlineData(1234, "2222222222222222222222222222222222222222")]
+    public async Task AWakeFromAnotherCheckSuite_LeavesTheWaitToTheInterval(long suiteId, string sha)
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = await SeededAsync();
+        Succeed(rig, KnownArtifact());
+        rig.GitHub.ScriptRun(ExeCapture, Running(ExeCapture), Finished(ExeCapture));
+
+        var (outcome, elapsed) = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env);
+            await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 1);
+            await handle.SignalAsync(wf => wf.WakeAsync(new LivemapBuildWake(sha, suiteId)));
+            return (await ResultAsync(handle), await ElapsedAsync(handle));
+        });
+
+        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.True(elapsed >= LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
+    }
+
+    [Fact]
+    public async Task AWakeThatArrivesWhileTheRunIsBeingRead_StillMakesTheWorkflowReadItAgainAtOnce()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = await SeededAsync();
+        Succeed(rig, KnownArtifact());
+        rig.GitHub.ScriptRun(ExeCapture, Running(ExeCapture), Finished(ExeCapture));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.GitHub.ReadGate = release.Task;
+
+        var (outcome, elapsed) = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env);
+            await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 1);
+            await handle.SignalAsync(wf => wf.WakeAsync(new LivemapBuildWake(Sha, ExeCaptureSuiteId)));
+            await Task.Delay(TimeSpan.FromMilliseconds(500), Ct);
+            release.SetResult();
+            await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 2);
+            return (await ResultAsync(handle), await ElapsedAsync(handle));
+        });
+
+        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.True(elapsed < LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
+    }
+
+    [Fact]
+    public async Task ARunWithoutACheckSuite_IsNotWokenByAWakeWithoutOne()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = await SeededAsync();
+        Succeed(rig, KnownArtifact());
+        rig.GitHub.ScriptRun(ExeCapture, Running(ExeCapture) with { CheckSuiteId = 0 }, Finished(ExeCapture));
+
+        var (outcome, elapsed) = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env);
+            await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 1);
+            await handle.SignalAsync(wf => wf.WakeAsync(new LivemapBuildWake(Sha, 0)));
+            return (await ResultAsync(handle), await ElapsedAsync(handle));
+        });
+
+        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.True(elapsed >= LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
+    }
+
+    [Fact]
+    public async Task AWakeOfTheCaptureRun_DoesNotCutTheCheckRunsWaitShort()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = await SeededAsync();
+        Succeed(rig, KnownArtifact());
+        rig.GitHub.ScriptRun(Compat, Running(Compat), Finished(Compat));
+
+        var (outcome, elapsed) = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env);
+            await WaitUntilAsync(() => rig.GitHub.ReadsOf(Compat) >= 1);
+            await handle.SignalAsync(wf => wf.WakeAsync(new LivemapBuildWake(Sha, ExeCaptureSuiteId)));
+            return (await ResultAsync(handle), await ElapsedAsync(handle));
+        });
+
+        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.True(elapsed >= LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
     [Fact]
@@ -139,7 +232,7 @@ public class LivemapBuildWorkflowTests
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = await SeededAsync();
-        rig.GitHub.ScriptRun(ExeCapture, Running);
+        rig.GitHub.ScriptRun(ExeCapture, Running(ExeCapture));
 
         var (outcome, waited) = await InWorkerAsync(env, rig, async () =>
         {
@@ -260,7 +353,7 @@ public class LivemapBuildWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = await SeededAsync();
         Succeed(rig, KnownArtifact());
-        rig.GitHub.ScriptRun(ExeCapture, Running, Finished(ExeCapture));
+        rig.GitHub.ScriptRun(ExeCapture, Running(ExeCapture), Finished(ExeCapture));
 
         var outcome = await InWorkerAsync(env, rig, async () =>
         {

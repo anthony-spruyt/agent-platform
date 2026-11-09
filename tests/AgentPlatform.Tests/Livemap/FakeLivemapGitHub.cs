@@ -27,6 +27,8 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
 
     public Exception? ArtifactFailure { get; set; }
 
+    public Task? ReadGate { get; set; }
+
     public IReadOnlyList<(LivemapWorkflowFile Workflow, long BuildId, string ManifestGid)> Dispatches
     {
         get
@@ -66,18 +68,23 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
             : Task.FromException<long>(DispatchFailure);
     }
 
-    public Task<LivemapRun?> GetRunAsync(long runId, CancellationToken cancellationToken)
+    public async Task<LivemapRun?> GetRunAsync(long runId, CancellationToken cancellationToken)
     {
+        LivemapRun? run;
         lock (_gate)
         {
             _reads[runId] = _reads.GetValueOrDefault(runId) + 1;
-            if (!_runs.TryGetValue(runId, out var reads) || reads.Count == 0)
-            {
-                return Task.FromResult<LivemapRun?>(null);
-            }
-
-            return Task.FromResult(reads.Count > 1 ? reads.Dequeue() : reads.Peek());
+            run = !_runs.TryGetValue(runId, out var reads) || reads.Count == 0
+                ? null
+                : reads.Count > 1 ? reads.Dequeue() : reads.Peek();
         }
+
+        if (ReadGate is { } gate)
+        {
+            await gate.WaitAsync(cancellationToken);
+        }
+
+        return run;
     }
 
     public Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken) =>

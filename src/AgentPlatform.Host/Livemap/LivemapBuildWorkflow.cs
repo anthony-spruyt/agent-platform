@@ -47,7 +47,7 @@ public partial class LivemapBuildWorkflow
         RetryPolicy = new RetryPolicy { MaximumAttempts = 1 },
     };
 
-    private bool _woken;
+    private readonly HashSet<long> _wakes = [];
 
     private string _step = "start";
 
@@ -56,8 +56,8 @@ public partial class LivemapBuildWorkflow
     [WorkflowSignal(WakeSignalName)]
     public Task WakeAsync(LivemapBuildWake wake)
     {
-        LogWoken(Workflow.Logger, wake.SuiteId, wake.Sha);
-        _woken = true;
+        LogReceived(Workflow.Logger, wake.SuiteId, wake.Sha);
+        _wakes.Add(wake.SuiteId);
         return Task.CompletedTask;
     }
 
@@ -109,15 +109,29 @@ public partial class LivemapBuildWorkflow
         var deadline = Workflow.UtcNow + RunLimit;
         while (true)
         {
-            _woken = false;
             var run = await Workflow.ExecuteActivityAsync((LivemapBuildActivities activities) => activities.GetRunAsync(runId), _readOptions);
             if (run is null || run.IsCompleted || Workflow.UtcNow >= deadline)
             {
                 return (runId, run);
             }
 
-            await Workflow.WaitConditionAsync(() => _woken, CheckInterval);
+            var suiteId = run.CheckSuiteId;
+            await Workflow.WaitConditionAsync(() => suiteId > 0 && _wakes.Contains(suiteId), CheckInterval);
+            TakeWakes(suiteId);
         }
+    }
+
+    private void TakeWakes(long runSuiteId)
+    {
+        foreach (var suiteId in _wakes)
+        {
+            if (suiteId != runSuiteId)
+            {
+                LogIgnored(Workflow.Logger, suiteId, runSuiteId);
+            }
+        }
+
+        _wakes.Clear();
     }
 
     private static string Describe(string what, LivemapRun? run) => run switch
@@ -133,6 +147,9 @@ public partial class LivemapBuildWorkflow
     private static Task<LivemapBuildOutcome> ParkAsync(long buildId, string detail) =>
         Workflow.ExecuteActivityAsync((LivemapBuildActivities activities) => activities.ParkAsync(new LivemapParkInput(buildId, detail)), _readOptions);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Woken by check suite {SuiteId} at {Sha}.")]
-    private static partial void LogWoken(ILogger logger, long suiteId, string sha);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Received the wake of check suite {SuiteId} at {Sha}.")]
+    private static partial void LogReceived(ILogger logger, long suiteId, string sha);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Ignored the wake of check suite {SuiteId}: the run being waited on belongs to check suite {RunSuiteId}.")]
+    private static partial void LogIgnored(ILogger logger, long suiteId, long runSuiteId);
 }

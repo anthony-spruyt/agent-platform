@@ -380,7 +380,7 @@ Steam's info API is a community mirror, not Valve, so a `Detected` row is only a
 2. Dispatch the fork's `compat.yaml` the same way.
 3. Classify from the compat run's `livemap-compat` artifact.
 
-A dispatch is never retried, because a repeat would start the work twice; the run id comes from the dispatch answer, and an answer without one is an error. While a run is going the workflow reads it, then sleeps until woken or 15 minutes pass. A run that is still going after 60 minutes counts as failed.
+A dispatch is never retried, because a repeat would start the work twice; the run id comes from the dispatch answer, and an answer without one is an error. While a run is going the workflow reads it, then sleeps until the check suite of that run finishes (see Waking a build) or 15 minutes pass. A run that is still going after 60 minutes counts as failed.
 
 The compat run is an input, not a verdict. The build is classified only when its run succeeded, the report names the build id and manifest id that were dispatched, and the proposed `data/builds.json` differs from the fork's file at the run's commit in exactly the way the report says:
 
@@ -404,12 +404,13 @@ Every state change is a write that expects the row's current state and `version`
 
 ### Waking a build
 
-A build waiting on a run also wakes when a check suite of the fork finishes, so it does not have to wait out the 15 minutes.
+A build waiting on a run also wakes when the check suite of that run finishes, so it does not have to wait out the 15 minutes.
 The Web role hears `check_suite` deliveries with the other webhook handlers and ignores every one except a `completed` suite of `Livemap:Repo` from the GitHub Actions app (app slug `github-actions`) that either ran on the `main` branch with no pull request,
 or ran on a branch named `livemap/build-` followed by digits whose listed pull requests all come from and go into the fork itself. With `Livemap:Enabled` off it ignores all of them.
 
 A hit starts `LivemapWakeWorkflow` with the id `livemap-wake-<check suite id>`: one still running for the suite is kept, a finished one starts again.
 On the worker, its `LivemapWake` activity reads the build in flight and signals that build's workflow with the commit and the suite id. With no build in flight, or no workflow running for it, the wake ends.
+The build workflow takes the check suite id of the run it waits on from the run itself (`check_suite_id` of the Actions run) and reads the run again only for a signal that carries that id. A signal for any other suite, and every signal while the run has no suite id, is logged and ignored.
 A failure to start the wake fails the delivery, so GitHub sends it again. A webhook never starts a build workflow, and a missed wake costs nothing: the poll starts the workflow and the workflow reads its run every 15 minutes.
 
 The Web role has no database, so it registers only the handler and the options (`AddLivemapEvents`, one line in `Program.cs`). The store, the Steam client, the schedule and the GitHub client stay on the worker. With the feature on, the Web role checks the same `Livemap:` keys as the worker.

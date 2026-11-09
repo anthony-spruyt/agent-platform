@@ -49,7 +49,7 @@ public class TemporalLivemapBuildStarterTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new LivemapBuildRig();
         await rig.SeedAsync();
-        rig.GitHub.ScriptRun(FakeLivemapGitHub.ExeCaptureRunId, new LivemapRun(FakeLivemapGitHub.ExeCaptureRunId, "in_progress", null, Sha));
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.ExeCaptureRunId, Running(FakeLivemapGitHub.ExeCaptureRunId));
         using var worker = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)

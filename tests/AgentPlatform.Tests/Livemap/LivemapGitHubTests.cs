@@ -113,13 +113,13 @@ public class LivemapGitHubTests
     }
 
     [Fact]
-    public async Task GetRun_ReadsTheStateConclusionAndHeadSha()
+    public async Task GetRun_ReadsTheStateConclusionHeadShaAndCheckSuite()
     {
-        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"id":77,"status":"completed","conclusion":"success","head_sha":"abc123"}"""));
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"id":77,"status":"completed","conclusion":"success","head_sha":"abc123","check_suite_id":5001}"""));
 
         var run = await client.GetRunAsync(77, Ct);
 
-        Assert.Equal(new LivemapRun(77, "completed", "success", "abc123"), run);
+        Assert.Equal(new LivemapRun(77, "completed", "success", "abc123", 5001), run);
         Assert.True(run!.Succeeded);
         Assert.Equal($"/repos/{Fork}/actions/runs/77", Assert.Single(handler.Requests).Uri.AbsolutePath);
         Assert.Equal(new Dictionary<string, string> { ["actions"] = "read" }, Assert.Single(tokens.Minted).Permissions);
@@ -133,10 +133,20 @@ public class LivemapGitHubTests
     [InlineData("completed", "success", true, true)]
     public void ARun_IsSuccessfulOnlyWhenCompletedWithSuccess(string status, string? conclusion, bool completed, bool succeeded)
     {
-        var run = new LivemapRun(1, status, conclusion, "abc");
+        var run = new LivemapRun(1, status, conclusion, "abc", 5);
 
         Assert.Equal(completed, run.IsCompleted);
         Assert.Equal(succeeded, run.Succeeded);
+    }
+
+    [Fact]
+    public async Task GetRun_WithoutACheckSuite_ReportsNone()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"id":77,"status":"queued","head_sha":"abc123"}"""));
+
+        var run = await client.GetRunAsync(77, Ct);
+
+        Assert.Equal(0, run!.CheckSuiteId);
     }
 
     [Fact]

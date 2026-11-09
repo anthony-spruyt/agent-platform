@@ -6,7 +6,7 @@ public enum LivemapWorkflowFile
     Compat,
 }
 
-public sealed record LivemapRun(long Id, string Status, string? Conclusion, string HeadSha)
+public sealed record LivemapRun(long Id, string Status, string? Conclusion, string HeadSha, long CheckSuiteId)
 {
     public bool IsCompleted => Status == "completed";
 
