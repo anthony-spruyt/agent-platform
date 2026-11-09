@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.25.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.24.0...v1.25.0) (2026-11-09)
+
+
+### Features
+
+* **livemap:** merge the release, check it and pin it in spruyt-labs ([#286](https://github.com/anthony-spruyt/agent-platform/issues/286)) ([92ada62](https://github.com/anthony-spruyt/agent-platform/commit/92ada6265a22196415ccfe85f984af64c789638a))
+
+
+### Bug Fixes
+
+* **livemap:** accept a release pull request made on an older commit of main ([#289](https://github.com/anthony-spruyt/agent-platform/issues/289)) ([7925682](https://github.com/anthony-spruyt/agent-platform/commit/792568220b7d3fb2fefd3f9b9fe741bb51420608))
+
 ## [1.24.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.23.0...v1.24.0) (2026-11-09)
 
 
