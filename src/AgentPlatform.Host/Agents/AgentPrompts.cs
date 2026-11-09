@@ -7,6 +7,8 @@ public static class AgentPrompts
 {
     public const string RenovateTriage = "renovate-triage";
 
+    public const string LivemapHardPatch = "livemap-hard-patch";
+
     private const string PullRequestPlaceholder = "{{pr}}";
 
     public static bool Exists(string name) =>
