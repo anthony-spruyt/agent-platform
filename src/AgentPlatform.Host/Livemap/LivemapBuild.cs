@@ -18,12 +18,15 @@ public enum LivemapBuildState
     PinOpen,
     PinWaiting,
     Pinned,
+    Patching,
+    OwnerReview,
 }
 
 public enum LivemapClassification
 {
     Known,
     Easy,
+    Hard,
 }
 
 public sealed class LivemapBuild
@@ -65,6 +68,14 @@ public sealed class LivemapBuild
     public DateTimeOffset? NotifiedAt { get; set; }
 
     public int Attempts { get; set; }
+
+    public int AgentRuns { get; set; }
+
+    public string? PatchNotes { get; set; }
+
+    public string? PatchResult { get; set; }
+
+    public string? PatchBaseSha { get; set; }
 
     public DateTimeOffset? NextRetryAt { get; set; }
 
