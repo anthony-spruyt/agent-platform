@@ -205,27 +205,7 @@ public sealed class LivemapPullRequestActivities(
             HeadFileMode: headMode,
             MainFileMode: mainMode,
             CheckRuns: checkRuns,
-            CiSuiteIds: await CiSuitesAsync(checkRuns, branch, cancellationToken).ConfigureAwait(false));
-    }
-
-    // A required name only counts in the check suite of the fork's own CI run for the branch.
-    private async Task<IReadOnlySet<long>> CiSuitesAsync(IReadOnlyList<LivemapCheckRun> checkRuns, string branch, CancellationToken cancellationToken)
-    {
-        var suites = new HashSet<long>();
-        var candidates = checkRuns
-            .Where(run => run.AppSlug == LivemapMergeGate.ChecksApp && run.CheckSuiteId > 0 && options.Value.RequiredChecks.Contains(run.Name))
-            .Select(run => run.CheckSuiteId)
-            .Distinct();
-        foreach (var suite in candidates)
-        {
-            var runs = await github.ListSuiteRunsAsync(suite, cancellationToken).ConfigureAwait(false);
-            if (runs.Count > 0 && runs.All(run => run.IsCiRunOf(branch)))
-            {
-                suites.Add(suite);
-            }
-        }
-
-        return suites;
+            CiSuiteIds: await LivemapCiSuites.FindAsync(github, checkRuns, branch, options.Value.RequiredChecks, cancellationToken).ConfigureAwait(false));
     }
 
     private async Task SettleMergedAsync(long buildId, LivemapPullRequest pull, string head, CancellationToken cancellationToken)
