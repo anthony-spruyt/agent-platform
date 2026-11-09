@@ -321,6 +321,16 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             .ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<LivemapBuild>> FindShipWaitingAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.LivemapBuilds.AsNoTracking()
+            .Where(b => b.State == LivemapBuildState.ReleaseWaiting || b.State == LivemapBuildState.PinWaiting)
+            .OrderBy(b => b.BuildId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<LivemapBuild>> FindUnnotifiedAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

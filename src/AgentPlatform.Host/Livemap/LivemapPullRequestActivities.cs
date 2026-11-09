@@ -10,6 +10,7 @@ public enum LivemapStep
     Check,
     OpenPullRequest,
     Watch,
+    Ship,
 }
 
 // Outcome is what the workflow ends with when the step is Stop; the head is the commit a Watch waits on.
@@ -45,7 +46,11 @@ public sealed class LivemapPullRequestActivities(
             LivemapBuildState.Classified => new LivemapPlan(LivemapStep.OpenPullRequest),
             LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging => new LivemapPlan(LivemapStep.Watch, HeadSha: row.HeadSha),
             LivemapBuildState.PullRequestWaiting => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.PullRequestWaiting),
-            LivemapBuildState.Merged => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Merged),
+            LivemapBuildState.Merged or LivemapBuildState.Released or LivemapBuildState.Verified or LivemapBuildState.PinOpen or LivemapBuildState.Pinned => new LivemapPlan(LivemapStep.Ship),
+            LivemapBuildState.ReleaseWaiting => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.ReleaseWaiting),
+            LivemapBuildState.PinWaiting => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.PinWaiting),
+            LivemapBuildState.Done => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Shipped),
+            LivemapBuildState.NeedsOwner when row.NotifiedAt is null => new LivemapPlan(LivemapStep.Ship),
             LivemapBuildState.NeedsOwner => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.NeedsOwner),
             LivemapBuildState.Parked => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Parked),
             _ => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Superseded),

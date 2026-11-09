@@ -418,6 +418,27 @@ public class LivemapBuildStoreShipTests
     }
 
     [Fact]
+    public async Task TheBuildsHeldBeforeAShipStep_AreFoundOldestFirst_AndNoOtherBuild()
+    {
+        var data = InMemoryRunData.Create();
+        long id = 100;
+        var expected = new List<long>();
+        foreach (var state in Enum.GetValues<LivemapBuildState>())
+        {
+            await SeedAsync(state, ++id, data);
+            if (Waiting.Contains(state))
+            {
+                expected.Add(id);
+            }
+        }
+
+        var found = await Store(data).FindShipWaitingAsync(Ct);
+
+        Assert.Equal(expected, found.Select(b => b.BuildId));
+        Assert.Equal(Waiting.Length, expected.Count);
+    }
+
+    [Fact]
     public async Task TheBuildsThatNeedTheOwner_AreFoundForANotice_UntilTheNoticeWentOut()
     {
         var data = InMemoryRunData.Create();

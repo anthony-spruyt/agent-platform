@@ -203,6 +203,26 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void TheWorker_RunsTheShipActivity()
+    {
+        using var provider = Build();
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(options.Activities, a => a.Name == LivemapShipActivities.ShipName);
+    }
+
+    [Fact]
+    public void TheShipActivity_CanBeBuilt_WithItsCollaborators()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapShipActivities>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ILivemapPinPullRequests>());
+    }
+
+    [Fact]
     public void TheWorker_RunsTheWakeWorkflowAndItsActivity()
     {
         using var provider = Build();

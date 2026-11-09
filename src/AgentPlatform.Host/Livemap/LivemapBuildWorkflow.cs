@@ -19,9 +19,14 @@ public partial class LivemapBuildWorkflow
     // A run started before this patch replays through DriveAsync alone, so that path stays until those runs are gone.
     private const string DataPullRequestPatch = "livemap-data-pr";
 
+    // A run recorded before this patch ended at the merge, so it still does.
+    private const string ReleasePinPatch = "livemap-release-pin";
+
     public static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15);
 
     public static readonly TimeSpan RunLimit = TimeSpan.FromMinutes(60);
+
+    public static readonly TimeSpan ShipInterval = TimeSpan.FromMinutes(5);
 
     private static readonly RetryPolicy _retries = new()
     {
@@ -97,6 +102,11 @@ public partial class LivemapBuildWorkflow
                     _step = "pull request";
                     await Workflow.ExecuteActivityAsync((LivemapPullRequestActivities activities) => activities.OpenPullRequestAsync(input.BuildId), _stepOptions);
                     break;
+                case LivemapStep.Ship when !Workflow.Patched(ReleasePinPatch):
+                    return LivemapBuildOutcome.Merged;
+                case LivemapStep.Ship:
+                    await ShipAsync(input.BuildId);
+                    break;
                 default:
                     await WatchAsync(input.BuildId, plan.HeadSha);
                     break;
@@ -104,6 +114,15 @@ public partial class LivemapBuildWorkflow
         }
 
         return await ParkAsync(input.BuildId, "The build did not settle.");
+    }
+
+    private async Task ShipAsync(long buildId)
+    {
+        _step = "ship";
+        while (await Workflow.ExecuteActivityAsync((LivemapShipActivities activities) => activities.ShipAsync(buildId), _stepOptions))
+        {
+            await Workflow.DelayAsync(ShipInterval);
+        }
     }
 
     private async Task WatchAsync(long buildId, string? head)
