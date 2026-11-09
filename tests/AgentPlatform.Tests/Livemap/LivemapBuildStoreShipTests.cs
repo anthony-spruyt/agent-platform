@@ -473,4 +473,24 @@ public class LivemapBuildStoreShipTests
         Assert.Equal(0, await Store(data).SupersedeOlderAsync(Build + 1, Ct));
         Assert.Equal(LivemapBuildState.Parked, (await ReadAsync(data)).State);
     }
+
+    [Fact]
+    public async Task AttemptsSpentBeforeTheMerge_DoNotCountAgainstTheShipSteps()
+    {
+        var data = InMemoryRunData.Create();
+        var store = Store(data, Now.AddHours(-1));
+        await store.RecordAsync(Build, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+        Assert.True(await store.ClassifyAsync(Build, LivemapClassification.Easy, 777, Ct));
+        Assert.True(await store.OpenPullRequestAsync(Build, Pr, Head, waiting: false, Ct));
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            Assert.Equal(LivemapBuildState.Parked, await store.ParkAsync(Build, "GitHub was down", 3, TimeSpan.Zero, Ct));
+            Assert.True(await store.ResumeAsync(Build, Ct));
+        }
+
+        Assert.True(await store.BeginMergeAsync(Build, Ct));
+        Assert.True(await store.MergedAsync(Build, Ct));
+
+        Assert.Equal(LivemapBuildState.Parked, await store.ParkAsync(Build, "GitHub was down", 3, TimeSpan.FromMinutes(10), Ct));
+    }
 }

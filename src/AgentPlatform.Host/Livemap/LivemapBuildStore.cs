@@ -105,6 +105,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
                 }
 
                 build.MergedAt = now;
+                build.Attempts = 0;
                 return LivemapBuildState.Merged;
             },
             cancellationToken).ConfigureAwait(false) is not null;
