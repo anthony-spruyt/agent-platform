@@ -13,15 +13,14 @@ public static class LivemapNotice
         ArgumentException.ThrowIfNullOrWhiteSpace(fork);
         ArgumentException.ThrowIfNullOrWhiteSpace(pinRepo);
 
-        var shipped = build.State == LivemapBuildState.Pinned;
-        if (!shipped && build.State != LivemapBuildState.NeedsOwner)
+        if (build.State is not (LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner or LivemapBuildState.OwnerReview))
         {
-            throw new ArgumentException("Only a pinned build or one that needs a person gets a notice.", nameof(build));
+            throw new ArgumentException("Only a pinned build, one that needs a person or one that waits for the owner's review gets a notice.", nameof(build));
         }
 
         var text = new StringBuilder();
-        text.Append(CultureInfo.InvariantCulture, $"**Livemap build {build.BuildId}: {(shipped ? "shipped" : "needs a person")}**\n\n");
-        text.Append(Result(build, shipped)).Append("\n\n");
+        text.Append(CultureInfo.InvariantCulture, $"**Livemap build {build.BuildId}: {Title(build.State)}**\n\n");
+        text.Append(Result(build)).Append("\n\n");
 
         var links = new List<string>();
         if (build.CompatRunId is { } run)
@@ -31,7 +30,8 @@ public static class LivemapNotice
 
         if (build.PullRequestNumber is { } pull)
         {
-            links.Add(string.Create(CultureInfo.InvariantCulture, $"- Data pull request: https://github.com/{fork}/pull/{pull}"));
+            var kind = build.State == LivemapBuildState.OwnerReview ? "Code" : "Data";
+            links.Add(string.Create(CultureInfo.InvariantCulture, $"- {kind} pull request: https://github.com/{fork}/pull/{pull}"));
         }
 
         if (build.ReleaseTag is { } tag)
@@ -57,9 +57,21 @@ public static class LivemapNotice
         return text.Append('\n').ToString();
     }
 
-    private static string Result(LivemapBuild build, bool shipped)
+    private static string Title(LivemapBuildState state) => state switch
     {
-        if (!shipped)
+        LivemapBuildState.Pinned => "shipped",
+        LivemapBuildState.OwnerReview => "waits for the owner",
+        _ => "needs a person",
+    };
+
+    private static string Result(LivemapBuild build)
+    {
+        if (build.State == LivemapBuildState.OwnerReview)
+        {
+            return "The agent changed the fork's code for this build. The pull request waits for the owner, and the worker does not merge it.";
+        }
+
+        if (build.State == LivemapBuildState.NeedsOwner)
         {
             return string.IsNullOrWhiteSpace(build.Detail) ? "The worker stopped on this build." : build.Detail;
         }

@@ -13,6 +13,7 @@ public enum LivemapBuildOutcome
     ReleaseWaiting,
     PinWaiting,
     Shipped,
+    OwnerReview,
 }
 
 public sealed record LivemapDispatchInput(LivemapWorkflowFile Workflow, long BuildId, string ManifestGid);

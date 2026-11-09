@@ -95,6 +95,28 @@ public class LivemapShipNoticeTests
     }
 
     [Fact]
+    public async Task ACodePullRequest_GetsItsNoticeOnce_AndWaitsForTheOwnerWithoutBeingMerged()
+    {
+        var rig = new LivemapShipRig();
+        await rig.AtOwnerReviewAsync(number: 52);
+
+        var wait = await rig.ShipAsync();
+
+        Assert.False(wait);
+        var post = Assert.Single(rig.Notices.Posts);
+        Assert.Contains("waits for the owner", post.Body, StringComparison.Ordinal);
+        Assert.Contains("https://github.com/octo/livemap/pull/52", post.Body, StringComparison.Ordinal);
+        var row = await rig.RowAsync();
+        Assert.Equal(LivemapBuildState.OwnerReview, row.State);
+        Assert.Equal(Now, row.NotifiedAt);
+
+        await rig.ShipAsync();
+
+        Assert.Equal(1, rig.Notices.Asked);
+        Assert.DoesNotContain(rig.Fork.Calls, call => call.StartsWith("merge:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AFlagRaisedByTheShipStep_IsNoticedOnTheNextRun()
     {
         var rig = new LivemapShipRig();

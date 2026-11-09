@@ -28,6 +28,8 @@ public class LivemapPullRequestPlanTests
         { LivemapBuildState.Parked, LivemapStep.Stop, LivemapBuildOutcome.Parked },
         { LivemapBuildState.Superseded, LivemapStep.Stop, LivemapBuildOutcome.Superseded },
         { LivemapBuildState.Done, LivemapStep.Stop, LivemapBuildOutcome.Shipped },
+        { LivemapBuildState.Patching, LivemapStep.Patch, LivemapBuildOutcome.Classified },
+        { LivemapBuildState.OwnerReview, LivemapStep.Ship, LivemapBuildOutcome.Classified },
     };
 
     [Theory]
@@ -54,6 +56,18 @@ public class LivemapPullRequestPlanTests
         var plan = await PlanAsync(rig);
 
         Assert.Equal(new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.NeedsOwner, null), plan);
+    }
+
+    [Fact]
+    public async Task ACodePullRequestTheOwnerWasToldAbout_IsLeftToTheOwner()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.SeedAsync(LivemapBuildState.OwnerReview);
+        Assert.True(await rig.Store.NotifiedAsync(BuildId, Ct));
+
+        var plan = await PlanAsync(rig);
+
+        Assert.Equal(new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.OwnerReview, null), plan);
     }
 
     [Fact]

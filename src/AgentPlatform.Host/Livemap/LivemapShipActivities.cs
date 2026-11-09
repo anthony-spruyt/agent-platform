@@ -42,7 +42,7 @@ public sealed class LivemapShipActivities(
             LivemapBuildState.Released => await VerifyReleaseAsync(row, cancellationToken).ConfigureAwait(false),
             LivemapBuildState.Verified => await OpenPinAsync(row, cancellationToken).ConfigureAwait(false),
             LivemapBuildState.PinOpen => await MergePinAsync(row, cancellationToken).ConfigureAwait(false),
-            LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner when row.NotifiedAt is null => await NotifyAsync(row, cancellationToken).ConfigureAwait(false),
+            LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner or LivemapBuildState.OwnerReview when row.NotifiedAt is null => await NotifyAsync(row, cancellationToken).ConfigureAwait(false),
             _ => false,
         };
     }
