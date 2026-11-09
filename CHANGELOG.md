@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.23.0...v1.24.0) (2026-11-09)
+
+
+### Features
+
+* **livemap:** open the data pull request and merge it once the checks pass ([#282](https://github.com/anthony-spruyt/agent-platform/issues/282)) ([7eabfda](https://github.com/anthony-spruyt/agent-platform/commit/7eabfda80976bf3e90a4cc651f05f3badfceb4c6))
+
 ## [1.23.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.22.0...v1.23.0) (2026-11-09)
 
 
