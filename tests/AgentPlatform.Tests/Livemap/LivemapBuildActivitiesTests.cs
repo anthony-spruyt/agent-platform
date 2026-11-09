@@ -149,6 +149,60 @@ public class LivemapBuildActivitiesTests
     }
 
     [Fact]
+    public async Task AnArtifactThatBreaksItsLimits_SendsTheBuildToTheOwner_WithoutAnotherTry()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.SeedAsync();
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Finished(FakeLivemapGitHub.CompatRunId));
+        rig.GitHub.ArtifactFailure = new CompatArtifactException("The compat artifact holds an unexpected file.");
+
+        var outcome = await rig.ClassifyAsync();
+
+        Assert.Equal(LivemapBuildOutcome.NeedsOwner, outcome);
+        var row = await rig.RowAsync();
+        Assert.Equal(LivemapBuildState.NeedsOwner, row.State);
+        Assert.Contains("unexpected file", row.Detail, StringComparison.Ordinal);
+        Assert.Equal(0, row.Attempts);
+    }
+
+    [Fact]
+    public async Task AForkBuildsFileOverItsLimit_SendsTheBuildToTheOwner()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.SeedAsync();
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Finished(FakeLivemapGitHub.CompatRunId));
+        rig.GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = KnownArtifact();
+        rig.GitHub.ForkBuildsFailure = new CompatArtifactException("The builds file is over the size cap.");
+
+        Assert.Equal(LivemapBuildOutcome.NeedsOwner, await rig.ClassifyAsync());
+        Assert.Contains("size cap", (await rig.RowAsync()).Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnArtifactThatBreaksItsLimits_ForABuildThatNoLongerNeedsIt_ChangesNothing()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.SeedAsync(LivemapBuildState.Superseded);
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Finished(FakeLivemapGitHub.CompatRunId));
+        rig.GitHub.ArtifactFailure = new CompatArtifactException("The compat artifact holds an unexpected file.");
+
+        Assert.Equal(LivemapBuildOutcome.Superseded, await rig.ClassifyAsync());
+        Assert.Equal(LivemapBuildState.Superseded, (await rig.RowAsync()).State);
+    }
+
+    [Fact]
+    public async Task AReadThatFailsForAnotherReason_IsNotTakenForAnInvalidArtifact()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.SeedAsync();
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Finished(FakeLivemapGitHub.CompatRunId));
+        rig.GitHub.ArtifactFailure = new InvalidOperationException("GitHub is down");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.ClassifyAsync());
+        Assert.Equal(LivemapBuildState.Detected, (await rig.RowAsync()).State);
+    }
+
+    [Fact]
     public async Task AResultForABuildThatNoLongerNeedsIt_ChangesNothing()
     {
         var rig = new LivemapBuildRig();

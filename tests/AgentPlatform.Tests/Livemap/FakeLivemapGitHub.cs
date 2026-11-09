@@ -25,6 +25,8 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
 
     public Exception? ForkBuildsFailure { get; set; }
 
+    public Exception? ArtifactFailure { get; set; }
+
     public IReadOnlyList<(LivemapWorkflowFile Workflow, long BuildId, string ManifestGid)> Dispatches
     {
         get
@@ -79,7 +81,7 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
     }
 
     public Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken) =>
-        Task.FromResult(Artifacts.GetValueOrDefault(runId));
+        ArtifactFailure is null ? Task.FromResult(Artifacts.GetValueOrDefault(runId)) : Task.FromException<CompatArtifact?>(ArtifactFailure);
 
     public Task<string?> ReadBuildsJsonAsync(string sha, CancellationToken cancellationToken)
     {

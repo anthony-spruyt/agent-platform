@@ -53,13 +53,23 @@ public sealed class LivemapBuildActivities(ILivemapGitHub github, LivemapBuildSt
             return await ParkAsync(input.BuildId, run is null ? "The compat run could not be found." : $"The compat run {(run.IsCompleted ? $"ended with {run.Conclusion}" : $"is {run.Status}")}.", cancellationToken).ConfigureAwait(false);
         }
 
-        var artifact = await github.ReadCompatArtifactAsync(input.CompatRunId, cancellationToken).ConfigureAwait(false);
-        if (artifact is null)
+        CompatArtifact? artifact;
+        string? fork;
+        try
         {
-            return await ParkAsync(input.BuildId, "The compat run left no artifact.", cancellationToken).ConfigureAwait(false);
+            artifact = await github.ReadCompatArtifactAsync(input.CompatRunId, cancellationToken).ConfigureAwait(false);
+            if (artifact is null)
+            {
+                return await ParkAsync(input.BuildId, "The compat run left no artifact.", cancellationToken).ConfigureAwait(false);
+            }
+
+            fork = await github.ReadBuildsJsonAsync(run.HeadSha, cancellationToken).ConfigureAwait(false);
+        }
+        catch (CompatArtifactException ex)
+        {
+            return await FlagAsync(input.BuildId, ex.Message, cancellationToken).ConfigureAwait(false);
         }
 
-        var fork = await github.ReadBuildsJsonAsync(run.HeadSha, cancellationToken).ConfigureAwait(false);
         var outcome = CompatClassifier.Classify(artifact, fork, input.BuildId, input.ManifestGid);
         if (outcome.Kind is CompatOutcomeKind.Known or CompatOutcomeKind.Easy)
         {
@@ -69,9 +79,7 @@ public sealed class LivemapBuildActivities(ILivemapGitHub github, LivemapBuildSt
                 : LivemapBuildOutcome.Superseded;
         }
 
-        return await builds.FlagForOwnerAsync(input.BuildId, outcome.Detail, cancellationToken).ConfigureAwait(false)
-            ? LivemapBuildOutcome.NeedsOwner
-            : LivemapBuildOutcome.Superseded;
+        return await FlagAsync(input.BuildId, outcome.Detail, cancellationToken).ConfigureAwait(false);
     }
 
     [Activity(ParkName)]
@@ -80,6 +88,11 @@ public sealed class LivemapBuildActivities(ILivemapGitHub github, LivemapBuildSt
         ArgumentNullException.ThrowIfNull(input);
         return ParkAsync(input.BuildId, input.Detail, ActivityExecutionContext.Current.CancellationToken);
     }
+
+    private async Task<LivemapBuildOutcome> FlagAsync(long buildId, string detail, CancellationToken cancellationToken) =>
+        await builds.FlagForOwnerAsync(buildId, detail, cancellationToken).ConfigureAwait(false)
+            ? LivemapBuildOutcome.NeedsOwner
+            : LivemapBuildOutcome.Superseded;
 
     private async Task<LivemapBuildOutcome> ParkAsync(long buildId, string detail, CancellationToken cancellationToken) =>
         await builds.ParkAsync(buildId, detail, MaxAttempts, RetryAfter, cancellationToken).ConfigureAwait(false) switch
