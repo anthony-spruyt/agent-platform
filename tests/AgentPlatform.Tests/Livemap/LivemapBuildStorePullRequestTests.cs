@@ -26,6 +26,8 @@ public class LivemapBuildStorePullRequestTests
 
     public static TheoryData<LivemapBuildState> StatesOtherThanOpenOrMerging => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)));
 
+    public static TheoryData<LivemapBuildState> StatesOtherThanOpen => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.PullRequestOpen));
+
     public static TheoryData<LivemapBuildState> StatesOtherThanMerging => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.Merging));
 
     public static TheoryData<LivemapBuildState> StatesOtherThanWaiting => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.PullRequestWaiting));
@@ -33,6 +35,10 @@ public class LivemapBuildStorePullRequestTests
     public static TheoryData<LivemapBuildState> StatesOutsideThePullRequestPhase => new(Enum.GetValues<LivemapBuildState>().Where(s => !PullRequestPhase.Contains(s) && s != LivemapBuildState.Detected));
 
     public static TheoryData<LivemapBuildState> StatesThatMayRestart => new(LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.PullRequestWaiting);
+
+    public static TheoryData<LivemapBuildState> StatesThatMayReopen => new(LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging);
+
+    public static TheoryData<LivemapBuildState> StatesThatMayNotReopen => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)));
 
     public static TheoryData<LivemapBuildState> StatesThatMayNotRestart => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.PullRequestWaiting)));
 
@@ -274,6 +280,72 @@ public class LivemapBuildStorePullRequestTests
         Assert.Equal(state, (await ReadAsync(data)).State);
     }
 
+    [Theory]
+    [MemberData(nameof(StatesThatMayReopen))]
+    public async Task ABuildWhoseMainMovedOn_GoesBackToClassified_KeepingWhatTheCompatRunDecided(LivemapBuildState state)
+    {
+        var data = await SeedAsync(state);
+
+        var next = await Store(data).ReopenAsync(Build, "Main moved on.", 3, Ct);
+
+        Assert.Equal(LivemapBuildState.Classified, next);
+        var build = await ReadAsync(data);
+        Assert.Equal(1, build.Attempts);
+        Assert.Equal("Main moved on.", build.Detail);
+        Assert.Equal(LivemapClassification.Easy, build.Classification);
+        Assert.Equal(777, build.CompatRunId);
+        Assert.Null(build.PullRequestNumber);
+        Assert.Null(build.HeadSha);
+    }
+
+    [Fact]
+    public async Task ABuildThatKeepsReopening_NeedsTheOwnerAtTheCap_WithItsPullRequestKept()
+    {
+        var data = await SeedAsync(LivemapBuildState.PullRequestOpen);
+        await Store(data).ReopenAsync(Build, "first", 2, Ct);
+        await Store(data).OpenPullRequestAsync(Build, 50, new string('c', 40), waiting: false, Ct);
+
+        var next = await Store(data).ReopenAsync(Build, "second", 2, Ct);
+
+        Assert.Equal(LivemapBuildState.NeedsOwner, next);
+        var build = await ReadAsync(data);
+        Assert.Equal(2, build.Attempts);
+        Assert.Equal(50, build.PullRequestNumber);
+    }
+
+    [Theory]
+    [MemberData(nameof(StatesThatMayNotReopen))]
+    public async Task OnlyABuildWithAnOpenPullRequestBeingJudged_CanReopen(LivemapBuildState state)
+    {
+        var data = await SeedAsync(state);
+
+        Assert.Null(await Store(data).ReopenAsync(Build, "late", 3, Ct));
+        Assert.Equal(state, (await ReadAsync(data)).State);
+    }
+
+    [Fact]
+    public async Task AnOpenBuild_CanBeHeldAsWaiting_WithItsPullRequestKept()
+    {
+        var data = await SeedAsync(LivemapBuildState.PullRequestOpen);
+
+        Assert.True(await Store(data).HoldAsync(Build, Ct));
+
+        var build = await ReadAsync(data);
+        Assert.Equal(LivemapBuildState.PullRequestWaiting, build.State);
+        Assert.Equal(Pr, build.PullRequestNumber);
+        Assert.Equal(Head, build.HeadSha);
+    }
+
+    [Theory]
+    [MemberData(nameof(StatesOtherThanOpen))]
+    public async Task OnlyAnOpenBuild_CanBeHeld(LivemapBuildState state)
+    {
+        var data = await SeedAsync(state);
+
+        Assert.False(await Store(data).HoldAsync(Build, Ct));
+        Assert.Equal(state, (await ReadAsync(data)).State);
+    }
+
     [Fact]
     public async Task ANewerBuild_SupersedesAnOlderOnesWithAnOpenPullRequest_ButNotOneThatIsMerging()
     {
@@ -349,6 +421,8 @@ public class LivemapBuildStorePullRequestTests
             () => store.OpenPullRequestAsync(Build, Pr, Head, waiting: false, Ct),
             () => store.FlagPullRequestAsync(Build, "late", Ct),
             async () => await store.RestartAsync(Build, "late", 3, Ct) is not null,
+            async () => await store.ReopenAsync(Build, "late", 3, Ct) is not null,
+            () => store.HoldAsync(Build, Ct),
             async () => await store.ParkAsync(Build, "late", 3, TimeSpan.FromMinutes(1), Ct) is not null,
         })
         {

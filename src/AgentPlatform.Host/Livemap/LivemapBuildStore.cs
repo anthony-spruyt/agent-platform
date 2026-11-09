@@ -120,6 +120,33 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             },
             cancellationToken).ConfigureAwait(false);
 
+    // Main moved on while the pull request was judged: the compat run's decision stands and the pull request is made again on the new main.
+    public async Task<LivemapBuildState?> ReopenAsync(long buildId, string detail, int maxAttempts, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State is not (LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging))
+                {
+                    return null;
+                }
+
+                build.Attempts++;
+                build.Detail = Truncate(detail);
+                if (build.Attempts >= maxAttempts)
+                {
+                    return LivemapBuildState.NeedsOwner;
+                }
+
+                build.PullRequestNumber = null;
+                build.HeadSha = null;
+                return LivemapBuildState.Classified;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<bool> HoldAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(buildId, (build, _) => build.State == LivemapBuildState.PullRequestOpen ? LivemapBuildState.PullRequestWaiting : null, cancellationToken).ConfigureAwait(false) is not null;
+
     public async Task<IReadOnlyList<LivemapBuild>> FindSupersededWithPullRequestAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
