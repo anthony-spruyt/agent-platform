@@ -52,11 +52,11 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `ClaudeBudget:Kinds:<kind>:MaxPerSubjectPerDay`          | `2`                                                                   | Worker role. The same cap per subject (a pull request for `RenovateTriage`) over a rolling 24 hours; the `security` label does not skip it. `<kind>` matches the kind name exactly (ordinal, case-sensitive). At least 1, or startup fails |
 | `ClaudeBudget:Kinds:<kind>:MaxFailedAttemptsPerRevision` | `2`                                                                   | Worker role. Failed attempts on one revision (a head commit for `RenovateTriage`) before the work goes to the owner; without a revision they count over a rolling 24 hours. At least 1, or startup fails                                   |
 | `RenovateTriage:Sweeper:Interval`                        | `00:30:00`                                                            | Worker role. How often the sweeper runs (a .NET time span). At least one minute, or startup fails; a new value updates the schedule at start                                                                                               |
-| `Livemap:Enabled`                                        | `false`                                                               | Worker role. Turns the Livemap build poll on; while off, startup removes the poll schedule and nothing is read or written                                                                                                                  |
-| `Livemap:Repo`                                           | none, required when enabled                                           | Worker role. The Livemap fork as `owner/name`; its `data/builds.json` at the pinned release lists the builds already covered                                                                                                               |
-| `Livemap:PinRepo`                                        | none, required when enabled                                           | Worker role. The repository, as `owner/name`, that holds the Livemap pin file                                                                                                                                                              |
-| `Livemap:PinPath`                                        | none, required when enabled                                           | Worker role. Path of the pin file in `Livemap:PinRepo`: plain segments only, no leading slash, dot segment, query or fragment                                                                                                              |
-| `Livemap:PollInterval`                                   | `00:15:00`                                                            | Worker role. How often the poll runs (a .NET time span). At least one minute, or startup fails; a new value updates the schedule at start                                                                                                  |
+| `Livemap:Enabled`                                        | `false`                                                               | Worker and Web roles. Turns the Livemap build poll and the wake-up from the fork's check suites on; while off, startup removes the poll schedule and nothing is read or written                                                            |
+| `Livemap:Repo`                                           | none, required when enabled                                           | Worker and Web roles. The Livemap fork as `owner/name`; its `data/builds.json` at the pinned release lists the builds already covered, and only its check suites wake a build                                                              |
+| `Livemap:PinRepo`                                        | none, required when enabled                                           | Worker and Web roles. The repository, as `owner/name`, that holds the Livemap pin file                                                                                                                                                     |
+| `Livemap:PinPath`                                        | none, required when enabled                                           | Worker and Web roles. Path of the pin file in `Livemap:PinRepo`: plain segments only, no leading slash, dot segment, query or fragment                                                                                                     |
+| `Livemap:PollInterval`                                   | `00:15:00`                                                            | Worker and Web roles. How often the poll runs (a .NET time span). At least one minute, or startup fails; a new value updates the schedule at start                                                                                         |
 | `TextScanner:BaseUrl`                                    | `http://litellm-llm-tool-guard.litellm.svc:8080`                      | Worker role. The llm-tool-guard service that scans untrusted pull request text; an absolute http or https URL                                                                                                                              |
 | `TextScanner:RequestTimeout`                             | `00:05:30`                                                            | Worker role. Time allowed for one scan request; a slower one leaves the text unchecked                                                                                                                                                     |
 | `TextScanner:RetryBudget`                                | `00:10:00`                                                            | Worker role. How long a busy (503) or unreachable scanner is retried before the text is left unchecked                                                                                                                                     |
@@ -121,6 +121,7 @@ A body that arrives too slowly for Kestrel (`BadHttpRequestException`) gets `408
 | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `ping`                                                                                                                             | `200`                                                    |
 | `check_suite` `completed`, branch `renovate/*` except `renovate/configure`, with pull requests whose head and base are in the repo | `202`, one `CheckSuiteCompleted` signal per pull request |
+| `check_suite` `completed` of `Livemap:Repo`, from GitHub Actions, on `main` or on a build pull request (see Waking a build)        | `202`, starts `LivemapWakeWorkflow`                      |
 | any other event or action, or a suite that fails a filter                                                                          | `200`, dropped, so GitHub never redelivers               |
 | `check_suite` with a malformed body                                                                                                | `400`                                                    |
 
@@ -129,7 +130,8 @@ Forwarding is a Temporal SignalWithStart: workflow type `RenovateTriageWorkflow`
 `RenovateTriageWorkflow` receives these signals; see Renovate triage below.
 
 The endpoint hands every verified event to `IGitHubEventRouter`. Each `IGitHubEventHandler` lists the event names it accepts, and the router runs every handler that accepts the event, one after another. The answer is `400` if any handler reported a malformed body, else `202` if any acted on the event, else `200`.
-A handler that throws does not stop the others. Once all have run, the failure is rethrown, so the delivery answers `500` and the sweeper redelivers it; handlers must therefore be idempotent. `RenovateTriageCheckSuiteHandler` is the only handler today. A new one is added to `AddGitHubEventHandlers()`, which both roles call, because the sweeper redelivers the events that the registered handlers accept.
+A handler that throws does not stop the others. Once all have run, the failure is rethrown, so the delivery answers `500` and the sweeper redelivers it; handlers must therefore be idempotent.
+`RenovateTriageCheckSuiteHandler` (added by `AddGitHubEventHandlers()`) and `LivemapCheckSuiteHandler` (added by `AddLivemapEvents()`, see Livemap) are the handlers today. Both roles call both methods, because the sweeper redelivers the events that the registered handlers accept. A new handler is added the same way.
 
 The Worker role talks to GitHub through `IGitHubApiClient`. Reads: pull request, all check runs, commit statuses and check suites of a sha, commits (with their parents), files, comparisons between two refs, reviews, labels, issue comments, releases and file contents of a changelog source repository, and job logs, all paged where listed.
 Writes: an approving review pinned to a commit, dismissing a review, adding and removing labels, creating or editing an issue comment (the `Live` triage path), creating or updating check runs, and rerunning failed jobs. Each call mints an installation token for one repository
@@ -351,7 +353,7 @@ The comments:
 
 ## Livemap
 
-The Livemap worker watches Steam for new Enshrouded server builds, so nobody has to notice them. It only detects and records builds; it writes nothing to GitHub.
+The Livemap worker watches Steam for new Enshrouded server builds, so nobody has to notice them. It detects and records builds, then has the Livemap fork's own workflows check each new one and sorts it as known, easy or hard. It opens no pull request and merges nothing.
 
 A hosted service on the worker creates the Temporal Schedule `livemap-poll` at startup, or updates it when it exists, so a changed `Livemap:PollInterval` takes effect on the next start. When `Livemap:Enabled` is `false` it deletes the schedule instead. Startup retries until Temporal answers.
 
@@ -359,14 +361,63 @@ The schedule starts `LivemapPollWorkflow` on the `agent-platform` queue and skip
 
 With the feature off, the other `Livemap:` keys are not checked, but a value that does not parse as its type still fails startup. With it on, an invalid or missing key fails startup.
 
-Each poll runs the `LivemapPoll` activity, tried up to 3 times:
+Each poll runs the `LivemapPoll` activity, tried up to 3 times. Its result is `Unchanged`, `Shipped` or `Detected`, depending on what happens to the build id:
 
 1. Read the public build of the server app from the Steam info API: build id, manifest id and update time. An answer that is not a success, has no valid ids or takes too long fails the attempt.
-2. When `livemap_builds` already has a row for the build id, the poll ends `Unchanged`.
+2. When `livemap_builds` already has a row for the build id, nothing is recorded and the result is `Unchanged`. The poll goes on with step 5.
 3. Otherwise read the pin file from the default branch of `Livemap:PinRepo`. It must hold exactly one `LIVEMAP_VERSION` line with a release tag. Then read `data/builds.json` of `Livemap:Repo` at that tag.
-4. A build id listed in that file is already supported: the row is recorded as `Done` and the poll ends `Shipped`. Any other build is recorded as `Detected` and the poll ends `Detected`.
+4. A build id listed in that file is already supported: the row is recorded as `Done` and the result is `Shipped`. Any other build is recorded as `Detected` and the result is `Detected`.
+5. Every older row that is still `Detected`, `Parked` or `Classified` becomes `Superseded`: only the newest public build matters.
+6. A `Parked` row whose retry time has passed goes back to `Detected`. A `Detected` row gets its build workflow started; one already running for the build is kept.
 
-A failed read (Steam, GitHub, a missing pin or an unreadable build list) fails the attempt and records no row, so the next poll looks again. A row is written once and the first writer wins, so a repeated or concurrent poll never changes it.
+A failed read (Steam, GitHub, a missing pin or an unreadable build list) fails the attempt and records no row, so the next poll looks again. A new row is written once and the first writer wins, so a repeated or concurrent poll never records a build twice or rewinds its state. A poll changes a row that already exists only in steps 5 and 6.
+
+Steam's info API is a community mirror, not Valve, so a `Detected` row is only a hint. Nothing more happens with a build until the fork's own check has confirmed it.
+
+### Build workflow
+
+`LivemapBuildWorkflow` runs on the `agent-platform` queue, one per build, with the id `livemap-build-<build id>`; a workflow already running for the build is kept. It stops with `Superseded` when the row is no longer `Detected`, which it checks before each dispatch. Its steps:
+
+1. Dispatch the fork's `exe-capture.yaml` with the build id and manifest id, then wait for the run to succeed.
+2. Dispatch the fork's `compat.yaml` the same way.
+3. Classify from the compat run's `livemap-compat` artifact.
+
+A dispatch is never retried, because a repeat would start the work twice; the run id comes from the dispatch answer, and an answer without one is an error. While a run is going the workflow reads it, then sleeps until the check suite of that run finishes (see Waking a build) or 15 minutes pass. A run that is still going after 60 minutes counts as failed.
+
+The compat run is an input, not a verdict. The build is classified only when its run succeeded, the report names the build id and manifest id that were dispatched, and the proposed `data/builds.json` differs from the fork's file at the run's commit in exactly the way the report says:
+
+- `Known`: the report says the executable matches an existing row, and that row is the only one that changes. It gains the new build id after the ones it lists and its `steam.manifest` becomes the new manifest id.
+- `Easy`: the report says the build needs a new row, and one row is appended after the row the report names as its base, and that base is the last row of the fork's file. The other rows stay as they were. The new row has the build id, the executable's fingerprint, the depot, manifest and checksum of the build, the signature set and layout of its base, and one hex offset for each site the base has.
+- `Hard`: the build is flagged for the owner with the first reasons the report gives.
+- Anything else is invalid and flagged for the owner at once, without another try: another build in the report, an artifact with files beyond `report.json` and `builds.json` or a file over 256 KiB, a `builds.json` that changes more than its rows or adds or drops more than one row.
+
+A step that fails (a run that is missing, failed or too slow, an artifact that is missing) parks the build. The third parking flags it for the owner.
+
+| State        | Meaning                                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `Detected`   | New and waiting for, or going through, its build workflow                                                                            |
+| `Done`       | Already covered by the pinned release; nothing to do                                                                                 |
+| `Classified` | The fork's check confirmed it is `Known` or `Easy`; `classification` and `compat_run_id` say which and from which run                |
+| `NeedsOwner` | A hard or invalid result, or a third parking; `detail` says why                                                                      |
+| `Parked`     | A step failed; `attempts` counts the failures and `next_retry_at` is 30 minutes later, when the poll puts the row back to `Detected` |
+| `Superseded` | A newer build appeared                                                                                                               |
+
+Every state change is a write that expects the row's current state and `version`, so a workflow that lost a race changes nothing.
+
+### Waking a build
+
+A build waiting on a run also wakes when the check suite of that run finishes, so it does not have to wait out the 15 minutes.
+The Web role hears `check_suite` deliveries with the other webhook handlers and ignores every one except a `completed` suite of `Livemap:Repo` from the GitHub Actions app (app slug `github-actions`) that either ran on the `main` branch with no pull request,
+or ran on a branch named `livemap/build-` followed by digits whose listed pull requests all come from and go into the fork itself. With `Livemap:Enabled` off it ignores all of them.
+
+A hit starts `LivemapWakeWorkflow` with the id `livemap-wake-<check suite id>`: one still running for the suite is kept, a finished one starts again.
+On the worker, its `LivemapWake` activity reads the build in flight. Then it lists the suite's runs in the fork (`actions/runs?check_suite_id=`, with the one-repository `actions: read` token the build uses to read its runs).
+A wake signals the build only for runs the fork itself dispatched or the build's own pull request ran: every run of the suite must have its head in the fork and be either a `workflow_dispatch` run or a `pull_request` run on a `livemap/build-` branch followed by digits.
+The signal carries the commit and the suite id. With no build in flight, no run for the suite, runs of any other kind, or no workflow running for the build, the wake ends. A failed lookup fails the activity, which Temporal retries.
+The build workflow takes the check suite id of the run it waits on from the run itself (`check_suite_id` of the Actions run) and reads the run again only for a signal that carries that id. A signal for any other suite, and every signal while the run has no suite id, is logged and ignored.
+A failure to start the wake fails the delivery, so the platform's sweeper redelivers it (its `redeliver` step). A webhook never starts a build workflow, and a missed wake costs nothing: the poll starts the workflow and the workflow reads its run every 15 minutes.
+
+The Web role has no database, so it registers only the handler and the options (`AddLivemapEvents`, one line in `Program.cs`). The store, the Steam client, the schedule and the GitHub client stay on the worker. With the feature on, the Web role checks the same `Livemap:` keys as the worker.
 
 ## Run data
 
@@ -381,7 +432,7 @@ Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF C
 | `claude_cooldowns`         | scope                 | `scope` (primary key: `global` or a repo), `until`, `cause`; a write never shortens a running cooldown                                                                                                                                                                                                                                         |
 | `renovate_triage_pending`  | pull request          | `repo` + `pr_number` (unique), `head_sha`, `reason`, `status`, `attempts` (failed Claude runs on this head), `created_at`, `opened_at` (when the row was created or its head last moved), `held_at` (while `blocked`), `updated_at`; a head move carries the row and resets `attempts` and `held_at`                                           |
 | `sweeper_state`            | singleton             | `id`, `last_seen_delivered_at`, `last_success_at`; written by the sweeper (see Sweeper)                                                                                                                                                                                                                                                        |
-| `livemap_builds`           | Steam server build    | `build_id` (primary key), `manifest_gid`, `steam_updated_at`, `state` (`Detected` or `Done`), `created_at`, `updated_at`; written by the Livemap poll (see Livemap)                                                                                                                                                                            |
+| `livemap_builds`           | Steam server build    | `build_id` (primary key), `manifest_gid`, `steam_updated_at`, `state` (see Livemap), `classification`, `compat_run_id`, `detail`, `attempts`, `next_retry_at`, `version`, `created_at`, `updated_at`; written by the Livemap poll and build workflow (see Livemap)                                                                             |
 | `prompts`                  | distinct prompt       | `hash` (SHA-256 of the body, primary key), `name`, `body`; a Claude step stores the prompt template it ran                                                                                                                                                                                                                                     |
 
 `claude_runs` keeps `repo`, `pr_number` and `head_sha` (filled for `RenovateTriage` runs) for one release so the previous image can still read and write the table; a trigger fills the key columns of an insert that names only those three.
@@ -403,7 +454,7 @@ CI fails when the model and the migrations differ (`dotnet ef migrations has-pen
 | Path                                   | Purpose                                                                                    |
 | -------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `src/AgentPlatform.Host`               | The executable: role selection, AgentGateway, Temporal workers, agent-pod runner, run data |
-| `src/AgentPlatform.Host/Livemap`       | The Livemap build poll: Steam client, build store, schedule and workflow                   |
+| `src/AgentPlatform.Host/Livemap`       | The Livemap poll, build and wake workflows, Steam and GitHub clients, store, handler       |
 | `src/AgentPlatform.ServiceDefaults`    | Shared OpenTelemetry, health checks and resilience                                         |
 | `src/AgentPlatform.AppHost`            | Aspire AppHost for local development only                                                  |
 | `tests/AgentPlatform.Tests`            | xUnit unit, time-skipping workflow and replay tests                                        |

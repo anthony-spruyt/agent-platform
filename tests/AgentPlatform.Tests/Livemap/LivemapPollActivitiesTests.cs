@@ -56,6 +56,24 @@ public class LivemapPollActivitiesTests
         }
     }
 
+    internal sealed class FakeStarter : ILivemapBuildStarter
+    {
+        public List<(long BuildId, string ManifestGid)> Started { get; } = [];
+
+        public Exception? Failure { get; set; }
+
+        public Task StartAsync(long buildId, string manifestGid, CancellationToken cancellationToken)
+        {
+            if (Failure is not null)
+            {
+                return Task.FromException(Failure);
+            }
+
+            Started.Add((buildId, manifestGid));
+            return Task.CompletedTask;
+        }
+    }
+
     internal sealed class Rig
     {
         public Rig(bool enabled = true)
@@ -67,8 +85,11 @@ public class LivemapPollActivitiesTests
                 Steam,
                 Shipped,
                 Store,
+                Starter,
                 NullLogger<LivemapPollActivities>.Instance);
         }
+
+        public FakeStarter Starter { get; } = new();
 
         public InMemoryRunData Data { get; }
 
@@ -100,6 +121,7 @@ public class LivemapPollActivitiesTests
         Assert.Equal(0, rig.Steam.Calls);
         Assert.Equal(0, rig.Shipped.Calls);
         Assert.Equal(0, await rig.RowCountAsync());
+        Assert.Empty(rig.Starter.Started);
     }
 
     [Fact]
@@ -176,5 +198,126 @@ public class LivemapPollActivitiesTests
         await Assert.ThrowsAsync<ShippedBuildsException>(rig.PollAsync);
 
         Assert.Equal(0, await rig.RowCountAsync());
+    }
+
+    [Fact]
+    public async Task ANewBuildTheReleaseDoesNotCover_IsStarted()
+    {
+        var rig = new Rig();
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+    }
+
+    [Fact]
+    public async Task ANewBuildTheReleaseAlreadyCovers_IsNotStarted()
+    {
+        var rig = new Rig();
+        rig.Shipped.Builds.Add(26430253);
+
+        await rig.PollAsync();
+
+        Assert.Empty(rig.Starter.Started);
+    }
+
+    [Fact]
+    public async Task ABuildStillDetected_IsStartedAgainByTheNextPoll()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+
+        var result = await rig.PollAsync();
+
+        Assert.Equal(LivemapPollOutcome.Unchanged, result.Outcome);
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+    }
+
+    [Theory]
+    [InlineData(LivemapBuildState.Done)]
+    [InlineData(LivemapBuildState.Classified)]
+    [InlineData(LivemapBuildState.NeedsOwner)]
+    [InlineData(LivemapBuildState.Superseded)]
+    public async Task ABuildThatIsNotInFlight_IsNotStarted(LivemapBuildState state)
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, state, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Empty(rig.Starter.Started);
+        Assert.Equal(state, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task AParkedBuild_WhoseTimeHasCome_IsResumedAndStarted()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+        await rig.Store.ParkAsync(26430253, "busy", 3, TimeSpan.Zero, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+        Assert.Equal(LivemapBuildState.Detected, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task AParkedBuild_BeforeItsTime_IsLeftParked()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+        await rig.Store.ParkAsync(26430253, "busy", 3, TimeSpan.FromMinutes(10), Ct);
+
+        await rig.PollAsync();
+
+        Assert.Empty(rig.Starter.Started);
+        Assert.Equal(LivemapBuildState.Parked, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task ANewerBuild_ReplacesTheOlderOnesStillInFlight_AndOnlyThose()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(100, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+        await rig.Store.RecordAsync(200, Gid, SteamUpdated, LivemapBuildState.Parked, Ct);
+        await rig.Store.RecordAsync(300, Gid, SteamUpdated, LivemapBuildState.Classified, Ct);
+        await rig.Store.RecordAsync(400, Gid, SteamUpdated, LivemapBuildState.NeedsOwner, Ct);
+        await rig.Store.RecordAsync(500, Gid, SteamUpdated, LivemapBuildState.Done, Ct);
+
+        await rig.PollAsync();
+
+        var states = new List<LivemapBuildState>();
+        foreach (var id in new long[] { 100, 200, 300, 400, 500 })
+        {
+            states.Add((await rig.Store.FindAsync(id, Ct))!.State);
+        }
+
+        Assert.Equal(
+            [LivemapBuildState.Superseded, LivemapBuildState.Superseded, LivemapBuildState.Superseded, LivemapBuildState.NeedsOwner, LivemapBuildState.Done],
+            states);
+        Assert.Equal(26430253, Assert.Single(rig.Starter.Started).BuildId);
+    }
+
+    [Fact]
+    public async Task WhenTheWorkflowCannotBeStarted_ThePollFails_ButTheBuildIsKept()
+    {
+        var rig = new Rig();
+        rig.Starter.Failure = new InvalidOperationException("Temporal is down");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(rig.PollAsync);
+
+        Assert.Equal(LivemapBuildState.Detected, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task WhenSteamFails_NothingIsStarted()
+    {
+        var rig = new Rig();
+        rig.Steam.Failure = new SteamAppInfoException("down");
+
+        await Assert.ThrowsAsync<SteamAppInfoException>(rig.PollAsync);
+
+        Assert.Empty(rig.Starter.Started);
     }
 }

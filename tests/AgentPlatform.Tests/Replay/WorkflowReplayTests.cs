@@ -24,7 +24,7 @@ public class WorkflowReplayTests
     public async Task CommittedHistory_ReplaysWithoutNondeterminism(string name)
     {
         var replayer = new WorkflowReplayer(
-            new WorkflowReplayerOptions().AddWorkflow<PingWorkflow>().AddWorkflow<RenovateTriageWorkflow>().AddWorkflow<RenovateTriageSweeperWorkflow>().AddWorkflow<LivemapPollWorkflow>());
+            new WorkflowReplayerOptions().AddWorkflow<PingWorkflow>().AddWorkflow<RenovateTriageWorkflow>().AddWorkflow<RenovateTriageSweeperWorkflow>().AddWorkflow<LivemapPollWorkflow>().AddWorkflow<LivemapBuildWorkflow>().AddWorkflow<LivemapWakeWorkflow>());
         var history = WorkflowHistory.FromJson(name, HistoryStore.Read(name));
 
         var result = await replayer.ReplayWorkflowAsync(history, cancellationToken: TestContext.Current.CancellationToken);
@@ -67,6 +67,8 @@ public class WorkflowReplayTests
     [InlineData("renovate-triage-")]
     [InlineData("renovate-triage-sweeper-")]
     [InlineData("livemap-poll-")]
+    [InlineData("livemap-build-")]
+    [InlineData("livemap-wake-")]
     public void EveryWorkflowHasAtLeastOneCommittedHistory(string prefix) =>
         Assert.Contains(HistoryStore.Names(), name => name.StartsWith(prefix, StringComparison.Ordinal));
 }

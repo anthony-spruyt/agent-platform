@@ -1,4 +1,5 @@
 using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.Livemap;
 using AgentPlatform.Tests.Support;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -82,13 +83,16 @@ public class WebRoleGitHubTests
     }
 
     [Fact]
-    public void TheWebRole_RoutesCheckSuitesToTheTriageHandlerAlone()
+    public void TheWebRole_RoutesCheckSuitesToTheTriageHandlerAndTheLivemapHandler()
     {
         using var factory = Factory(GitHubPayloads.Secret);
 
         using var scope = factory.Services.CreateScope();
 
-        Assert.IsType<RenovateTriageCheckSuiteHandler>(Assert.Single(scope.ServiceProvider.GetServices<IGitHubEventHandler>()));
+        Assert.Collection(
+            scope.ServiceProvider.GetServices<IGitHubEventHandler>(),
+            handler => Assert.IsType<RenovateTriageCheckSuiteHandler>(handler),
+            handler => Assert.IsType<LivemapCheckSuiteHandler>(handler));
         Assert.True(scope.ServiceProvider.GetRequiredService<IGitHubEventRouter>().AcceptedEvents.SetEquals(["check_suite"]));
     }
 }
