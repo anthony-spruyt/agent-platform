@@ -142,6 +142,7 @@ public class LivemapPinPullRequestsTests
         var request = Assert.Single(handler.Requests);
         Assert.Equal($"/repos/{PinRepo}/contents/{PinPath}", request.Uri.AbsolutePath);
         Assert.Equal($"?ref={Oid}", request.Uri.Query);
+        Assert.Equal("application/vnd.github.raw+json", request.Accept);
         var minted = Assert.Single(tokens.Minted);
         Assert.Equal(PinRepo, minted.Repo);
         Assert.Equal(Perms("contents", "read"), minted.Permissions);

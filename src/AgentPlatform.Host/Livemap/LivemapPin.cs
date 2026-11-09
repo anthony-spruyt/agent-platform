@@ -8,6 +8,8 @@ public static partial class LivemapPin
 
     private const string DigestKey = "LIVEMAP_SHA256:";
 
+    public static bool IsReleaseTag(string? tag) => tag is not null && ReleaseTag().IsMatch(tag);
+
     public static string? ReadVersion(string pin)
     {
         ArgumentNullException.ThrowIfNull(pin);

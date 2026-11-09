@@ -116,6 +116,20 @@ public class LivemapPinTests
     }
 
     [Theory]
+    [InlineData("v1.10.0", true)]
+    [InlineData("v0.0.1", true)]
+    [InlineData("1.10.0", false)]
+    [InlineData("v1.10", false)]
+    [InlineData("v1.10.0-rc1", false)]
+    [InlineData("v1.10.0\n", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void OnlyAPlainReleaseTag_IsAReleaseTag(string? tag, bool expected)
+    {
+        Assert.Equal(expected, LivemapPin.IsReleaseTag(tag));
+    }
+
+    [Theory]
     [InlineData("v1.10.0", "v1.9.1", true)]
     [InlineData("v2.0.0", "v1.99.99", true)]
     [InlineData("v1.9.2", "v1.9.1", true)]

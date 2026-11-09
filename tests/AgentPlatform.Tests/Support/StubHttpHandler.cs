@@ -3,7 +3,7 @@ using System.Text;
 
 namespace AgentPlatform.Tests.Support;
 
-public sealed record RecordedRequest(HttpMethod Method, Uri Uri, string? Authorization, string? Body);
+public sealed record RecordedRequest(HttpMethod Method, Uri Uri, string? Authorization, string? Body, string? Accept = null);
 
 public sealed class StubHttpClientFactory(HttpMessageHandler handler, Uri baseAddress) : IHttpClientFactory
 {
@@ -32,7 +32,7 @@ public sealed class StubHttpHandler(Func<RecordedRequest, HttpResponseMessage> r
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-        var recorded = new RecordedRequest(request.Method, request.RequestUri!, request.Headers.Authorization?.ToString(), body);
+        var recorded = new RecordedRequest(request.Method, request.RequestUri!, request.Headers.Authorization?.ToString(), body, request.Headers.Accept.Count == 0 ? null : request.Headers.Accept.ToString());
         lock (_gate)
         {
             _requests.Add(recorded);
