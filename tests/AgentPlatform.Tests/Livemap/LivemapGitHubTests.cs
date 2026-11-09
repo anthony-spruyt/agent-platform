@@ -157,6 +157,102 @@ public class LivemapGitHubTests
         Assert.Null(await client.GetRunAsync(77, Ct));
     }
 
+    [Fact]
+    public async Task ListSuiteRuns_ReadsTheEventBranchAndBothRepositoriesOfEachRun()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""
+            {"total_count":2,"workflow_runs":[
+              {"id":1,"event":"workflow_dispatch","head_branch":"main","repository":{"id":500},"head_repository":{"id":500}},
+              {"id":2,"event":"pull_request","head_branch":"livemap/build-26430253","repository":{"id":500},"head_repository":{"id":900}}]}
+            """));
+
+        var runs = await client.ListSuiteRunsAsync(5001, Ct);
+
+        Assert.Equal(
+            new[] { new LivemapSuiteRun("workflow_dispatch", "main", 500, 500), new LivemapSuiteRun("pull_request", "livemap/build-26430253", 500, 900) },
+            runs);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal($"/repos/{Fork}/actions/runs", request.Uri.AbsolutePath);
+        Assert.Contains("check_suite_id=5001", request.Uri.Query, StringComparison.Ordinal);
+        var minted = Assert.Single(tokens.Minted);
+        Assert.Equal(Fork, minted.Repo);
+        Assert.Equal(new Dictionary<string, string> { ["actions"] = "read" }, minted.Permissions);
+    }
+
+    [Fact]
+    public async Task ListSuiteRuns_WhenTheSuiteHasNoRun_IsEmpty()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"total_count":0,"workflow_runs":[]}"""));
+
+        Assert.Empty(await client.ListSuiteRunsAsync(5001, Ct));
+    }
+
+    [Fact]
+    public async Task ListSuiteRuns_WhenARunHasNoHeadRepositoryOrRepository_ReportsNoneForIt()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"workflow_runs":[{"id":1,"event":"pull_request","head_branch":null,"head_repository":null}]}"""));
+
+        Assert.Equal(new LivemapSuiteRun("pull_request", null, 0, 0), Assert.Single(await client.ListSuiteRunsAsync(5001, Ct)));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task ListSuiteRuns_WhenGitHubDoesNotAnswerTheList_IsAnError(HttpStatusCode status)
+    {
+        var (client, _, _) = Create(_ => new HttpResponseMessage(status));
+
+        var failure = await Assert.ThrowsAsync<GitHubApiException>(() => client.ListSuiteRunsAsync(5001, Ct));
+
+        Assert.Equal(status, failure.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("""{"total_count":0}""")]
+    [InlineData("""{"workflow_runs":null}""")]
+    public async Task ListSuiteRuns_WhenTheAnswerHasNoRunList_IsAnError(string answer)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json(answer));
+
+        await Assert.ThrowsAsync<GitHubApiException>(() => client.ListSuiteRunsAsync(5001, Ct));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public async Task ListSuiteRuns_RefusesACheckSuiteThatIsNotAnId(long suiteId)
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("""{"workflow_runs":[]}"""));
+
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => client.ListSuiteRunsAsync(suiteId, Ct));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("workflow_dispatch", "main", 500, 500, true)]
+    [InlineData("workflow_dispatch", "anything", 500, 500, true)]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 500, true)]
+    [InlineData("workflow_dispatch", "main", 500, 900, false)]
+    [InlineData("workflow_dispatch", "main", 500, 0, false)]
+    [InlineData("workflow_dispatch", "main", 0, 0, false)]
+    [InlineData("pull_request", "main", 500, 500, false)]
+    [InlineData("pull_request", "main", 500, 900, false)]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 900, false)]
+    [InlineData("pull_request", "livemap/build-", 500, 500, false)]
+    [InlineData("pull_request", "livemap/build-12x", 500, 500, false)]
+    [InlineData("pull_request", null, 500, 500, false)]
+    [InlineData("push", "main", 500, 500, false)]
+    [InlineData("schedule", "main", 500, 500, false)]
+    [InlineData("pull_request_target", "livemap/build-26430253", 500, 500, false)]
+    [InlineData("", "main", 500, 500, false)]
+    public void ARun_IsTheForksOwnBuildRunOnlyWhenItsHeadIsTheForkAndItIsADispatchOrABuildPullRequest(string runEvent, string? branch, long repositoryId, long headRepositoryId, bool own)
+    {
+        Assert.Equal(own, new LivemapSuiteRun(runEvent, branch, repositoryId, headRepositoryId).IsOwnBuildRun);
+    }
+
     private static readonly string[] ReportAndBuilds = ["report.json", "builds.json"];
 
     private static byte[] ZipOf(params string[] names)

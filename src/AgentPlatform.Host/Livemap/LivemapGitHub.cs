@@ -72,6 +72,22 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
         return run is null ? null : new LivemapRun(run.Id, run.Status ?? string.Empty, run.Conclusion, run.HeadSha ?? string.Empty, run.CheckSuiteId ?? 0);
     }
 
+    public async Task<IReadOnlyList<LivemapSuiteRun>> ListSuiteRunsAsync(long checkSuiteId, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(checkSuiteId);
+
+        var (owner, name) = Fork();
+        var token = await tokens.GetTokenAsync($"{owner}/{name}", _actionsRead, cancellationToken).ConfigureAwait(false);
+        var list = await GitHubHttp.SendAsync<RunListDto>(
+            http,
+            GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}/actions/runs?check_suite_id={checkSuiteId}&per_page=100", token),
+            "workflow run list",
+            cancellationToken).ConfigureAwait(false);
+        return list.WorkflowRuns is { } runs
+            ? [.. runs.Select(run => new LivemapSuiteRun(run.Event ?? string.Empty, run.HeadBranch, run.Repository?.Id ?? 0, run.HeadRepository?.Id ?? 0))]
+            : throw new GitHubApiException("GitHub workflow run list returned no runs array.", HttpStatusCode.OK);
+    }
+
     public async Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runId);
@@ -203,4 +219,10 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
     private sealed record DispatchDto(long? WorkflowRunId);
 
     private sealed record RunDto(long Id, string? Status, string? Conclusion, string? HeadSha, long? CheckSuiteId);
+
+    private sealed record RunListDto(List<ListedRunDto>? WorkflowRuns);
+
+    private sealed record ListedRunDto(string? Event, string? HeadBranch, RepositoryDto? Repository, RepositoryDto? HeadRepository);
+
+    private sealed record RepositoryDto(long Id);
 }

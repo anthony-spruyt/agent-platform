@@ -6,8 +6,11 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
 {
     public const long ExeCaptureRunId = 9001;
     public const long CompatRunId = 9002;
+    public const long ForkId = 500;
 
     private readonly Lock _gate = new();
+
+    private readonly List<long> _suiteLookups = [];
 
     private readonly Dictionary<long, Queue<LivemapRun?>> _runs = [];
 
@@ -28,6 +31,23 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
     public Exception? ArtifactFailure { get; set; }
 
     public Task? ReadGate { get; set; }
+
+    public IReadOnlyList<LivemapSuiteRun> SuiteRuns { get; set; } = [new LivemapSuiteRun("workflow_dispatch", "main", ForkId, ForkId)];
+
+    public Exception? SuiteRunsFailure { get; set; }
+
+    public int FailFirstSuiteLookups { get; set; }
+
+    public IReadOnlyList<long> SuiteLookups
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _suiteLookups];
+            }
+        }
+    }
 
     public IReadOnlyList<(LivemapWorkflowFile Workflow, long BuildId, string ManifestGid)> Dispatches
     {
@@ -85,6 +105,20 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
         }
 
         return run;
+    }
+
+    public Task<IReadOnlyList<LivemapSuiteRun>> ListSuiteRunsAsync(long checkSuiteId, CancellationToken cancellationToken)
+    {
+        int lookups;
+        lock (_gate)
+        {
+            _suiteLookups.Add(checkSuiteId);
+            lookups = _suiteLookups.Count;
+        }
+
+        return SuiteRunsFailure is not null && (FailFirstSuiteLookups == 0 || lookups <= FailFirstSuiteLookups)
+            ? Task.FromException<IReadOnlyList<LivemapSuiteRun>>(SuiteRunsFailure)
+            : Task.FromResult(SuiteRuns);
     }
 
     public Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken) =>

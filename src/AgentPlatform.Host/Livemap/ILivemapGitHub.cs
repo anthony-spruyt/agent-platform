@@ -13,11 +13,21 @@ public sealed record LivemapRun(long Id, string Status, string? Conclusion, stri
     public bool Succeeded => IsCompleted && Conclusion == "success";
 }
 
+public sealed record LivemapSuiteRun(string Event, string? HeadBranch, long RepositoryId, long HeadRepositoryId)
+{
+    public bool IsOwnBuildRun =>
+        HeadRepositoryId > 0
+        && HeadRepositoryId == RepositoryId
+        && (Event == "workflow_dispatch" || (Event == "pull_request" && LivemapBuildBranch.IsMatch(HeadBranch)));
+}
+
 public interface ILivemapGitHub
 {
     Task<long> DispatchAsync(LivemapWorkflowFile workflow, long buildId, string manifestGid, CancellationToken cancellationToken);
 
     Task<LivemapRun?> GetRunAsync(long runId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<LivemapSuiteRun>> ListSuiteRunsAsync(long checkSuiteId, CancellationToken cancellationToken);
 
     Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken);
 

@@ -10,8 +10,6 @@ public sealed partial class LivemapCheckSuiteHandler(
     ILivemapWakeStarter wakes,
     ILogger<LivemapCheckSuiteHandler> logger) : IGitHubEventHandler
 {
-    private const string BuildBranchPrefix = "livemap/build-";
-
     private const string MainBranch = "main";
 
     private const string ActionsAppSlug = "github-actions";
@@ -52,17 +50,11 @@ public sealed partial class LivemapCheckSuiteHandler(
     private static bool IsBuildRun(CheckSuiteEvent.Suite suite, long repositoryId) =>
         suite.App?.Slug == ActionsAppSlug
         && (suite.PullRequests is { Count: > 0 } pullRequests
-            ? IsBuildBranch(suite.HeadBranch) && pullRequests.All(pullRequest => IsInRepository(pullRequest, repositoryId))
+            ? LivemapBuildBranch.IsMatch(suite.HeadBranch) && pullRequests.All(pullRequest => IsInRepository(pullRequest, repositoryId))
             : suite.HeadBranch == MainBranch);
 
     private static bool IsInRepository(CheckSuiteEvent.PullRequestInfo pullRequest, long repositoryId) =>
         pullRequest is { Head.Repo: { } head, Base.Repo: { } @base } && head.Id == repositoryId && @base.Id == repositoryId;
-
-    private static bool IsBuildBranch(string? branch) =>
-        branch is not null
-        && branch.StartsWith(BuildBranchPrefix, StringComparison.Ordinal)
-        && branch.Length > BuildBranchPrefix.Length
-        && branch.AsSpan(BuildBranchPrefix.Length).IndexOfAnyExceptInRange('0', '9') < 0;
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Woke the Livemap build for check suite {SuiteId} from delivery {DeliveryId}.")]
     private static partial void LogWoken(ILogger logger, long suiteId, string deliveryId);

@@ -411,7 +411,9 @@ The Web role hears `check_suite` deliveries with the other webhook handlers and 
 or ran on a branch named `livemap/build-` followed by digits whose listed pull requests all come from and go into the fork itself. With `Livemap:Enabled` off it ignores all of them.
 
 A hit starts `LivemapWakeWorkflow` with the id `livemap-wake-<check suite id>`: one still running for the suite is kept, a finished one starts again.
-On the worker, its `LivemapWake` activity reads the build in flight and signals that build's workflow with the commit and the suite id. With no build in flight, or no workflow running for it, the wake ends.
+On the worker, its `LivemapWake` activity reads the build in flight. Then it lists the suite's runs in the fork (`actions/runs?check_suite_id=`, with the one-repository `actions: read` token the build uses to read its runs).
+A wake signals the build only for runs the fork itself dispatched or the build's own pull request ran: every run of the suite must have its head in the fork and be either a `workflow_dispatch` run or a `pull_request` run on a `livemap/build-` branch followed by digits.
+The signal carries the commit and the suite id. With no build in flight, no run for the suite, runs of any other kind, or no workflow running for the build, the wake ends. A failed lookup fails the activity, which Temporal retries.
 The build workflow takes the check suite id of the run it waits on from the run itself (`check_suite_id` of the Actions run) and reads the run again only for a signal that carries that id. A signal for any other suite, and every signal while the run has no suite id, is logged and ignored.
 A failure to start the wake fails the delivery, so the platform's sweeper redelivers it (its `redeliver` step). A webhook never starts a build workflow, and a missed wake costs nothing: the poll starts the workflow and the workflow reads its run every 15 minutes.
 

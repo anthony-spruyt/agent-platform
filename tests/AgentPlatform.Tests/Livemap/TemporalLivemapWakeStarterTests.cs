@@ -1,6 +1,7 @@
 using AgentPlatform.Host.Livemap;
 using AgentPlatform.Host.Workflows;
 using AgentPlatform.Tests.Support;
+using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Testing;
 using Temporalio.Worker;
 
@@ -68,7 +69,7 @@ public class TemporalLivemapWakeStarterTests
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<LivemapWakeWorkflow>()
-                .AddAllActivities(new LivemapWakeActivities(store, signaler)));
+                .AddAllActivities(new LivemapWakeActivities(store, signaler, new FakeLivemapGitHub(), NullLogger<LivemapWakeActivities>.Instance)));
 
         await worker.ExecuteAsync(
             async () =>
