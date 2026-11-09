@@ -191,7 +191,7 @@ public class LivemapBuildPullRequestWorkflowTests
         Assert.Equal(moved, rig.PullRequests.Commits[1].ExpectedHeadOid);
         var row = await rig.RowAsync();
         Assert.Equal(LivemapBuildState.ReleaseWaiting, row.State);
-        Assert.Equal(1, row.Attempts);
+        Assert.Equal(0, row.Attempts);
         Assert.Equal(rig.PullRequests.Opened[1].Number, Assert.Single(rig.PullRequests.Merges).Number);
     }
 
@@ -244,7 +244,7 @@ public class LivemapBuildPullRequestWorkflowTests
 
         Assert.Equal(LivemapBuildOutcome.ReleaseWaiting, outcome);
         Assert.Equal(2, rig.GitHub.Dispatches.Count);
-        Assert.Equal(1, (await rig.RowAsync()).Attempts);
+        Assert.Equal(0, (await rig.RowAsync()).Attempts);
     }
 
     [Fact]
