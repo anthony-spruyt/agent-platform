@@ -8,6 +8,8 @@ public enum LivemapBuildOutcome
     NeedsOwner,
     Parked,
     Superseded,
+    PullRequestWaiting,
+    Merged,
 }
 
 public sealed record LivemapDispatchInput(LivemapWorkflowFile Workflow, long BuildId, string ManifestGid);

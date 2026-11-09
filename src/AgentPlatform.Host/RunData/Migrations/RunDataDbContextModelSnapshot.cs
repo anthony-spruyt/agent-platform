@@ -174,6 +174,11 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("detail");
 
+                    b.Property<string>("HeadSha")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("head_sha");
+
                     b.Property<string>("ManifestGid")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -184,10 +189,14 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_retry_at");
 
+                    b.Property<int?>("PullRequestNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("pull_request_number");
+
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
                         .HasColumnName("state");
 
                     b.Property<DateTimeOffset>("SteamUpdatedAt")

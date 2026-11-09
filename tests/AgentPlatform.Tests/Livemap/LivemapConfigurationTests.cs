@@ -18,6 +18,9 @@ public class LivemapConfigurationTests
         ["Livemap:Repo"] = "octo/livemap",
         ["Livemap:PinRepo"] = "octo/cluster",
         ["Livemap:PinPath"] = "apps/livemap-pin.yaml",
+        ["Livemap:TrackingIssue"] = "12",
+        ["Livemap:RequiredChecks:0"] = "lint / MegaLinter",
+        ["Livemap:RequiredChecks:1"] = "repo / Build, test, package",
     };
 
     private static Dictionary<string, string?> WorkerSettings(Dictionary<string, string?>? extra = null)
@@ -73,6 +76,26 @@ public class LivemapConfigurationTests
         Assert.Equal("octo/cluster", options.PinRepo);
         Assert.Equal("apps/livemap-pin.yaml", options.PinPath);
         Assert.Equal(TimeSpan.FromMinutes(5), options.PollInterval);
+        Assert.Equal(12, options.TrackingIssue);
+        Assert.Equal(["lint / MegaLinter", "repo / Build, test, package"], options.RequiredChecks);
+    }
+
+    [Fact]
+    public void TheAutoMergeSwitch_IsOffUnlessTheSettingTurnsItOn()
+    {
+        using var off = Build(Enabled);
+        using var on = Build(With("Livemap:AutoMerge", "true"));
+
+        Assert.False(off.GetRequiredService<IOptions<LivemapOptions>>().Value.AutoMerge);
+        Assert.True(on.GetRequiredService<IOptions<LivemapOptions>>().Value.AutoMerge);
+    }
+
+    [Fact]
+    public void AnEnabledFeature_WithoutRequiredChecks_FailsAtStartup()
+    {
+        var settings = Enabled.Where(pair => !pair.Key.StartsWith("Livemap:RequiredChecks", StringComparison.Ordinal)).ToDictionary();
+
+        Assert.Throws<InvalidOperationException>(() => Build(settings));
     }
 
     [Theory]
@@ -91,6 +114,13 @@ public class LivemapConfigurationTests
     [InlineData("Livemap:PinPath", "dir/pin%2Fx.yaml")]
     [InlineData("Livemap:PollInterval", "00:00:30")]
     [InlineData("Livemap:PollInterval", "-00:15:00")]
+    [InlineData("Livemap:TrackingIssue", null)]
+    [InlineData("Livemap:TrackingIssue", "0")]
+    [InlineData("Livemap:TrackingIssue", "-4")]
+    [InlineData("Livemap:RequiredChecks:1", "")]
+    [InlineData("Livemap:RequiredChecks:1", "  ")]
+    [InlineData("Livemap:RequiredChecks:1", " repo / Build, test, package ")]
+    [InlineData("Livemap:RequiredChecks:1", "lint / MegaLinter")]
     public void AnEnabledFeature_WithAnInvalidSetting_FailsAtStartup(string key, string? value)
     {
         Assert.Throws<InvalidOperationException>(() => Build(With(key, value)));
@@ -128,6 +158,29 @@ public class LivemapConfigurationTests
         using var scope = provider.CreateScope();
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapBuildActivities>());
+    }
+
+    [Fact]
+    public void TheWorker_RunsThePullRequestActivities()
+    {
+        using var provider = Build();
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        foreach (var name in new[] { LivemapPullRequestActivities.PlanName, LivemapPullRequestActivities.OpenPullRequestName, LivemapPullRequestActivities.AdvanceName })
+        {
+            Assert.Contains(options.Activities, a => a.Name == name);
+        }
+    }
+
+    [Fact]
+    public void ThePullRequestActivities_CanBeBuilt_WithTheirCollaborators()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapPullRequestActivities>());
+        Assert.IsType<LivemapBuildsSchemaValidator>(scope.ServiceProvider.GetRequiredService<ILivemapBuildsSchema>());
     }
 
     [Fact]
@@ -203,6 +256,40 @@ public class LivemapConfigurationTests
         using var scope = provider.CreateScope();
 
         Assert.IsType<LivemapGitHub>(scope.ServiceProvider.GetRequiredService<ILivemapGitHub>());
+    }
+
+    [Fact]
+    public void ThePullRequestClient_TalksToTheGitHubApi_AtThePinnedVersion()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapPullRequests));
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+    }
+
+    [Fact]
+    public void ThePullRequestClient_FollowsNoRedirects()
+    {
+        using var provider = Build(Enabled);
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapPullRequests));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void ThePullRequestClient_CanBeBuilt_ByTheActivitiesThatNeedIt()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<LivemapPullRequests>(scope.ServiceProvider.GetRequiredService<ILivemapPullRequests>());
     }
 
     [Fact]

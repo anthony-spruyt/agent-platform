@@ -8,6 +8,10 @@ public enum LivemapBuildState
     NeedsOwner,
     Parked,
     Superseded,
+    PullRequestOpen,
+    PullRequestWaiting,
+    Merging,
+    Merged,
 }
 
 public enum LivemapClassification
@@ -31,6 +35,10 @@ public sealed class LivemapBuild
     public long? CompatRunId { get; set; }
 
     public string? Detail { get; set; }
+
+    public int? PullRequestNumber { get; set; }
+
+    public string? HeadSha { get; set; }
 
     public int Attempts { get; set; }
 

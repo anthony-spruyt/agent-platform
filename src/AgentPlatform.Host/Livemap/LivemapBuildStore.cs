@@ -7,6 +7,21 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
 {
     public const int MaxDetailChars = 1000;
 
+    // A parked build waits for its retry time and a waiting pull request for the switch to turn on; neither has a workflow.
+    private static readonly LivemapBuildState[] _inFlightStates = [LivemapBuildState.Detected, LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging];
+
+    private static readonly LivemapBuildState[] _pullRequestPhase = [LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging];
+
+    // A build that is merging has the merge in flight, so only a newer build waits behind it.
+    private static readonly LivemapBuildState[] _supersedable =
+    [
+        LivemapBuildState.Detected,
+        LivemapBuildState.Parked,
+        LivemapBuildState.Classified,
+        LivemapBuildState.PullRequestOpen,
+        LivemapBuildState.PullRequestWaiting,
+    ];
+
     public async Task<LivemapBuild?> FindAsync(long buildId, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -26,16 +41,150 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
         }
     }
 
-    // The build in flight is the one a workflow is working on; a parked build waits for its retry time and has no workflow.
+    // The build in flight is the one a workflow is working on.
     public async Task<LivemapBuild?> FindActiveAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         return await db.LivemapBuilds.AsNoTracking()
-            .Where(b => b.State == LivemapBuildState.Detected)
+            .Where(b => _inFlightStates.Contains(b.State))
             .OrderByDescending(b => b.BuildId)
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
     }
+
+    public async Task<bool> OpenPullRequestAsync(long buildId, int number, string headSha, bool waiting, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State != LivemapBuildState.Classified)
+                {
+                    return null;
+                }
+
+                build.PullRequestNumber = number;
+                build.HeadSha = headSha;
+                return waiting ? LivemapBuildState.PullRequestWaiting : LivemapBuildState.PullRequestOpen;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
+
+    public async Task<bool> ResumeWaitingAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(buildId, (build, _) => build.State == LivemapBuildState.PullRequestWaiting ? LivemapBuildState.PullRequestOpen : null, cancellationToken).ConfigureAwait(false) is not null;
+
+    // A merge that was begun may be begun again: the activity that merges is retried and must go on where it stopped.
+    public async Task<bool> BeginMergeAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(buildId, (build, _) => build.State is LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging ? LivemapBuildState.Merging : null, cancellationToken).ConfigureAwait(false) is not null;
+
+    public async Task<bool> MergedAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(buildId, (build, _) => build.State == LivemapBuildState.Merging ? LivemapBuildState.Merged : null, cancellationToken).ConfigureAwait(false) is not null;
+
+    // The pull request stays recorded, so the owner finds it.
+    public async Task<bool> FlagPullRequestAsync(long buildId, string detail, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (!_pullRequestPhase.Contains(build.State))
+                {
+                    return null;
+                }
+
+                build.Detail = Truncate(detail);
+                return LivemapBuildState.NeedsOwner;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
+
+    // The caller has closed the pull request; the build goes back to its check, where the base it was judged against is read afresh.
+    public async Task<LivemapBuildState?> RestartAsync(long buildId, string detail, int maxAttempts, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State is not (LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.PullRequestWaiting))
+                {
+                    return null;
+                }
+
+                build.Attempts++;
+                build.Detail = Truncate(detail);
+                if (build.Attempts >= maxAttempts)
+                {
+                    return LivemapBuildState.NeedsOwner;
+                }
+
+                build.Classification = null;
+                build.CompatRunId = null;
+                build.PullRequestNumber = null;
+                build.HeadSha = null;
+                return LivemapBuildState.Detected;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+    // Main moved on while the pull request was judged: the compat run's decision stands and the pull request is made again on the new main.
+    public async Task<LivemapBuildState?> ReopenAsync(long buildId, string detail, int maxAttempts, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State is not (LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging))
+                {
+                    return null;
+                }
+
+                build.Attempts++;
+                build.Detail = Truncate(detail);
+                if (build.Attempts >= maxAttempts)
+                {
+                    return LivemapBuildState.NeedsOwner;
+                }
+
+                build.PullRequestNumber = null;
+                build.HeadSha = null;
+                return LivemapBuildState.Classified;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<bool> HoldAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(buildId, (build, _) => build.State is LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging ? LivemapBuildState.PullRequestWaiting : null, cancellationToken).ConfigureAwait(false) is not null;
+
+    // A build that reached its classification may have a pull request and a branch in the fork, even when its row never stored the number.
+    public async Task<IReadOnlyList<LivemapBuild>> FindSupersededWithLeftoversAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.LivemapBuilds.AsNoTracking()
+            .Where(b => b.State == LivemapBuildState.Superseded && (b.PullRequestNumber != null || b.Classification != null))
+            .OrderBy(b => b.BuildId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<LivemapBuild>> FindMergingAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.LivemapBuilds.AsNoTracking()
+            .Where(b => b.State == LivemapBuildState.Merging)
+            .OrderBy(b => b.BuildId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<bool> ReleasePullRequestAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State != LivemapBuildState.Superseded || (build.PullRequestNumber is null && build.Classification is null))
+                {
+                    return null;
+                }
+
+                build.PullRequestNumber = null;
+                build.HeadSha = null;
+                build.Classification = null;
+                build.CompatRunId = null;
+                return LivemapBuildState.Superseded;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
 
     public async Task<bool> ClassifyAsync(long buildId, LivemapClassification classification, long compatRunId, CancellationToken cancellationToken) =>
         await MoveAsync(
@@ -73,7 +222,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             buildId,
             (build, now) =>
             {
-                if (build.State != LivemapBuildState.Detected)
+                if (build.State != LivemapBuildState.Detected && !_pullRequestPhase.Contains(build.State))
                 {
                     return null;
                 }
@@ -100,7 +249,12 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
                     return null;
                 }
 
-                return LivemapBuildState.Detected;
+                if (build.PullRequestNumber is not null)
+                {
+                    return LivemapBuildState.PullRequestOpen;
+                }
+
+                return build.Classification is not null ? LivemapBuildState.Classified : LivemapBuildState.Detected;
             },
             cancellationToken).ConfigureAwait(false) is not null;
 
@@ -112,7 +266,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             var now = time.GetUtcNow();
             var older = await db.LivemapBuilds
                 .Where(b => b.BuildId < buildId
-                    && (b.State == LivemapBuildState.Detected || b.State == LivemapBuildState.Parked || b.State == LivemapBuildState.Classified))
+                    && _supersedable.Contains(b.State))
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             foreach (var build in older)

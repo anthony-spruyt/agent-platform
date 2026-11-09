@@ -25,6 +25,11 @@
       allowedVersions: "/^2\\./"
     },
     {
+      description: ["JsonSchema.Net stays on 8.x, the last MIT release; 9.x ships under the Open Source Maintenance Fee terms."],
+      matchPackageNames: ["JsonSchema.Net"],
+      allowedVersions: "/^8\\./"
+    },
+    {
       description: ["The SDK floor in global.json moves together with the SDK image in the Dockerfile."],
       matchManagers: ["nuget"],
       matchFileNames: ["global.json"],

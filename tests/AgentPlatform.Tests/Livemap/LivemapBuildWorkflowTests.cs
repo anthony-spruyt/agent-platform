@@ -14,28 +14,29 @@ public class LivemapBuildWorkflowTests
     private const long ExeCapture = FakeLivemapGitHub.ExeCaptureRunId;
     private const long Compat = FakeLivemapGitHub.CompatRunId;
 
-    private static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, LivemapBuildRig rig, Func<Task<T>> body)
+    internal static async Task<T> InWorkerAsync<T>(WorkflowEnvironment env, LivemapBuildRig rig, Func<Task<T>> body, TimeProvider? time = null)
     {
         using var worker = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<LivemapBuildWorkflow>()
-                .AddAllActivities(rig.Activities));
+                .AddAllActivities(rig.Activities)
+                .AddAllActivities(rig.PullRequestActivities(time)));
         return await worker.ExecuteAsync(body, Ct);
     }
 
-    private static Task<WorkflowHandle<LivemapBuildWorkflow, LivemapBuildOutcome>> StartAsync(WorkflowEnvironment env) =>
+    internal static Task<WorkflowHandle<LivemapBuildWorkflow, LivemapBuildOutcome>> StartAsync(WorkflowEnvironment env) =>
         env.Client.StartWorkflowAsync(
             (LivemapBuildWorkflow wf) => wf.RunAsync(new LivemapBuildInput(BuildId, Gid)),
             new WorkflowOptions($"{LivemapBuildWorkflow.WorkflowId(BuildId)}-{Guid.NewGuid()}", TaskQueues.AgentPlatform));
 
-    private static Task<LivemapBuildOutcome> ResultAsync(WorkflowHandle<LivemapBuildWorkflow, LivemapBuildOutcome> handle) =>
+    internal static Task<LivemapBuildOutcome> ResultAsync(WorkflowHandle<LivemapBuildWorkflow, LivemapBuildOutcome> handle) =>
         handle.GetResultAsync(rpcOptions: new RpcOptions { CancellationToken = Ct });
 
-    private static async Task<LivemapBuildOutcome> RunToTheEndAsync(WorkflowEnvironment env, LivemapBuildRig rig) =>
+    internal static async Task<LivemapBuildOutcome> RunToTheEndAsync(WorkflowEnvironment env, LivemapBuildRig rig) =>
         await InWorkerAsync(env, rig, async () => await ResultAsync(await StartAsync(env)));
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    internal static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var giveUp = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         giveUp.CancelAfter(TimeSpan.FromSeconds(20));
@@ -48,11 +49,12 @@ public class LivemapBuildWorkflowTests
     private static async Task<LivemapBuildRig> SeededAsync()
     {
         var rig = new LivemapBuildRig();
+        rig.Config.AutoMerge = false;
         await rig.SeedAsync();
         return rig;
     }
 
-    private static void Succeed(LivemapBuildRig rig, CompatArtifact artifact)
+    internal static void Succeed(LivemapBuildRig rig, CompatArtifact artifact)
     {
         rig.GitHub.ScriptRun(ExeCapture, Finished(ExeCapture));
         rig.GitHub.ScriptRun(Compat, Finished(Compat));
@@ -60,7 +62,7 @@ public class LivemapBuildWorkflowTests
     }
 
     [Fact]
-    public async Task ABuildInFlight_IsCapturedThenChecked_ThenClassified()
+    public async Task ABuildInFlight_IsCapturedThenChecked_ThenItsPullRequestIsOpened()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = await SeededAsync();
@@ -70,16 +72,16 @@ public class LivemapBuildWorkflowTests
         {
             var handle = await StartAsync(env);
             var result = await ResultAsync(handle);
-            await HistoryStore.RecordAsync(handle, "livemap-build-classified");
+            await HistoryStore.RecordAsync(handle, "livemap-build-pr-waiting");
             return result;
         });
 
-        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.Equal(LivemapBuildOutcome.PullRequestWaiting, outcome);
         Assert.Equal(
             [(LivemapWorkflowFile.ExeCapture, BuildId, Gid), (LivemapWorkflowFile.Compat, BuildId, Gid)],
             rig.GitHub.Dispatches);
         var row = await rig.RowAsync();
-        Assert.Equal(LivemapBuildState.Classified, row.State);
+        Assert.Equal(LivemapBuildState.PullRequestWaiting, row.State);
         Assert.Equal(LivemapClassification.Known, row.Classification);
     }
 
@@ -106,11 +108,11 @@ public class LivemapBuildWorkflowTests
 
         var outcome = await RunToTheEndAsync(env, rig);
 
-        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.Equal(LivemapBuildOutcome.PullRequestWaiting, outcome);
         Assert.Equal(3, rig.GitHub.ReadsOf(ExeCapture));
     }
 
-    private static async Task<TimeSpan> ElapsedAsync(WorkflowHandle<LivemapBuildWorkflow, LivemapBuildOutcome> handle)
+    internal static async Task<TimeSpan> ElapsedAsync(WorkflowHandle<LivemapBuildWorkflow, LivemapBuildOutcome> handle)
     {
         var events = (await handle.FetchHistoryAsync()).Events.ToList();
         return events[^1].EventTime.ToDateTimeOffset() - events[0].EventTime.ToDateTimeOffset();
@@ -130,12 +132,10 @@ public class LivemapBuildWorkflowTests
             await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 1);
             await handle.SignalAsync(wf => wf.WakeAsync(new LivemapBuildWake(Sha, ExeCaptureSuiteId)));
             await WaitUntilAsync(() => rig.GitHub.ReadsOf(ExeCapture) >= 2);
-            var result = await ResultAsync(handle);
-            await HistoryStore.RecordAsync(handle, "livemap-build-woken");
-            return (result, await ElapsedAsync(handle));
+            return (await ResultAsync(handle), await ElapsedAsync(handle));
         });
 
-        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.Equal(LivemapBuildOutcome.PullRequestWaiting, outcome);
         Assert.True(elapsed < LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
@@ -158,7 +158,7 @@ public class LivemapBuildWorkflowTests
             return (await ResultAsync(handle), await ElapsedAsync(handle));
         });
 
-        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.Equal(LivemapBuildOutcome.PullRequestWaiting, outcome);
         Assert.True(elapsed >= LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
@@ -183,7 +183,7 @@ public class LivemapBuildWorkflowTests
             return (await ResultAsync(handle), await ElapsedAsync(handle));
         });
 
-        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.Equal(LivemapBuildOutcome.PullRequestWaiting, outcome);
         Assert.True(elapsed < LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
@@ -203,7 +203,7 @@ public class LivemapBuildWorkflowTests
             return (await ResultAsync(handle), await ElapsedAsync(handle));
         });
 
-        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.Equal(LivemapBuildOutcome.PullRequestWaiting, outcome);
         Assert.True(elapsed >= LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
@@ -223,7 +223,7 @@ public class LivemapBuildWorkflowTests
             return (await ResultAsync(handle), await ElapsedAsync(handle));
         });
 
-        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        Assert.Equal(LivemapBuildOutcome.PullRequestWaiting, outcome);
         Assert.True(elapsed >= LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
@@ -237,10 +237,7 @@ public class LivemapBuildWorkflowTests
         var (outcome, waited) = await InWorkerAsync(env, rig, async () =>
         {
             var handle = await StartAsync(env);
-            var result = await ResultAsync(handle);
-            await HistoryStore.RecordAsync(handle, "livemap-build-run-limit");
-            var events = (await handle.FetchHistoryAsync()).Events.ToList();
-            return (result, events[^1].EventTime.ToDateTimeOffset() - events[0].EventTime.ToDateTimeOffset());
+            return (await ResultAsync(handle), await ElapsedAsync(handle));
         });
 
         Assert.Equal(LivemapBuildOutcome.Parked, outcome);
@@ -331,10 +328,12 @@ public class LivemapBuildWorkflowTests
     }
 
     [Theory]
-    [InlineData(LivemapBuildState.Superseded)]
-    [InlineData(LivemapBuildState.Parked)]
-    [InlineData(LivemapBuildState.Classified)]
-    public async Task ABuildThatIsNotInFlight_IsLeftAlone_WithoutSpendingAnything(LivemapBuildState state)
+    [InlineData(LivemapBuildState.Superseded, LivemapBuildOutcome.Superseded)]
+    [InlineData(LivemapBuildState.Parked, LivemapBuildOutcome.Parked)]
+    [InlineData(LivemapBuildState.NeedsOwner, LivemapBuildOutcome.NeedsOwner)]
+    [InlineData(LivemapBuildState.PullRequestWaiting, LivemapBuildOutcome.PullRequestWaiting)]
+    [InlineData(LivemapBuildState.Merged, LivemapBuildOutcome.Merged)]
+    public async Task ABuildThatHasNothingLeftToDo_IsLeftAlone_WithoutSpendingAnything(LivemapBuildState state, LivemapBuildOutcome expected)
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new LivemapBuildRig();
@@ -342,8 +341,9 @@ public class LivemapBuildWorkflowTests
 
         var outcome = await RunToTheEndAsync(env, rig);
 
-        Assert.Equal(LivemapBuildOutcome.Superseded, outcome);
+        Assert.Equal(expected, outcome);
         Assert.Empty(rig.GitHub.Dispatches);
+        Assert.Empty(rig.PullRequests.Calls);
         Assert.Equal(state, (await rig.RowAsync()).State);
     }
 

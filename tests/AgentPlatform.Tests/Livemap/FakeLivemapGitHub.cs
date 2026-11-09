@@ -24,6 +24,10 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
 
     public string? BuildsReadAt { get; private set; }
 
+    public string? ForkSchema { get; set; } = BuildsSchemaFixture.Schema;
+
+    public string? SchemaReadAt { get; private set; }
+
     public Exception? DispatchFailure { get; set; }
 
     public Exception? ForkBuildsFailure { get; set; }
@@ -33,6 +37,8 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
     public Task? ReadGate { get; set; }
 
     public IReadOnlyList<LivemapSuiteRun> SuiteRuns { get; set; } = [new LivemapSuiteRun("workflow_dispatch", "main", ForkId, ForkId)];
+
+    public Dictionary<long, IReadOnlyList<LivemapSuiteRun>> SuiteRunsBySuite { get; } = [];
 
     public Exception? SuiteRunsFailure { get; set; }
 
@@ -118,7 +124,7 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
 
         return SuiteRunsFailure is not null && (FailFirstSuiteLookups == 0 || lookups <= FailFirstSuiteLookups)
             ? Task.FromException<IReadOnlyList<LivemapSuiteRun>>(SuiteRunsFailure)
-            : Task.FromResult(SuiteRuns);
+            : Task.FromResult(SuiteRunsBySuite.GetValueOrDefault(checkSuiteId) ?? SuiteRuns);
     }
 
     public Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken) =>
@@ -128,5 +134,11 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
     {
         BuildsReadAt = sha;
         return ForkBuildsFailure is null ? Task.FromResult(ForkBuilds) : Task.FromException<string?>(ForkBuildsFailure);
+    }
+
+    public Task<string?> ReadBuildsSchemaAsync(string sha, CancellationToken cancellationToken)
+    {
+        SchemaReadAt = sha;
+        return Task.FromResult(ForkSchema);
     }
 }

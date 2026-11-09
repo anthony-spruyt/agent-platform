@@ -4,13 +4,12 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using AgentPlatform.Host.GitHub;
 using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Host.Livemap;
 
-public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTokenProvider tokens, IOptions<LivemapOptions> options) : ILivemapGitHub
+public sealed class LivemapGitHub(HttpClient http, IGitHubInstallationTokenProvider tokens, IOptions<LivemapOptions> options) : ILivemapGitHub
 {
     public const int MaxArtifactBytes = 1024 * 1024;
 
@@ -19,6 +18,8 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
     private const string ArtifactName = "livemap-compat";
 
     private const string BuildsPath = "data/builds.json";
+
+    private const string BuildsSchemaPath = "data/builds.schema.json";
 
     private static readonly Dictionary<string, string> _actionsWrite = new() { ["actions"] = "write" };
     private static readonly Dictionary<string, string> _actionsRead = new() { ["actions"] = "read" };
@@ -84,7 +85,7 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
             "workflow run list",
             cancellationToken).ConfigureAwait(false);
         return list.WorkflowRuns is { } runs
-            ? [.. runs.Select(run => new LivemapSuiteRun(run.Event ?? string.Empty, run.HeadBranch, run.Repository?.Id ?? 0, run.HeadRepository?.Id ?? 0))]
+            ? [.. runs.Select(run => new LivemapSuiteRun(run.Event ?? string.Empty, run.HeadBranch, run.Repository?.Id ?? 0, run.HeadRepository?.Id ?? 0, run.Path))]
             : throw new GitHubApiException("GitHub workflow run list returned no runs array.", HttpStatusCode.OK);
     }
 
@@ -119,21 +120,25 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
         return zip is null ? null : CompatArtifactZip.Parse(zip);
     }
 
-    public async Task<string?> ReadBuildsJsonAsync(string sha, CancellationToken cancellationToken)
+    public Task<string?> ReadBuildsJsonAsync(string sha, CancellationToken cancellationToken) => ReadForkFileAsync(BuildsPath, "builds read", sha, cancellationToken);
+
+    public Task<string?> ReadBuildsSchemaAsync(string sha, CancellationToken cancellationToken) => ReadForkFileAsync(BuildsSchemaPath, "builds schema read", sha, cancellationToken);
+
+    private async Task<string?> ReadForkFileAsync(string path, string operation, string sha, CancellationToken cancellationToken)
     {
-        if (sha is null || !CommitSha().IsMatch(sha))
+        if (!LivemapCommitSha.IsMatch(sha))
         {
             throw new ArgumentException("The commit must be given as a lowercase hex sha.", nameof(sha));
         }
 
         var (owner, name) = Fork();
         var token = await tokens.GetTokenAsync($"{owner}/{name}", _contentsRead, cancellationToken).ConfigureAwait(false);
-        var request = GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}/contents/{BuildsPath}?ref={sha}", token);
+        var request = GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}/contents/{path}?ref={sha}", token);
         request.Headers.Accept.Clear();
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
-        var text = await GitHubHttp.ReadTextOrNullAsync(http, request, "builds read", CompatArtifactZip.MaxFileBytes + 1, keepTail: false, cancellationToken).ConfigureAwait(false);
+        var text = await GitHubHttp.ReadTextOrNullAsync(http, request, operation, CompatArtifactZip.MaxFileBytes + 1, keepTail: false, cancellationToken).ConfigureAwait(false);
         return text is { Length: > CompatArtifactZip.MaxFileBytes }
-            ? throw new CompatArtifactException("The builds file is over the size cap.")
+            ? throw new CompatArtifactException($"The file {path} is over the size cap.")
             : text;
     }
 
@@ -209,9 +214,6 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
 
     private (string Owner, string Name) Fork() => GitHubRepoName.Parse(options.Value.Repo, nameof(LivemapOptions.Repo));
 
-    [GeneratedRegex(@"^[0-9a-f]{40}\z")]
-    private static partial Regex CommitSha();
-
     private sealed record ArtifactListDto(List<ArtifactDto>? Artifacts);
 
     private sealed record ArtifactDto(long Id, string? Name, bool Expired, long SizeInBytes);
@@ -222,7 +224,7 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
 
     private sealed record RunListDto(List<ListedRunDto>? WorkflowRuns);
 
-    private sealed record ListedRunDto(string? Event, string? HeadBranch, RepositoryDto? Repository, RepositoryDto? HeadRepository);
+    private sealed record ListedRunDto(string? Event, string? HeadBranch, string? Path, RepositoryDto? Repository, RepositoryDto? HeadRepository);
 
     private sealed record RepositoryDto(long Id);
 }

@@ -75,7 +75,8 @@ public class LivemapWakeActivitiesTests
     [Theory]
     [InlineData(LivemapBuildState.Done)]
     [InlineData(LivemapBuildState.Parked)]
-    [InlineData(LivemapBuildState.Classified)]
+    [InlineData(LivemapBuildState.PullRequestWaiting)]
+    [InlineData(LivemapBuildState.Merged)]
     [InlineData(LivemapBuildState.NeedsOwner)]
     [InlineData(LivemapBuildState.Superseded)]
     public async Task ABuildThatIsNotInFlight_IsNotSignalled(LivemapBuildState state)
@@ -85,6 +86,19 @@ public class LivemapWakeActivitiesTests
 
         Assert.Equal(LivemapWakeOutcome.NoBuildInFlight, await rig.WakeAsync());
         Assert.Empty(rig.Signaler.Signalled);
+    }
+
+    [Theory]
+    [InlineData(LivemapBuildState.Classified)]
+    [InlineData(LivemapBuildState.PullRequestOpen)]
+    [InlineData(LivemapBuildState.Merging)]
+    public async Task ABuildWithItsPullRequestToWatch_IsSignalled(LivemapBuildState state)
+    {
+        var rig = new Rig();
+        await rig.SeedAsync(400, state);
+
+        Assert.Equal(LivemapWakeOutcome.Woken, await rig.WakeAsync());
+        Assert.Equal(400L, Assert.Single(rig.Signaler.Signalled).BuildId);
     }
 
     [Fact]

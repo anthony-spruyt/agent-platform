@@ -39,6 +39,8 @@ public class CompatClassifierTests
 
         public string? ReportText { get; set; }
 
+        public Func<string, string> EditArtifactText { get; set; } = text => text;
+
         public JsonArray ForkRows => Fork["builds"]!.AsArray();
 
         public JsonArray Rows => Artifact["builds"]!.AsArray();
@@ -46,7 +48,7 @@ public class CompatClassifierTests
         public JsonObject Row(int index) => Rows[index]!.AsObject();
 
         public CompatOutcome Run() => CompatClassifier.Classify(
-            new CompatArtifact(ReportText ?? Report.ToJsonString(), WithArtifactBuilds ? Artifact.ToJsonString() : null),
+            new CompatArtifact(ReportText ?? Report.ToJsonString(), WithArtifactBuilds ? EditArtifactText(Artifact.ToJsonString()) : null),
             WithForkBuilds ? Fork.ToJsonString() : null,
             BuildId,
             Gid);
@@ -360,5 +362,87 @@ public class CompatClassifierTests
         scenario.Row(2)["size_of_image"] = "0x03000";
 
         Assert.Equal(CompatOutcomeKind.Easy, scenario.Run().Kind);
+    }
+
+    private static Scenario Changing(bool newRow) => newRow ? Scenario.NewRow() : Scenario.Alias();
+
+    private static void MoveToTheEnd(JsonObject node, string key)
+    {
+        var value = node[key];
+        node.Remove(key);
+        node[key] = value;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnUntouchedRowWithANumberSpelledAnotherWay_IsInvalid(bool newRow)
+    {
+        var scenario = Changing(newRow);
+        scenario.EditArtifactText = text => text.Replace("\"time_date_stamp\":1000", "\"time_date_stamp\":1.0e3", StringComparison.Ordinal);
+
+        Assert.Equal(CompatOutcomeKind.Invalid, scenario.Run().Kind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnUntouchedRowWithItsKeysInAnotherOrder_IsInvalid(bool newRow)
+    {
+        var scenario = Changing(newRow);
+        MoveToTheEnd(scenario.Row(0), "label");
+
+        Assert.Equal(CompatOutcomeKind.Invalid, scenario.Run().Kind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SigsetsInAnotherOrder_AreInvalid(bool newRow)
+    {
+        var scenario = Changing(newRow);
+        MoveToTheEnd(scenario.Artifact["sigsets"]!.AsObject(), "s1");
+
+        Assert.Equal(CompatOutcomeKind.Invalid, scenario.Run().Kind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TopLevelKeysInAnotherOrder_AreInvalid(bool newRow)
+    {
+        var scenario = Changing(newRow);
+        MoveToTheEnd(scenario.Artifact, "$schema");
+
+        Assert.Equal(CompatOutcomeKind.Invalid, scenario.Run().Kind);
+    }
+
+    [Fact]
+    public void AnAliasRowWithItsKeysInAnotherOrder_IsInvalid()
+    {
+        var scenario = Scenario.Alias();
+        MoveToTheEnd(scenario.Row(1), "mining_layout");
+
+        Assert.Equal(CompatOutcomeKind.Invalid, scenario.Run().Kind);
+    }
+
+    [Fact]
+    public void AnAliasWhoseManifestMovesInTheSteamData_IsInvalid()
+    {
+        var scenario = Scenario.Alias();
+        MoveToTheEnd(scenario.Row(1)["steam"]!.AsObject(), "manifest");
+
+        Assert.Equal(CompatOutcomeKind.Invalid, scenario.Run().Kind);
+    }
+
+    [Theory]
+    [InlineData(false, CompatOutcomeKind.Known)]
+    [InlineData(true, CompatOutcomeKind.Easy)]
+    public void TheSameFileWithOtherWhitespace_IsStillWhatItWas(bool newRow, CompatOutcomeKind expected)
+    {
+        var scenario = Changing(newRow);
+        scenario.EditArtifactText = text => JsonNode.Parse(text)!.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+        Assert.Equal(expected, scenario.Run().Kind);
     }
 }

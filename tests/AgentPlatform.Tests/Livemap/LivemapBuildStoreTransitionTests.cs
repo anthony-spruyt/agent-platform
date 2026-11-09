@@ -21,6 +21,8 @@ public class LivemapBuildStoreTransitionTests
 
     public static TheoryData<LivemapBuildState> StatesOtherThanDetected => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.Detected));
 
+    public static TheoryData<LivemapBuildState> StatesWithNoWorkflowAtWork => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Detected or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)));
+
     public static TheoryData<LivemapBuildState> StatesNeitherDetectedNorParked => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Detected or LivemapBuildState.Parked)));
 
     private static LivemapBuildStore Store(InMemoryRunData data, DateTimeOffset? at = null) => new(data.Factory, new FixedTimeProvider(at ?? Now));
@@ -153,8 +155,8 @@ public class LivemapBuildStoreTransitionTests
     }
 
     [Theory]
-    [MemberData(nameof(StatesOtherThanDetected))]
-    public async Task ABuildThatIsNotDetected_CannotBeParked(LivemapBuildState state)
+    [MemberData(nameof(StatesWithNoWorkflowAtWork))]
+    public async Task ABuildWithNoWorkflowAtWork_CannotBeParked(LivemapBuildState state)
     {
         var data = await SeedAsync(state: state);
 
@@ -332,10 +334,10 @@ public class LivemapBuildStoreTransitionTests
     }
 
     [Fact]
-    public async Task WithNoDetectedBuild_NothingIsInFlight()
+    public async Task WithNoBuildAtWork_NothingIsInFlight()
     {
         var data = await SeedAsync(100, LivemapBuildState.Parked);
-        await SeedAsync(200, LivemapBuildState.Classified, data);
+        await SeedAsync(200, LivemapBuildState.NeedsOwner, data);
 
         Assert.Null(await Store(data).FindActiveAsync(Ct));
     }

@@ -21,6 +21,8 @@ public class LivemapWebRoleTests
             builder.UseSetting("Livemap:Repo", repo);
             builder.UseSetting("Livemap:PinRepo", "octo/cluster");
             builder.UseSetting("Livemap:PinPath", "apps/livemap-pin.yaml");
+            builder.UseSetting("Livemap:TrackingIssue", "12");
+            builder.UseSetting("Livemap:RequiredChecks:0", "lint / MegaLinter");
         });
 
     [Fact]

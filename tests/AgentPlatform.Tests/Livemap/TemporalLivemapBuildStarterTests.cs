@@ -54,7 +54,8 @@ public class TemporalLivemapBuildStarterTests
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<LivemapBuildWorkflow>()
-                .AddAllActivities(rig.Activities));
+                .AddAllActivities(rig.Activities)
+                .AddAllActivities(rig.PullRequestActivities()));
 
         await worker.ExecuteAsync(
             async () =>
