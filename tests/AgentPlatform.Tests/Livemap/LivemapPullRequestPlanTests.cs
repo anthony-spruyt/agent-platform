@@ -17,11 +17,17 @@ public class LivemapPullRequestPlanTests
         { LivemapBuildState.Detected, LivemapStep.Check, LivemapBuildOutcome.Classified },
         { LivemapBuildState.Classified, LivemapStep.OpenPullRequest, LivemapBuildOutcome.Classified },
         { LivemapBuildState.PullRequestWaiting, LivemapStep.Stop, LivemapBuildOutcome.PullRequestWaiting },
-        { LivemapBuildState.Merged, LivemapStep.Stop, LivemapBuildOutcome.Merged },
-        { LivemapBuildState.NeedsOwner, LivemapStep.Stop, LivemapBuildOutcome.NeedsOwner },
+        { LivemapBuildState.Merged, LivemapStep.Ship, LivemapBuildOutcome.Classified },
+        { LivemapBuildState.Released, LivemapStep.Ship, LivemapBuildOutcome.Classified },
+        { LivemapBuildState.Verified, LivemapStep.Ship, LivemapBuildOutcome.Classified },
+        { LivemapBuildState.PinOpen, LivemapStep.Ship, LivemapBuildOutcome.Classified },
+        { LivemapBuildState.Pinned, LivemapStep.Ship, LivemapBuildOutcome.Classified },
+        { LivemapBuildState.ReleaseWaiting, LivemapStep.Stop, LivemapBuildOutcome.ReleaseWaiting },
+        { LivemapBuildState.PinWaiting, LivemapStep.Stop, LivemapBuildOutcome.PinWaiting },
+        { LivemapBuildState.NeedsOwner, LivemapStep.Ship, LivemapBuildOutcome.Classified },
         { LivemapBuildState.Parked, LivemapStep.Stop, LivemapBuildOutcome.Parked },
         { LivemapBuildState.Superseded, LivemapStep.Stop, LivemapBuildOutcome.Superseded },
-        { LivemapBuildState.Done, LivemapStep.Stop, LivemapBuildOutcome.Superseded },
+        { LivemapBuildState.Done, LivemapStep.Stop, LivemapBuildOutcome.Shipped },
     };
 
     [Theory]
@@ -36,6 +42,18 @@ public class LivemapPullRequestPlanTests
         Assert.Equal(step, plan.Step);
         Assert.Equal(outcome, plan.Outcome);
         Assert.Null(plan.HeadSha);
+    }
+
+    [Fact]
+    public async Task ABuildTheOwnerWasToldAbout_IsLeftToTheOwner()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.SeedAsync(LivemapBuildState.NeedsOwner);
+        Assert.True(await rig.Store.NotifiedAsync(BuildId, Ct));
+
+        var plan = await PlanAsync(rig);
+
+        Assert.Equal(new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.NeedsOwner, null), plan);
     }
 
     [Fact]

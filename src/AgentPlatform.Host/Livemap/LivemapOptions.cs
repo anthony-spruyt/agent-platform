@@ -21,4 +21,8 @@ public sealed class LivemapOptions
     public bool AutoMerge { get; set; }
 
     public List<string> RequiredChecks { get; set; } = [];
+
+    public string ReleaseBot { get; set; } = string.Empty;
+
+    public List<string> ReleaseRequiredChecks { get; set; } = [];
 }

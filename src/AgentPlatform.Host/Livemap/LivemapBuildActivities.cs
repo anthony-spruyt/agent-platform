@@ -10,6 +10,9 @@ public enum LivemapBuildOutcome
     Superseded,
     PullRequestWaiting,
     Merged,
+    ReleaseWaiting,
+    PinWaiting,
+    Shipped,
 }
 
 public sealed record LivemapDispatchInput(LivemapWorkflowFile Workflow, long BuildId, string ManifestGid);

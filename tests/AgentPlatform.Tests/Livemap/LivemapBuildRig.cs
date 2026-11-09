@@ -114,6 +114,12 @@ internal sealed class LivemapBuildRig
 
     public FakeBuildsSchema BuildsSchema { get; } = new();
 
+    public FakeLivemapPullRequests Pin { get; } = new() { Repo = "octo/cluster", OpenedFile = "apps/livemap/pin.yaml" };
+
+    public FakeLivemapReleases Releases { get; } = new();
+
+    public FakeLivemapNotices Notices { get; } = new();
+
     public LivemapOptions Config { get; } = new()
     {
         Enabled = true,
@@ -127,6 +133,21 @@ internal sealed class LivemapBuildRig
 
     public LivemapPullRequestActivities PullRequestActivities(TimeProvider? time = null) =>
         new(Options.Create(Config), Store, PullRequests, GitHub, BuildsSchema, time ?? Time);
+
+    // The switch is off for the ship steps, so a run ends where the merge of the data pull request hands the build over.
+    public LivemapShipActivities HeldShipActivities(TimeProvider? time = null)
+    {
+        var held = Options.Create(new LivemapOptions
+        {
+            Enabled = true,
+            Repo = Config.Repo,
+            PinRepo = Pin.Repo,
+            PinPath = Pin.OpenedFile,
+            TrackingIssue = TrackingIssue,
+            AutoMerge = false,
+        });
+        return new(held, Store, PullRequests, Pin, GitHub, new LivemapReleaseVerifier(Releases, GitHub, held), Releases, Notices, time ?? Time);
+    }
 
     public static LivemapCheckRun CheckRun(string name, string status = "completed", string? conclusion = "success", string? app = "github-actions", long suite = CiSuiteId) =>
         new(name, status, conclusion, app, suite);

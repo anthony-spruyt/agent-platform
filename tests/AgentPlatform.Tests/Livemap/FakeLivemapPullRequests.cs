@@ -4,7 +4,7 @@ using AgentPlatform.Host.Livemap;
 namespace AgentPlatform.Tests.Livemap;
 
 // Models the fork well enough that a pull request the worker opens passes the gate until a test changes one fact.
-internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
+internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
 {
     public const string Fork = "octo/livemap";
     public const string AppLogin = "skynet-rw[bot]";
@@ -16,6 +16,10 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
 
     private int _nextCommit;
 
+    public string Repo { get; init; } = Fork;
+
+    public string OpenedFile { get; init; } = LivemapMergeGate.BuildsPath;
+
     public string MainHead { get; set; } = StartMain;
 
     public Dictionary<string, string> Branches { get; } = [];
@@ -24,9 +28,13 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
 
     public Dictionary<int, List<LivemapPullRequestFile>> Files { get; } = [];
 
+    public Dictionary<string, List<LivemapPullRequestFile>> CommitFiles { get; } = [];
+
     public Dictionary<string, string[]> Parents { get; } = [];
 
     public Dictionary<string, string?> Modes { get; } = [];
+
+    public Dictionary<(string Sha, string Path), string> Contents { get; } = [];
 
     public Dictionary<string, List<LivemapCheckRun>> Checks { get; } = [];
 
@@ -56,11 +64,12 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
     {
         Pulls[pull.Number] = pull;
         Files[pull.Number] = [.. files];
+        CommitFiles[pull.HeadSha] = [.. files];
     }
 
     public LivemapPullRequest Leftover(string branch)
     {
-        var pull = new LivemapPullRequest(++_nextNumber, "open", false, false, "main", Fork, branch, Fork, new string('9', 40), AppLogin, "Bot", 1);
+        var pull = new LivemapPullRequest(++_nextNumber, "open", false, false, "main", Repo, branch, Repo, new string('9', 40), AppLogin, "Bot", 1);
         Seed(pull);
         Branches[branch] = pull.HeadSha;
         return pull;
@@ -102,8 +111,8 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
         var number = ++_nextNumber;
         Opened.Add((number, branch, title, body));
         Seed(
-            new LivemapPullRequest(number, "open", false, false, "main", Fork, branch, Fork, Branches[branch], AppLogin, "Bot", 1),
-            new LivemapPullRequestFile(LivemapMergeGate.BuildsPath, "modified", null));
+            new LivemapPullRequest(number, "open", false, false, "main", Repo, branch, Repo, Branches[branch], AppLogin, "Bot", 1, title),
+            new LivemapPullRequestFile(OpenedFile, "modified", null));
         return number;
     }
 
@@ -116,7 +125,7 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
     public async Task<IReadOnlyList<LivemapPullRequest>> FindOpenByBranchAsync(string branch, CancellationToken cancellationToken)
     {
         await EnterAsync($"find:{branch}");
-        return [.. Pulls.Values.Where(p => p.State == "open" && p.HeadRef == branch)];
+        return [.. Pulls.Values.Where(p => p.State == "open" && p.HeadRef == branch).Select(p => p with { Commits = 0 })];
     }
 
     public async Task<IReadOnlyList<LivemapPullRequestFile>> ListFilesAsync(int number, CancellationToken cancellationToken)
@@ -129,6 +138,18 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
     {
         await EnterAsync($"parents:{commitSha}");
         return Parents.GetValueOrDefault(commitSha) ?? [];
+    }
+
+    public async Task<LivemapCommit> GetCommitAsync(string commitSha, CancellationToken cancellationToken)
+    {
+        await EnterAsync($"commit:{commitSha}");
+        return new LivemapCommit(Parents.GetValueOrDefault(commitSha) ?? [], CommitFiles.GetValueOrDefault(commitSha) ?? []);
+    }
+
+    public async Task<string?> ReadFileAsync(string commitSha, string path, CancellationToken cancellationToken)
+    {
+        await EnterAsync($"read:{path}@{commitSha}");
+        return Contents.GetValueOrDefault((commitSha, path));
     }
 
     public async Task<string?> GetFileModeAsync(string commitSha, string path, CancellationToken cancellationToken)

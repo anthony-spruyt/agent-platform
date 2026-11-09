@@ -23,6 +23,8 @@ public class LivemapWebRoleTests
             builder.UseSetting("Livemap:PinPath", "apps/livemap-pin.yaml");
             builder.UseSetting("Livemap:TrackingIssue", "12");
             builder.UseSetting("Livemap:RequiredChecks:0", "lint / MegaLinter");
+            builder.UseSetting("Livemap:ReleaseBot", "release-bot[bot]");
+            builder.UseSetting("Livemap:ReleaseRequiredChecks:0", "lint / MegaLinter");
         });
 
     [Fact]

@@ -33,7 +33,7 @@ public sealed class ShippedBuildsReader(IGitHubApiClient github, IOptions<Livema
         return ParseBuildIds(builds);
     }
 
-    private static HashSet<long> ParseBuildIds(string json)
+    internal static HashSet<long> ParseBuildIds(string json)
     {
         try
         {
