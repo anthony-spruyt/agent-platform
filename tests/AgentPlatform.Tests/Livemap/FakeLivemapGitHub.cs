@@ -24,6 +24,10 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
 
     public string? BuildsReadAt { get; private set; }
 
+    public string? ForkSchema { get; set; } = BuildsSchemaFixture.Schema;
+
+    public string? SchemaReadAt { get; private set; }
+
     public Exception? DispatchFailure { get; set; }
 
     public Exception? ForkBuildsFailure { get; set; }
@@ -128,5 +132,11 @@ internal sealed class FakeLivemapGitHub : ILivemapGitHub
     {
         BuildsReadAt = sha;
         return ForkBuildsFailure is null ? Task.FromResult(ForkBuilds) : Task.FromException<string?>(ForkBuildsFailure);
+    }
+
+    public Task<string?> ReadBuildsSchemaAsync(string sha, CancellationToken cancellationToken)
+    {
+        SchemaReadAt = sha;
+        return Task.FromResult(ForkSchema);
     }
 }

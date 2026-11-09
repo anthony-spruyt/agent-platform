@@ -20,6 +20,8 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
 
     private const string BuildsPath = "data/builds.json";
 
+    private const string BuildsSchemaPath = "data/builds.schema.json";
+
     private static readonly Dictionary<string, string> _actionsWrite = new() { ["actions"] = "write" };
     private static readonly Dictionary<string, string> _actionsRead = new() { ["actions"] = "read" };
     private static readonly Dictionary<string, string> _contentsRead = new() { ["contents"] = "read" };
@@ -119,7 +121,11 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
         return zip is null ? null : CompatArtifactZip.Parse(zip);
     }
 
-    public async Task<string?> ReadBuildsJsonAsync(string sha, CancellationToken cancellationToken)
+    public Task<string?> ReadBuildsJsonAsync(string sha, CancellationToken cancellationToken) => ReadForkFileAsync(BuildsPath, "builds read", sha, cancellationToken);
+
+    public Task<string?> ReadBuildsSchemaAsync(string sha, CancellationToken cancellationToken) => ReadForkFileAsync(BuildsSchemaPath, "builds schema read", sha, cancellationToken);
+
+    private async Task<string?> ReadForkFileAsync(string path, string operation, string sha, CancellationToken cancellationToken)
     {
         if (sha is null || !CommitSha().IsMatch(sha))
         {
@@ -128,12 +134,12 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
 
         var (owner, name) = Fork();
         var token = await tokens.GetTokenAsync($"{owner}/{name}", _contentsRead, cancellationToken).ConfigureAwait(false);
-        var request = GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}/contents/{BuildsPath}?ref={sha}", token);
+        var request = GitHubHttp.Request(HttpMethod.Get, $"repos/{owner}/{name}/contents/{path}?ref={sha}", token);
         request.Headers.Accept.Clear();
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
-        var text = await GitHubHttp.ReadTextOrNullAsync(http, request, "builds read", CompatArtifactZip.MaxFileBytes + 1, keepTail: false, cancellationToken).ConfigureAwait(false);
+        var text = await GitHubHttp.ReadTextOrNullAsync(http, request, operation, CompatArtifactZip.MaxFileBytes + 1, keepTail: false, cancellationToken).ConfigureAwait(false);
         return text is { Length: > CompatArtifactZip.MaxFileBytes }
-            ? throw new CompatArtifactException("The builds file is over the size cap.")
+            ? throw new CompatArtifactException($"The file {path} is over the size cap.")
             : text;
     }
 

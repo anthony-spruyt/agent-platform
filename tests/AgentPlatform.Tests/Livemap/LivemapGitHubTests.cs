@@ -468,6 +468,46 @@ public class LivemapGitHubTests
         await Assert.ThrowsAsync<CompatArtifactException>(() => client.ReadBuildsJsonAsync(Sha, Ct));
     }
 
+    [Fact]
+    public async Task ReadBuildsSchema_ReadsTheForkSchemaAtTheCommit_WithContentsReadOnly()
+    {
+        var (client, handler, tokens) = Create(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"type":"object"}""") });
+
+        var text = await client.ReadBuildsSchemaAsync(Sha, Ct);
+
+        Assert.Equal("""{"type":"object"}""", text);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal($"/repos/{Fork}/contents/data/builds.schema.json", request.Uri.AbsolutePath);
+        Assert.Contains($"ref={Sha}", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Equal(new Dictionary<string, string> { ["contents"] = "read" }, Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Fact]
+    public async Task ReadBuildsSchema_WhenTheFileIsMissing_IsNull()
+    {
+        var (client, _, _) = Create(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        Assert.Null(await client.ReadBuildsSchemaAsync(Sha, Ct));
+    }
+
+    [Fact]
+    public async Task ReadBuildsSchema_RefusesAnythingButACommitSha()
+    {
+        var (client, handler, _) = Create(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
+
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => client.ReadBuildsSchemaAsync("main", Ct));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ReadBuildsSchema_WhenTheFileIsOverTheCap_IsRefused()
+    {
+        var (client, _, _) = Create(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(new string(' ', CompatArtifactZip.MaxFileBytes + 5)) });
+
+        await Assert.ThrowsAsync<CompatArtifactException>(() => client.ReadBuildsSchemaAsync(Sha, Ct));
+    }
+
     private sealed class EndlessStream : Stream
     {
         public override bool CanRead => true;

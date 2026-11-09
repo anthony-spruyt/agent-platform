@@ -32,4 +32,6 @@ public interface ILivemapGitHub
     Task<CompatArtifact?> ReadCompatArtifactAsync(long runId, CancellationToken cancellationToken);
 
     Task<string?> ReadBuildsJsonAsync(string sha, CancellationToken cancellationToken);
+
+    Task<string?> ReadBuildsSchemaAsync(string sha, CancellationToken cancellationToken);
 }
