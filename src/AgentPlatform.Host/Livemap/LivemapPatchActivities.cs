@@ -179,12 +179,8 @@ public sealed class LivemapPatchActivities(
             : LivemapBuildOutcome.Superseded;
     }
 
-    // The agent's words are shown as a code block with its backticks swapped out, so they cannot link, mention or close the block.
-    private static string GaveUpDetail(string summary)
-    {
-        var excerpt = LivemapBuildStore.CutOnCharacter(summary.Replace('`', '\''), MaxExcerptChars);
-        return $"The agent gave up on the build. Its summary:\n\n```\n{excerpt}\n```";
-    }
+    private static string GaveUpDetail(string summary) =>
+        $"The agent gave up on the build. Its summary:\n\n{LivemapQuote.Block(summary, MaxExcerptChars)}";
 
     private static (long Id, string? Row, string? Problem) FindPreviousRow(Baseline baseline)
     {

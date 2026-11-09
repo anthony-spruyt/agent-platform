@@ -144,6 +144,17 @@ internal sealed class LivemapBuildRig
         Assert.True(await Store.BeginPatchAsync(BuildId, FakeLivemapGitHub.CompatRunId, Ct));
     }
 
+    public async Task SeedPatchedAsync(LivemapResult result, string? baseSha = null, int runs = 0)
+    {
+        await SeedPatchingAsync();
+        for (var run = 1; run <= runs; run++)
+        {
+            Assert.True(await Store.BeginAgentRunAsync(BuildId, run, Ct));
+        }
+
+        Assert.True(await Store.StorePatchAsync(BuildId, LivemapStoredPatch.Write(result), baseSha ?? FakeLivemapPullRequests.StartMain, Ct));
+    }
+
     // The switch is off for the ship steps, so a run ends where the merge of the data pull request hands the build over.
     public LivemapShipActivities HeldShipActivities(TimeProvider? time = null)
     {
