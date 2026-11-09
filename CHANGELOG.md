@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.22.0...v1.23.0) (2026-11-09)
+
+
+### Features
+
+* **livemap:** check each detected build with the fork's workflows ([#278](https://github.com/anthony-spruyt/agent-platform/issues/278)) ([d6d9f3c](https://github.com/anthony-spruyt/agent-platform/commit/d6d9f3c2329c43c914ec8bd0aa1e528b01bcdfc7))
+
 ## [1.22.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.21.0...v1.22.0) (2026-11-08)
 
 
