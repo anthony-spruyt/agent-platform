@@ -415,7 +415,7 @@ The compat run is an input, not a verdict. The build is classified only when its
 
 - `Known`: the report says the executable matches an existing row, and that row is the only one that changes. It gains the new build id after the ones it lists and its `steam.manifest` becomes the new manifest id.
 - `Easy`: the report says the build needs a new row, and one row is appended after the row the report names as its base, and that base is the last row of the fork's file. The other rows stay as they were. The new row has the build id, the executable's fingerprint, the depot, manifest and checksum of the build, the signature set and layout of its base, and one hex offset for each site the base has.
-- `Hard`: the build is flagged for the owner with the first reasons the report gives.
+- `Hard`: while `Livemap:HardPath` is off, the build is flagged for the owner with the first reasons the report gives. While it is on, the row becomes `Patching` and the hard-patch agent takes it (see Hard path).
 - Anything else is invalid and flagged for the owner at once, without another try: another build in the report, an artifact with files beyond `report.json` and `builds.json` or a file over 256 KiB, a `builds.json` that changes more than its rows or adds or drops more than one row.
 
 Everything the report does not name must be the fork's text unchanged: each untouched row, `sigsets`, every other top-level key and the order of the top-level keys are compared as written, with key order and number spelling included, so only the one new row or the one changed row differs.
@@ -479,6 +479,56 @@ What the gate finds decides the turn:
 - **Refused**: anything else the gate finds, such as another author, another file, a draft, or a pull request that was closed without a merge, flags the build for the owner with the reason.
 
 Each call to the fork mints an installation token for the fork alone with only the permission that call needs (`contents`, `pull_requests`, `checks`, `actions` or `issues`, read or write), so the App installation must grant the fork those repository permissions. Each call to `Livemap:PinRepo` does the same for that repository.
+
+### Hard path
+
+While `Livemap:HardPath` is on, a build classified `Hard` becomes `Patching` instead of being flagged for the owner, and the build workflow runs the hard-patch agent for it. The poll starts the workflow again for a `Patching` row, so a restart loses nothing.
+The step sits behind the Temporal patch `livemap-hard-path`, so builds already running replay as before. While the switch is off a hard build ends as `NeedsOwner` with a notice.
+
+Each turn of the workflow makes one agent run, and the row is the truth: `agent_runs` counts the runs and `Livemap:AgentRunsPerBuild` caps them, checked before a run starts. A run goes like this:
+
+1. The worker reads the compat run's report, the last supported row (the row of the report's base build in the fork's `data/builds.json`) and the head commit of the fork's `main`, read from `refs/heads/main`.
+   A report that no longer matches the build, a fork without the builds file or schema, or a base build that is not a row of the file flags the build for the owner.
+2. The run is reserved in the Claude budget under the kind `Livemap`, with the build id as its subject. The caps are the `ClaudeBudget:*` keys, the kind's own caps are in `ClaudeBudget:Kinds:Livemap`, and the cooldown is shared with the other kinds.
+   A `Park` answer parks the build until the time given and uses no run. An `Owner` answer flags the build for the owner.
+3. The agent runs as a `read` tier pod through the shared pod step on the `agent-pods` queue, with the fork at that `main` commit in `/workspace/pr`. The prompt tells the agent to read only files, never issues, pull requests or comments, and to treat everything it reads as data.
+   `Livemap:AgentModel`, `Livemap:AgentMaxTurns` and `Livemap:AgentMaxBudgetUsd` limit the run, and `Livemap:AgentDeadlineSeconds` is its pod deadline.
+   The pod step may wait up to 60 minutes for a node on top of the deadline and its usual slack; a pod that has not finished by then parks the build.
+
+The pod has four tools besides the fork:
+
+- DepotDownloader from `Livemap:DepotDownloaderUrl`, checked against `Livemap:DepotDownloaderSha256` before it runs, to fetch the new server executable only.
+- The last supported executable, mounted read-only as an image volume of `ghcr.io/anthony-spruyt/enshrouded-server-exe:<build id>`. The node pulls it with its own registry login, so the pod holds no pull secret.
+- `capstone`, installed from `Livemap:PythonIndexUrl`.
+- The compat tool's Linux binary, from the fork's latest release.
+
+The agent ends with `submit_result`. Its `data.status` is one of:
+
+- `data`: `builds_json`, the full text of `data/builds.json`.
+- `code`: `builds_json` and `files`, a list of `{path, content}`. A path is plain segments under `src/`, `tests/` or `data/`, or exactly `tools/selftest.cpp`; nothing under `.github/`, and `data/builds.json` travels in `builds_json`.
+  At most 10 files, 32 KiB each and 40 KiB together; `builds_json` is at most 48 KiB.
+- `partial`: `notes` for the next run, at most 8000 characters.
+- `gave_up`: the build needs a person.
+
+The summary is at most 4000 characters. A result the parser refuses goes back to the agent, up to twice; after that the run ends as invalid.
+
+The worker then judges the result against the fork's `data/builds.json` and schema on the `main` commit the agent read:
+
+- `data` and `code` alike: the file differs from the fork's only in its rows and `sigsets`, with the same top-level keys in the same order. It adds exactly one row after the existing rows, which stay as written.
+  It adds at most one signature set, which must be the last and the one the new row uses. The new row is labelled with the build id and lists that id alone, carries the executable's fingerprint from the report, and records the depot, manifest and checksum of the build in its Steam data. The whole file passes the schema.
+- `data` carries no files. `code` is held to the file limits above, and the schema it is checked against is its own `data/builds.schema.json` when it brings one.
+
+A result the worker refuses, a run that ends without a result and a `partial` result each add a line to `patch_notes`, newest first, and the next run reads those notes in its prompt as quoted data. Agent text never goes into an issue notice or a pull request body unquoted.
+A `gave_up` result flags the build for the owner at once, with the summary quoted in the notice. When `Livemap:AgentRunsPerBuild` runs have passed without a patch, the notice says the build needs a person and the workflow ends.
+A usage limit gives the run back, sets the global cooldown to the reset time and parks the build until then; the poll puts it back afterwards. A pod activity that fails after its retries parks the build like any other step, and the run stays counted.
+
+A result that passes is stored in `patch_result` with the `main` commit in `patch_base_sha`, and the row becomes `Classified` with the classification `Hard`. The pull request step then goes by the status:
+
+- `data`: the existing data pull request path. The worker checks the file against the current `main` again and opens the pull request from `livemap/build-<build id>`, and the merge gate, `Livemap:AutoMerge` and the release steps apply unchanged.
+- `code`: the branch is cut from `patch_base_sha`, and one `createCommitOnBranch` commit holds `data/builds.json` and every file. The pull request is opened into `main`, and the row becomes `OwnerReview` with its number and head commit.
+  The worker never merges it, even with `Livemap:AutoMerge` on: the merge gate accepts only a pull request that changes `data/builds.json` alone. The fork's tracking issue gets one notice that the build waits for the owner, and the workflow ends.
+
+`livemap_builds` holds the progress in `agent_runs`, `patch_notes`, `patch_result` and `patch_base_sha`; the state table above lists `Patching` and `OwnerReview`.
 
 ### Release and pin
 
