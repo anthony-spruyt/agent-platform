@@ -161,6 +161,29 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void TheWorker_RunsThePullRequestActivities()
+    {
+        using var provider = Build();
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        foreach (var name in new[] { LivemapPullRequestActivities.PlanName, LivemapPullRequestActivities.OpenPullRequestName, LivemapPullRequestActivities.AdvanceName })
+        {
+            Assert.Contains(options.Activities, a => a.Name == name);
+        }
+    }
+
+    [Fact]
+    public void ThePullRequestActivities_CanBeBuilt_WithTheirCollaborators()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapPullRequestActivities>());
+        Assert.IsType<LivemapBuildsSchemaValidator>(scope.ServiceProvider.GetRequiredService<ILivemapBuildsSchema>());
+    }
+
+    [Fact]
     public void TheWorker_RunsTheWakeWorkflowAndItsActivity()
     {
         using var provider = Build();
