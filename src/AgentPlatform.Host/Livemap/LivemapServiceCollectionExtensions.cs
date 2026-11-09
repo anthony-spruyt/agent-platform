@@ -1,5 +1,6 @@
 using AgentPlatform.Host.GitHub;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Host.Livemap;
 
@@ -39,6 +40,14 @@ public static class LivemapServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddHttpClient<ILivemapPullRequests, LivemapPullRequests>(GitHubHttp.Configure)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddHttpClient(nameof(ILivemapPinPullRequests), GitHubHttp.Configure)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .AddTypedClient<ILivemapPinPullRequests>((http, provider) => new LivemapPullRequests(
+                http,
+                provider.GetRequiredService<IGitHubInstallationTokenProvider>(),
+                provider.GetRequiredService<IGitHubAppJwtSource>(),
+                provider.GetRequiredService<IOptions<LivemapOptions>>(),
+                LivemapRepoKind.Pin));
         services.AddSingleton<LivemapBuildStore>();
         services.TryAddSingleton<ILivemapBuildsSchema, LivemapBuildsSchemaValidator>();
         services.TryAddSingleton<ILivemapBuildStarter, TemporalLivemapBuildStarter>();

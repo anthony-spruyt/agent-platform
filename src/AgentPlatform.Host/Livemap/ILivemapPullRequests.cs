@@ -12,9 +12,10 @@ public sealed record LivemapPullRequest(
     string HeadSha,
     string AuthorLogin,
     string AuthorType,
-    int Commits);
+    int Commits,
+    string Title = "");
 
-public sealed record LivemapPullRequestFile(string Filename, string Status, string? PreviousFilename);
+public sealed record LivemapPullRequestFile(string Filename, string Status, string? PreviousFilename, string? Patch = null);
 
 public sealed record LivemapCheckRun(string Name, string Status, string? Conclusion, string? AppSlug, long CheckSuiteId);
 
@@ -45,6 +46,8 @@ public interface ILivemapPullRequests
 
     Task<IReadOnlyList<string>> GetParentsAsync(string commitSha, CancellationToken cancellationToken);
 
+    Task<string?> ReadFileAsync(string commitSha, string path, CancellationToken cancellationToken);
+
     Task<string?> GetFileModeAsync(string commitSha, string path, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<LivemapCheckRun>> ListCheckRunsAsync(string sha, CancellationToken cancellationToken);
@@ -57,3 +60,6 @@ public interface ILivemapPullRequests
 
     Task<string> GetAppLoginAsync(CancellationToken cancellationToken);
 }
+
+// The same client pointed at the pin repository: a separate type so the two can be injected side by side.
+public interface ILivemapPinPullRequests : ILivemapPullRequests;

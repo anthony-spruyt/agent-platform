@@ -16,7 +16,7 @@ public class LivemapPullRequestsTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private sealed class RecordingTokens : IGitHubInstallationTokenProvider
+    internal sealed class RecordingTokens : IGitHubInstallationTokenProvider
     {
         public List<(string Repo, Dictionary<string, string> Permissions)> Minted { get; } = [];
 
@@ -27,7 +27,7 @@ public class LivemapPullRequestsTests
         }
     }
 
-    private sealed class FixedJwt : IGitHubAppJwtSource
+    internal sealed class FixedJwt : IGitHubAppJwtSource
     {
         public string CreateJwt() => "app.jwt.value";
     }

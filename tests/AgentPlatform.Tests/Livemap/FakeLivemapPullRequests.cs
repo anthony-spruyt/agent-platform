@@ -28,6 +28,8 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
 
     public Dictionary<string, string?> Modes { get; } = [];
 
+    public Dictionary<(string Sha, string Path), string> Contents { get; } = [];
+
     public Dictionary<string, List<LivemapCheckRun>> Checks { get; } = [];
 
     public List<(string Branch, string ExpectedHeadOid, string Headline, string Path, string Content, string Oid)> Commits { get; } = [];
@@ -129,6 +131,12 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
     {
         await EnterAsync($"parents:{commitSha}");
         return Parents.GetValueOrDefault(commitSha) ?? [];
+    }
+
+    public async Task<string?> ReadFileAsync(string commitSha, string path, CancellationToken cancellationToken)
+    {
+        await EnterAsync($"read:{path}@{commitSha}");
+        return Contents.GetValueOrDefault((commitSha, path));
     }
 
     public async Task<string?> GetFileModeAsync(string commitSha, string path, CancellationToken cancellationToken)
