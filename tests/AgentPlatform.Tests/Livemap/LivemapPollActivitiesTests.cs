@@ -80,14 +80,20 @@ public class LivemapPollActivitiesTests
         {
             Data = InMemoryRunData.Create();
             Store = new LivemapBuildStore(Data.Factory, new FixedTimeProvider(Now));
+            Config = new LivemapOptions { Enabled = enabled };
             Activities = new LivemapPollActivities(
-                Options.Create(new LivemapOptions { Enabled = enabled }),
+                Options.Create(Config),
                 Steam,
                 Shipped,
                 Store,
                 Starter,
+                PullRequests,
                 NullLogger<LivemapPollActivities>.Instance);
         }
+
+        public LivemapOptions Config { get; }
+
+        public FakeLivemapPullRequests PullRequests { get; } = new();
 
         public FakeStarter Starter { get; } = new();
 
@@ -235,9 +241,10 @@ public class LivemapPollActivitiesTests
 
     [Theory]
     [InlineData(LivemapBuildState.Done)]
-    [InlineData(LivemapBuildState.Classified)]
     [InlineData(LivemapBuildState.NeedsOwner)]
     [InlineData(LivemapBuildState.Superseded)]
+    [InlineData(LivemapBuildState.Merged)]
+    [InlineData(LivemapBuildState.PullRequestWaiting)]
     public async Task ABuildThatIsNotInFlight_IsNotStarted(LivemapBuildState state)
     {
         var rig = new Rig();
@@ -247,6 +254,121 @@ public class LivemapPollActivitiesTests
 
         Assert.Empty(rig.Starter.Started);
         Assert.Equal(state, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Theory]
+    [InlineData(LivemapBuildState.Classified)]
+    [InlineData(LivemapBuildState.PullRequestOpen)]
+    [InlineData(LivemapBuildState.Merging)]
+    public async Task ABuildWithItsPullRequestStillToDo_IsStartedAgainByTheNextPoll(LivemapBuildState state)
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, state, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+        Assert.Equal(state, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task ABuildWaitingOnItsPullRequest_IsResumedAndStarted_OnceAutoMergeIsOn()
+    {
+        var rig = new Rig();
+        rig.Config.AutoMerge = true;
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.PullRequestWaiting, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+        Assert.Equal(LivemapBuildState.PullRequestOpen, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task AParkedBuildWithAPullRequest_IsResumedToThePullRequest_AndStarted()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.Classified, Ct);
+        Assert.True(await rig.Store.OpenPullRequestAsync(26430253, 7, new string('a', 40), waiting: false, Ct));
+        await rig.Store.ParkAsync(26430253, "busy", 3, TimeSpan.Zero, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+        Assert.Equal(LivemapBuildState.PullRequestOpen, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    private static async Task WithPullRequestAsync(Rig rig, long buildId, int number, bool waiting)
+    {
+        await rig.Store.RecordAsync(buildId, Gid, SteamUpdated, LivemapBuildState.Classified, Ct);
+        Assert.True(await rig.Store.OpenPullRequestAsync(buildId, number, new string('a', 40), waiting, Ct));
+        rig.PullRequests.Seed(new LivemapPullRequest(number, "open", false, false, "main", FakeLivemapPullRequests.Fork, LivemapBuildBranch.For(buildId), FakeLivemapPullRequests.Fork, new string('a', 40), FakeLivemapPullRequests.AppLogin, "Bot", 1));
+        rig.PullRequests.Branches[LivemapBuildBranch.For(buildId)] = new string('a', 40);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ABuildAnotherOneReplaces_LosesItsPullRequestAndBranch(bool waiting)
+    {
+        var rig = new Rig();
+        await WithPullRequestAsync(rig, 100, 7, waiting);
+
+        await rig.PollAsync();
+
+        Assert.Equal([7], rig.PullRequests.Closed);
+        Assert.Equal([LivemapBuildBranch.For(100)], rig.PullRequests.Deleted);
+        var row = (await rig.Store.FindAsync(100, Ct))!;
+        Assert.Equal(LivemapBuildState.Superseded, row.State);
+        Assert.Null(row.PullRequestNumber);
+        Assert.Null(row.HeadSha);
+    }
+
+    [Fact]
+    public async Task ABuildAnotherOneReplaces_IsClosedOnce_NoMatterHowOftenThePollRuns()
+    {
+        var rig = new Rig();
+        await WithPullRequestAsync(rig, 100, 7, waiting: false);
+
+        await rig.PollAsync();
+        await rig.PollAsync();
+
+        Assert.Equal([7], rig.PullRequests.Closed);
+        Assert.Single(rig.PullRequests.Deleted);
+    }
+
+    [Fact]
+    public async Task OlderBuildsWithoutAPullRequest_CostNoCallToTheFork()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(100, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+        await rig.Store.RecordAsync(200, Gid, SteamUpdated, LivemapBuildState.Parked, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Empty(rig.PullRequests.Calls);
+    }
+
+    [Fact]
+    public async Task WhenAReplacedPullRequestCannotBeClosed_TheNewBuildIsStartedAnyway_AndTheNextPollTriesAgain()
+    {
+        var rig = new Rig();
+        await WithPullRequestAsync(rig, 100, 7, waiting: false);
+        var failing = true;
+        rig.PullRequests.Hook = call => failing && call.StartsWith("close:", StringComparison.Ordinal)
+            ? Task.FromException(new InvalidOperationException("GitHub is down"))
+            : Task.CompletedTask;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(rig.PollAsync);
+
+        Assert.Equal(26430253, Assert.Single(rig.Starter.Started).BuildId);
+        Assert.NotNull((await rig.Store.FindAsync(100, Ct))!.PullRequestNumber);
+
+        failing = false;
+        await rig.PollAsync();
+
+        Assert.Equal([7], rig.PullRequests.Closed);
+        Assert.Null((await rig.Store.FindAsync(100, Ct))!.PullRequestNumber);
     }
 
     [Fact]

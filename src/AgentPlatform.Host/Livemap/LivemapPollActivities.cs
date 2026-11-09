@@ -20,6 +20,7 @@ public sealed partial class LivemapPollActivities(
     IShippedBuilds shipped,
     LivemapBuildStore builds,
     ILivemapBuildStarter starter,
+    ILivemapPullRequests pullRequests,
     ILogger<LivemapPollActivities> logger)
 {
     public const string PollName = "LivemapPoll";
@@ -45,16 +46,37 @@ public sealed partial class LivemapPollActivities(
         }
 
         await builds.SupersedeOlderAsync(current.BuildId, cancellationToken).ConfigureAwait(false);
-        var state = row.State == LivemapBuildState.Parked && await builds.ResumeAsync(row.BuildId, cancellationToken).ConfigureAwait(false)
-            ? LivemapBuildState.Detected
-            : row.State;
-        if (state == LivemapBuildState.Detected)
+        var resumed = await ResumeAsync(row, cancellationToken).ConfigureAwait(false);
+        if (resumed || row.State is LivemapBuildState.Detected or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)
         {
             await starter.StartAsync(row.BuildId, row.ManifestGid, cancellationToken).ConfigureAwait(false);
         }
 
+        await ReleaseReplacedPullRequestsAsync(cancellationToken).ConfigureAwait(false);
         return new LivemapPollResult(outcome, current.BuildId);
     }
+
+    private Task<bool> ResumeAsync(LivemapBuild row, CancellationToken cancellationToken) => row.State switch
+    {
+        LivemapBuildState.Parked => builds.ResumeAsync(row.BuildId, cancellationToken),
+        LivemapBuildState.PullRequestWaiting when options.Value.AutoMerge => builds.ResumeWaitingAsync(row.BuildId, cancellationToken),
+        _ => Task.FromResult(false),
+    };
+
+    // Last, so a fork that is slow to answer never holds up the newest build; the next poll repeats what failed.
+    private async Task ReleaseReplacedPullRequestsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var replaced in await builds.FindSupersededWithPullRequestAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await pullRequests.ClosePullRequestAsync(replaced.PullRequestNumber!.Value, cancellationToken).ConfigureAwait(false);
+            await pullRequests.DeleteBranchAsync(LivemapBuildBranch.For(replaced.BuildId), cancellationToken).ConfigureAwait(false);
+            await builds.ReleasePullRequestAsync(replaced.BuildId, cancellationToken).ConfigureAwait(false);
+            LogReleased(logger, replaced.PullRequestNumber.Value, replaced.BuildId);
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Closed pull request {Number} of the replaced Enshrouded server build {BuildId} and deleted its branch.")]
+    private static partial void LogReleased(ILogger logger, int number, long buildId);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Recorded Enshrouded server build {BuildId}; already covered by the pinned release: {Covered}.")]
     private static partial void LogRecorded(ILogger logger, long buildId, bool covered);
