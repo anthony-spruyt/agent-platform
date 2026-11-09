@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using AgentPlatform.Host.Livemap;
 using AgentPlatform.Tests.Support;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Temporalio.Testing;
 
 namespace AgentPlatform.Tests.Livemap;
@@ -27,11 +28,17 @@ internal sealed class LivemapBuildRig
         }
         """;
 
+    public static readonly string[] RequiredChecks = ["lint / MegaLinter", "repo / Build, test, package"];
+
+    public const int TrackingIssue = 12;
+
     public static readonly DateTimeOffset Now = new(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
 
     public static readonly DateTimeOffset SteamUpdated = new(2026, 11, 9, 9, 0, 0, TimeSpan.Zero);
 
     public static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    public const long CiSuiteId = 8100;
 
     public const long ExeCaptureSuiteId = 8001;
     public const long CompatSuiteId = 8002;
@@ -89,7 +96,11 @@ internal sealed class LivemapBuildRig
         Store = new LivemapBuildStore(Data.Factory, new FixedTimeProvider(Now));
         Activities = new LivemapBuildActivities(GitHub, Store);
         GitHub.ForkBuilds = ForkBuilds;
+        GitHub.SuiteRunsBySuite[CiSuiteId] = [CiRun()];
     }
+
+    public static LivemapSuiteRun CiRun(string? path = LivemapSuiteRun.CiWorkflowPath, string runEvent = "pull_request", string? branch = null, long headRepositoryId = FakeLivemapGitHub.ForkId) =>
+        new(runEvent, branch ?? LivemapBuildBranch.For(BuildId), FakeLivemapGitHub.ForkId, headRepositoryId, path);
 
     public InMemoryRunData Data { get; }
 
@@ -98,6 +109,45 @@ internal sealed class LivemapBuildRig
     public FakeLivemapGitHub GitHub { get; } = new();
 
     public LivemapBuildActivities Activities { get; }
+
+    public FakeLivemapPullRequests PullRequests { get; } = new();
+
+    public FakeBuildsSchema BuildsSchema { get; } = new();
+
+    public LivemapOptions Config { get; } = new()
+    {
+        Enabled = true,
+        Repo = FakeLivemapPullRequests.Fork,
+        TrackingIssue = TrackingIssue,
+        AutoMerge = true,
+        RequiredChecks = [.. RequiredChecks],
+    };
+
+    public InstantTimeProvider Time { get; } = new(Now);
+
+    public LivemapPullRequestActivities PullRequestActivities(TimeProvider? time = null) =>
+        new(Options.Create(Config), Store, PullRequests, GitHub, BuildsSchema, time ?? Time);
+
+    public static LivemapCheckRun CheckRun(string name, string status = "completed", string? conclusion = "success", string? app = "github-actions", long suite = CiSuiteId) =>
+        new(name, status, conclusion, app, suite);
+
+    public static List<LivemapCheckRun> GreenChecks() => [.. RequiredChecks.Select(name => CheckRun(name))];
+
+    public async Task SeedClassifiedAsync(LivemapClassification classification = LivemapClassification.Known)
+    {
+        await SeedAsync();
+        GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = classification == LivemapClassification.Known ? KnownArtifact() : EasyArtifact();
+        Assert.True(await Store.ClassifyAsync(BuildId, classification, FakeLivemapGitHub.CompatRunId, Ct));
+    }
+
+    public async Task<(int Number, string Head)> OpenedAsync(LivemapClassification classification = LivemapClassification.Known, TimeProvider? time = null)
+    {
+        await SeedClassifiedAsync(classification);
+        await new ActivityEnvironment().RunAsync(() => PullRequestActivities(time).OpenPullRequestAsync(BuildId));
+        var row = await RowAsync();
+        PullRequests.Checks[row.HeadSha!] = GreenChecks();
+        return (row.PullRequestNumber!.Value, row.HeadSha!);
+    }
 
     public Task<LivemapBuild> SeedAsync(LivemapBuildState state = LivemapBuildState.Detected) =>
         Store.RecordAsync(BuildId, Gid, SteamUpdated, state, Ct);

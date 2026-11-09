@@ -15,4 +15,10 @@ public sealed class LivemapOptions
     public string PinPath { get; set; } = string.Empty;
 
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromMinutes(15);
+
+    public int TrackingIssue { get; set; }
+
+    public bool AutoMerge { get; set; }
+
+    public List<string> RequiredChecks { get; set; } = [];
 }

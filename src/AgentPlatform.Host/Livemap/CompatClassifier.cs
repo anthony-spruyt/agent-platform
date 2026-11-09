@@ -67,9 +67,13 @@ public static class CompatClassifier
     private static JsonArray? Rows(JsonObject document) =>
         document["builds"] is JsonArray rows && rows.All(row => row is JsonObject) ? rows : null;
 
+    // JsonNode.DeepEquals ignores key order and number spelling, so anything the fork's file must keep is compared as text.
+    private static bool SameText(JsonNode? first, JsonNode? second) =>
+        string.Equals(first?.ToJsonString(), second?.ToJsonString(), StringComparison.Ordinal);
+
     private static bool OnlyRowsDiffer(JsonObject fork, JsonObject proposed) =>
-        fork.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(proposed.Select(p => p.Key).Order(StringComparer.Ordinal), StringComparer.Ordinal)
-        && fork.All(p => p.Key == "builds" || JsonNode.DeepEquals(p.Value, proposed[p.Key]));
+        fork.Select(p => p.Key).SequenceEqual(proposed.Select(p => p.Key), StringComparer.Ordinal)
+        && fork.All(p => p.Key == "builds" || SameText(p.Value, proposed[p.Key]));
 
     private static List<string>? Ids(JsonObject row) =>
         row["buildids"] is JsonArray ids && ids.All(id => CompatReport.Text(id) is not null) ? [.. ids.Select(id => CompatReport.Text(id)!)] : null;
@@ -104,7 +108,7 @@ public static class CompatClassifier
                 return CompatOutcome.Invalid("The report does not describe a known build, but the builds file only gains an alias.");
             }
 
-            var changed = Enumerable.Range(0, forkRows.Count).Where(i => !JsonNode.DeepEquals(forkRows[i], proposedRows[i])).ToList();
+            var changed = Enumerable.Range(0, forkRows.Count).Where(i => !SameText(forkRows[i], proposedRows[i])).ToList();
             if (changed.Count != 1)
             {
                 return CompatOutcome.Invalid($"A known build changes one row, but {changed.Count} rows changed.");
@@ -123,7 +127,7 @@ public static class CompatClassifier
                 return CompatOutcome.Invalid("The report does not describe an easy build, but the builds file gains a row.");
             }
 
-            var alteredRows = Enumerable.Range(0, forkRows.Count).Count(i => !JsonNode.DeepEquals(forkRows[i], proposedRows[i]));
+            var alteredRows = Enumerable.Range(0, forkRows.Count).Count(i => !SameText(forkRows[i], proposedRows[i]));
             var models = forkRows.Select(row => row!.AsObject()).Where(row => Label(row) == report.BaseLabel).ToList();
             if (alteredRows > 0 || models.Count != 1 || !ReferenceEquals(models[0], forkRows[^1]))
             {
@@ -144,7 +148,7 @@ public static class CompatClassifier
 
             var idsBefore = Ids(before);
             var idsAfter = Ids(after);
-            if (!JsonNode.DeepEquals(WithoutIdsAndManifest(before), WithoutIdsAndManifest(after)))
+            if (!SameText(WithNewIdsAndManifest(before, after), after))
             {
                 return "The alias changes more than the build ids and the manifest.";
             }
@@ -199,11 +203,11 @@ public static class CompatClassifier
                 : "The new row does not hold one hex offset for each site the row it is based on has.";
         }
 
-        private static JsonObject WithoutIdsAndManifest(JsonObject row)
+        private static JsonObject WithNewIdsAndManifest(JsonObject before, JsonObject after)
         {
-            var copy = row.DeepClone().AsObject();
-            copy.Remove("buildids");
-            copy["steam"]!.AsObject().Remove("manifest");
+            var copy = before.DeepClone().AsObject();
+            copy["buildids"] = after["buildids"]?.DeepClone();
+            copy["steam"]!.AsObject()["manifest"] = after["steam"]!["manifest"]?.DeepClone();
             return copy;
         }
     }

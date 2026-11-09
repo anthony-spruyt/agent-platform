@@ -111,9 +111,10 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             build.HasKey(b => b.BuildId);
             build.Property(b => b.BuildId).ValueGeneratedNever();
             build.Property(b => b.ManifestGid).HasMaxLength(20);
-            build.Property(b => b.State).HasConversion<string>().HasMaxLength(16);
+            build.Property(b => b.State).HasConversion<string>().HasMaxLength(24);
             build.Property(b => b.Classification).HasConversion<string>().HasMaxLength(8);
             build.Property(b => b.Detail).HasMaxLength(LivemapBuildStore.MaxDetailChars);
+            build.Property(b => b.HeadSha).HasMaxLength(40);
             build.Property(b => b.Version).IsConcurrencyToken();
         });
 
