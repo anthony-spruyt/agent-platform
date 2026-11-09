@@ -134,6 +134,16 @@ internal sealed class LivemapBuildRig
     public LivemapPullRequestActivities PullRequestActivities(TimeProvider? time = null) =>
         new(Options.Create(Config), Store, PullRequests, GitHub, BuildsSchema, time ?? Time);
 
+    public LivemapPatchActivities PatchActivities() =>
+        new(Options.Create(Config), Store, PullRequests, GitHub, new LivemapPatchValidator(BuildsSchema));
+
+    public async Task SeedPatchingAsync()
+    {
+        await SeedAsync();
+        GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = HardArtifact();
+        Assert.True(await Store.BeginPatchAsync(BuildId, FakeLivemapGitHub.CompatRunId, Ct));
+    }
+
     // The switch is off for the ship steps, so a run ends where the merge of the data pull request hands the build over.
     public LivemapShipActivities HeldShipActivities(TimeProvider? time = null)
     {
