@@ -20,7 +20,6 @@ public static class LivemapNotice
         }
 
         var text = new StringBuilder();
-        text.Append(Marker(build.BuildId)).Append('\n');
         text.Append(CultureInfo.InvariantCulture, $"**Livemap build {build.BuildId}: {(shipped ? "shipped" : "needs a person")}**\n\n");
         text.Append(Result(build, shipped)).Append("\n\n");
 

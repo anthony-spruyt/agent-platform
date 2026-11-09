@@ -25,11 +25,11 @@ public class LivemapNoticeTests
     };
 
     [Fact]
-    public void TheMarker_NamesTheBuild_AndStartsTheNotice()
+    public void TheMarker_NamesTheBuild_AndIsLeftToTheClientThatPostsTheNotice()
     {
         var text = LivemapNotice.Compose(Shipped(), Fork, PinRepo);
 
-        Assert.StartsWith(LivemapNotice.Marker(777) + "\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("livemap-build", text, StringComparison.Ordinal);
         Assert.NotEqual(LivemapNotice.Marker(777), LivemapNotice.Marker(7770));
     }
 
