@@ -21,8 +21,6 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
 {
     private const string MainBranch = "main";
 
-    private const string ReleaseBranch = "release-please--branches--main";
-
     private const int MaxFileChars = 64 * 1024;
 
     private const int PageSize = 100;
@@ -152,7 +150,7 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
     // Only the repository's own branch counts: a pull request from another repository under the same owner is not ours to touch.
     public async Task<IReadOnlyList<LivemapPullRequest>> FindOpenByBranchAsync(string branch, CancellationToken cancellationToken)
     {
-        if (kind != LivemapRepoKind.Fork || branch != ReleaseBranch)
+        if (kind != LivemapRepoKind.Fork || branch != LivemapReleaseGate.Branch)
         {
             RequireBranch(branch);
         }
