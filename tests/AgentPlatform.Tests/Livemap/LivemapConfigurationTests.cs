@@ -346,6 +346,33 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void TheNoticeClient_TalksToTheGitHubApi_AtThePinnedVersion_AndFollowsNoRedirects()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapNotices));
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapNotices));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void TheNoticeClientAndTheReleaseVerifier_CanBeBuilt_ByTheActivitiesThatNeedThem()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<LivemapNotices>(scope.ServiceProvider.GetRequiredService<ILivemapNotices>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapReleaseVerifier>());
+    }
+
+    [Fact]
     public void ThePinPullRequestClient_TalksToTheGitHubApi_AtThePinnedVersion()
     {
         using var provider = Build(Enabled);
