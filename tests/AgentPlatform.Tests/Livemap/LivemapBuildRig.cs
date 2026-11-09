@@ -94,7 +94,7 @@ internal sealed class LivemapBuildRig
     {
         Data = InMemoryRunData.Create();
         Store = new LivemapBuildStore(Data.Factory, new FixedTimeProvider(Now));
-        Activities = new LivemapBuildActivities(GitHub, Store);
+        Activities = new LivemapBuildActivities(Options.Create(Config), GitHub, Store);
         GitHub.ForkBuilds = ForkBuilds;
         GitHub.SuiteRunsBySuite[CiSuiteId] = [CiRun()];
     }
