@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AgentPlatform.Host.Livemap;
 
 namespace AgentPlatform.Tests.Livemap;
@@ -39,7 +40,9 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
 
     public List<string> Deleted { get; } = [];
 
-    public List<string> CheckRunReads { get; } = [];
+    public ConcurrentQueue<string> CheckRunReads { get; } = [];
+
+    public List<LivemapCheckRun>? DefaultChecks { get; set; }
 
     public LivemapMergeResult MergeResult { get; set; } = LivemapMergeResult.Merged;
 
@@ -135,8 +138,8 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
     public async Task<IReadOnlyList<LivemapCheckRun>> ListCheckRunsAsync(string sha, CancellationToken cancellationToken)
     {
         await EnterAsync($"checks:{sha}");
-        CheckRunReads.Add(sha);
-        return Checks.GetValueOrDefault(sha) ?? [];
+        CheckRunReads.Enqueue(sha);
+        return Checks.GetValueOrDefault(sha) ?? DefaultChecks ?? [];
     }
 
     public async Task<LivemapMergeResult> MergeAsync(int number, string sha, string title, CancellationToken cancellationToken)
