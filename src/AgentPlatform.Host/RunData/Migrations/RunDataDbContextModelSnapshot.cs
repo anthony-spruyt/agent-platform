@@ -185,13 +185,52 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("manifest_gid");
 
+                    b.Property<DateTimeOffset?>("MergedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("merged_at");
+
                     b.Property<DateTimeOffset?>("NextRetryAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_retry_at");
 
+                    b.Property<DateTimeOffset?>("NotifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("notified_at");
+
+                    b.Property<int>("PinAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("pin_attempts");
+
+                    b.Property<string>("PinHeadSha")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("pin_head_sha");
+
+                    b.Property<int?>("PinPullRequestNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("pin_pull_request_number");
+
+                    b.Property<DateTimeOffset?>("PinnedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("pinned_at");
+
                     b.Property<int?>("PullRequestNumber")
                         .HasColumnType("integer")
                         .HasColumnName("pull_request_number");
+
+                    b.Property<string>("ReleaseSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("release_sha256");
+
+                    b.Property<string>("ReleaseTag")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("release_tag");
+
+                    b.Property<DateTimeOffset?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("released_at");
 
                     b.Property<string>("State")
                         .IsRequired()

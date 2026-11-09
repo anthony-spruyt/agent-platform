@@ -12,6 +12,12 @@ public enum LivemapBuildState
     PullRequestWaiting,
     Merging,
     Merged,
+    ReleaseWaiting,
+    Released,
+    Verified,
+    PinOpen,
+    PinWaiting,
+    Pinned,
 }
 
 public enum LivemapClassification
@@ -39,6 +45,24 @@ public sealed class LivemapBuild
     public int? PullRequestNumber { get; set; }
 
     public string? HeadSha { get; set; }
+
+    public string? ReleaseTag { get; set; }
+
+    public string? ReleaseSha256 { get; set; }
+
+    public int? PinPullRequestNumber { get; set; }
+
+    public string? PinHeadSha { get; set; }
+
+    public int PinAttempts { get; set; }
+
+    public DateTimeOffset? MergedAt { get; set; }
+
+    public DateTimeOffset? ReleasedAt { get; set; }
+
+    public DateTimeOffset? PinnedAt { get; set; }
+
+    public DateTimeOffset? NotifiedAt { get; set; }
 
     public int Attempts { get; set; }
 
