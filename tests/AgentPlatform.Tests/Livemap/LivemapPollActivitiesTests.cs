@@ -241,10 +241,10 @@ public class LivemapPollActivitiesTests
 
     [Theory]
     [InlineData(LivemapBuildState.Done)]
-    [InlineData(LivemapBuildState.NeedsOwner)]
     [InlineData(LivemapBuildState.Superseded)]
-    [InlineData(LivemapBuildState.Merged)]
     [InlineData(LivemapBuildState.PullRequestWaiting)]
+    [InlineData(LivemapBuildState.ReleaseWaiting)]
+    [InlineData(LivemapBuildState.PinWaiting)]
     public async Task ABuildThatIsNotInFlight_IsNotStarted(LivemapBuildState state)
     {
         var rig = new Rig();
@@ -424,6 +424,93 @@ public class LivemapPollActivitiesTests
         Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
     }
 
+    [Theory]
+    [InlineData(LivemapBuildState.Merged)]
+    [InlineData(LivemapBuildState.Released)]
+    [InlineData(LivemapBuildState.Verified)]
+    [InlineData(LivemapBuildState.PinOpen)]
+    [InlineData(LivemapBuildState.Pinned)]
+    public async Task TheCurrentBuildAtAShipStep_IsStartedOnce(LivemapBuildState state)
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, state, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+        Assert.Equal(state, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task OlderBuildsAtAShipStep_AreStartedAgainByEveryPoll_UntilTheyFinish()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(100, "g100", SteamUpdated, LivemapBuildState.Released, Ct);
+        await rig.Store.RecordAsync(200, "g200", SteamUpdated, LivemapBuildState.PinOpen, Ct);
+
+        await rig.PollAsync();
+        await rig.PollAsync();
+
+        Assert.Equal(
+            [(26430253L, Gid), (100L, "g100"), (200L, "g200"), (26430253L, Gid), (100L, "g100"), (200L, "g200")],
+            rig.Starter.Started);
+    }
+
+    [Fact]
+    public async Task ABuildThatNeedsTheOwner_IsStartedAgainUntilTheOwnerWasTold_AndNotAfter()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(100, "g100", SteamUpdated, LivemapBuildState.NeedsOwner, Ct);
+        await rig.Store.RecordAsync(200, "g200", SteamUpdated, LivemapBuildState.NeedsOwner, Ct);
+        Assert.True(await rig.Store.NotifiedAsync(200, Ct));
+
+        await rig.PollAsync();
+
+        Assert.Equal([26430253L, 100L], rig.Starter.Started.Select(s => s.BuildId));
+    }
+
+    [Fact]
+    public async Task ABuildHeldBeforeAShipStep_IsResumedAndStarted_OnceAutoMergeIsOn()
+    {
+        var rig = new Rig();
+        rig.Config.AutoMerge = true;
+        await rig.Store.RecordAsync(100, "g100", SteamUpdated, LivemapBuildState.ReleaseWaiting, Ct);
+        await rig.Store.RecordAsync(200, "g200", SteamUpdated, LivemapBuildState.PinWaiting, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal([26430253L, 100L, 200L], rig.Starter.Started.Select(s => s.BuildId));
+        Assert.Equal(LivemapBuildState.Merged, (await rig.Store.FindAsync(100, Ct))!.State);
+        Assert.Equal(LivemapBuildState.PinOpen, (await rig.Store.FindAsync(200, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task TheCurrentBuildHeldBeforeAShipStep_IsResumedAndStartedOnce_OnceAutoMergeIsOn()
+    {
+        var rig = new Rig();
+        rig.Config.AutoMerge = true;
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.ReleaseWaiting, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+        Assert.Equal(LivemapBuildState.Merged, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task ABuildHeldBeforeAShipStep_IsLeftWaiting_WhileAutoMergeIsOff()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(100, "g100", SteamUpdated, LivemapBuildState.ReleaseWaiting, Ct);
+        await rig.Store.RecordAsync(200, "g200", SteamUpdated, LivemapBuildState.PinWaiting, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal([26430253L], rig.Starter.Started.Select(s => s.BuildId));
+        Assert.Equal(LivemapBuildState.ReleaseWaiting, (await rig.Store.FindAsync(100, Ct))!.State);
+        Assert.Equal(LivemapBuildState.PinWaiting, (await rig.Store.FindAsync(200, Ct))!.State);
+    }
+
     [Fact]
     public async Task OlderBuildsStillMerging_AreStartedBeforeAnyPullRequestIsReleased()
     {
@@ -505,6 +592,7 @@ public class LivemapPollActivitiesTests
         await rig.Store.RecordAsync(200, Gid, SteamUpdated, LivemapBuildState.Parked, Ct);
         await rig.Store.RecordAsync(300, Gid, SteamUpdated, LivemapBuildState.Classified, Ct);
         await rig.Store.RecordAsync(400, Gid, SteamUpdated, LivemapBuildState.NeedsOwner, Ct);
+        Assert.True(await rig.Store.NotifiedAsync(400, Ct));
         await rig.Store.RecordAsync(500, Gid, SteamUpdated, LivemapBuildState.Done, Ct);
 
         await rig.PollAsync();

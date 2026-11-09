@@ -21,7 +21,7 @@ public class LivemapBuildStoreTransitionTests
 
     public static TheoryData<LivemapBuildState> StatesOtherThanDetected => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.Detected));
 
-    public static TheoryData<LivemapBuildState> StatesWithNoWorkflowAtWork => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Detected or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)));
+    public static TheoryData<LivemapBuildState> StatesWithNoWorkflowAtWork => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Detected or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging or LivemapBuildState.Merged or LivemapBuildState.Released or LivemapBuildState.Verified or LivemapBuildState.PinOpen or LivemapBuildState.Pinned)));
 
     public static TheoryData<LivemapBuildState> StatesNeitherDetectedNorParked => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Detected or LivemapBuildState.Parked)));
 

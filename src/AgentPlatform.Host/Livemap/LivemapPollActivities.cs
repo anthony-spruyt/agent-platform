@@ -47,12 +47,14 @@ public sealed partial class LivemapPollActivities(
 
         await builds.SupersedeOlderAsync(current.BuildId, cancellationToken).ConfigureAwait(false);
         var resumed = await ResumeAsync(row, cancellationToken).ConfigureAwait(false);
-        if (resumed || row.State is LivemapBuildState.Detected or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)
+        var startsCurrent = resumed || row.State is LivemapBuildState.Detected or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging;
+        if (startsCurrent)
         {
             await starter.StartAsync(row.BuildId, row.ManifestGid, cancellationToken).ConfigureAwait(false);
         }
 
-        await StartMergingAsync(current.BuildId, cancellationToken).ConfigureAwait(false);
+        await ResumeHeldShipStepsAsync(cancellationToken).ConfigureAwait(false);
+        await StartUnfinishedAsync(startsCurrent ? current.BuildId : null, cancellationToken).ConfigureAwait(false);
         await ReleaseReplacedPullRequestsAsync(cancellationToken).ConfigureAwait(false);
         return new LivemapPollResult(outcome, current.BuildId);
     }
@@ -64,15 +66,33 @@ public sealed partial class LivemapPollActivities(
         _ => Task.FromResult(false),
     };
 
-    // A merge that was cut short has no other way to finish, and a newer build never replaces it.
-    private async Task StartMergingAsync(long currentBuildId, CancellationToken cancellationToken)
+    // A held release or pin has no workflow, and a newer build never replaces it, so only the switch can wake it.
+    private async Task ResumeHeldShipStepsAsync(CancellationToken cancellationToken)
     {
-        foreach (var merging in await builds.FindMergingAsync(cancellationToken).ConfigureAwait(false))
+        if (!options.Value.AutoMerge)
         {
-            if (merging.BuildId != currentBuildId)
-            {
-                await starter.StartAsync(merging.BuildId, merging.ManifestGid, cancellationToken).ConfigureAwait(false);
-            }
+            return;
+        }
+
+        foreach (var held in await builds.FindShipWaitingAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await builds.ResumeWaitingAsync(held.BuildId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // A merge, a ship step or a notice that was cut short has no other way to finish, and a newer build never replaces it.
+    private async Task StartUnfinishedAsync(long? startedBuildId, CancellationToken cancellationToken)
+    {
+        await StartAllAsync(await builds.FindMergingAsync(cancellationToken).ConfigureAwait(false), startedBuildId, cancellationToken).ConfigureAwait(false);
+        await StartAllAsync(await builds.FindShippingAsync(cancellationToken).ConfigureAwait(false), startedBuildId, cancellationToken).ConfigureAwait(false);
+        await StartAllAsync(await builds.FindUnnotifiedAsync(cancellationToken).ConfigureAwait(false), startedBuildId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task StartAllAsync(IReadOnlyList<LivemapBuild> unfinished, long? startedBuildId, CancellationToken cancellationToken)
+    {
+        foreach (var build in unfinished.Where(b => b.BuildId != startedBuildId))
+        {
+            await starter.StartAsync(build.BuildId, build.ManifestGid, cancellationToken).ConfigureAwait(false);
         }
     }
 

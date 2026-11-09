@@ -1,5 +1,6 @@
 using AgentPlatform.Host.GitHub;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Host.Livemap;
 
@@ -39,6 +40,19 @@ public static class LivemapServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddHttpClient<ILivemapPullRequests, LivemapPullRequests>(GitHubHttp.Configure)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddHttpClient<ILivemapReleases, LivemapReleases>(GitHubHttp.Configure)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddHttpClient<ILivemapNotices, LivemapNotices>(GitHubHttp.Configure)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddTransient<LivemapReleaseVerifier>();
+        services.AddHttpClient(nameof(ILivemapPinPullRequests), GitHubHttp.Configure)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+            .AddTypedClient<ILivemapPinPullRequests>((http, provider) => new LivemapPullRequests(
+                http,
+                provider.GetRequiredService<IGitHubInstallationTokenProvider>(),
+                provider.GetRequiredService<IGitHubAppJwtSource>(),
+                provider.GetRequiredService<IOptions<LivemapOptions>>(),
+                LivemapRepoKind.Pin));
         services.AddSingleton<LivemapBuildStore>();
         services.TryAddSingleton<ILivemapBuildsSchema, LivemapBuildsSchemaValidator>();
         services.TryAddSingleton<ILivemapBuildStarter, TemporalLivemapBuildStarter>();
@@ -83,6 +97,16 @@ public static class LivemapServiceCollectionExtensions
         if (!AreCheckNames(options.RequiredChecks))
         {
             throw new InvalidOperationException("Livemap:RequiredChecks must list at least one check run name, each trimmed, non-empty and given once.");
+        }
+
+        if (options.ReleaseBot is not { Length: > 0 } bot || bot != bot.Trim() || !bot.EndsWith("[bot]", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Livemap:ReleaseBot must be the login of the fork's release bot, ending in [bot].");
+        }
+
+        if (!AreCheckNames(options.ReleaseRequiredChecks))
+        {
+            throw new InvalidOperationException("Livemap:ReleaseRequiredChecks must list at least one check run name, each trimmed, non-empty and given once.");
         }
     }
 

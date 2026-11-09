@@ -21,6 +21,9 @@ public class LivemapConfigurationTests
         ["Livemap:TrackingIssue"] = "12",
         ["Livemap:RequiredChecks:0"] = "lint / MegaLinter",
         ["Livemap:RequiredChecks:1"] = "repo / Build, test, package",
+        ["Livemap:ReleaseBot"] = "release-bot[bot]",
+        ["Livemap:ReleaseRequiredChecks:0"] = "lint / MegaLinter",
+        ["Livemap:ReleaseRequiredChecks:1"] = "summary / Check Results",
     };
 
     private static Dictionary<string, string?> WorkerSettings(Dictionary<string, string?>? extra = null)
@@ -78,6 +81,8 @@ public class LivemapConfigurationTests
         Assert.Equal(TimeSpan.FromMinutes(5), options.PollInterval);
         Assert.Equal(12, options.TrackingIssue);
         Assert.Equal(["lint / MegaLinter", "repo / Build, test, package"], options.RequiredChecks);
+        Assert.Equal("release-bot[bot]", options.ReleaseBot);
+        Assert.Equal(["lint / MegaLinter", "summary / Check Results"], options.ReleaseRequiredChecks);
     }
 
     [Fact]
@@ -94,6 +99,14 @@ public class LivemapConfigurationTests
     public void AnEnabledFeature_WithoutRequiredChecks_FailsAtStartup()
     {
         var settings = Enabled.Where(pair => !pair.Key.StartsWith("Livemap:RequiredChecks", StringComparison.Ordinal)).ToDictionary();
+
+        Assert.Throws<InvalidOperationException>(() => Build(settings));
+    }
+
+    [Fact]
+    public void AnEnabledFeature_WithoutReleaseRequiredChecks_FailsAtStartup()
+    {
+        var settings = Enabled.Where(pair => !pair.Key.StartsWith("Livemap:ReleaseRequiredChecks", StringComparison.Ordinal)).ToDictionary();
 
         Assert.Throws<InvalidOperationException>(() => Build(settings));
     }
@@ -121,6 +134,12 @@ public class LivemapConfigurationTests
     [InlineData("Livemap:RequiredChecks:1", "  ")]
     [InlineData("Livemap:RequiredChecks:1", " repo / Build, test, package ")]
     [InlineData("Livemap:RequiredChecks:1", "lint / MegaLinter")]
+    [InlineData("Livemap:ReleaseBot", null)]
+    [InlineData("Livemap:ReleaseBot", "release-bot")]
+    [InlineData("Livemap:ReleaseBot", " release-bot[bot]")]
+    [InlineData("Livemap:ReleaseRequiredChecks:1", "")]
+    [InlineData("Livemap:ReleaseRequiredChecks:1", " summary / Check Results")]
+    [InlineData("Livemap:ReleaseRequiredChecks:1", "lint / MegaLinter")]
     public void AnEnabledFeature_WithAnInvalidSetting_FailsAtStartup(string key, string? value)
     {
         Assert.Throws<InvalidOperationException>(() => Build(With(key, value)));
@@ -181,6 +200,26 @@ public class LivemapConfigurationTests
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapPullRequestActivities>());
         Assert.IsType<LivemapBuildsSchemaValidator>(scope.ServiceProvider.GetRequiredService<ILivemapBuildsSchema>());
+    }
+
+    [Fact]
+    public void TheWorker_RunsTheShipActivity()
+    {
+        using var provider = Build();
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(options.Activities, a => a.Name == LivemapShipActivities.ShipName);
+    }
+
+    [Fact]
+    public void TheShipActivity_CanBeBuilt_WithItsCollaborators()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapShipActivities>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ILivemapPinPullRequests>());
     }
 
     [Fact]
@@ -290,6 +329,103 @@ public class LivemapConfigurationTests
         using var scope = provider.CreateScope();
 
         Assert.IsType<LivemapPullRequests>(scope.ServiceProvider.GetRequiredService<ILivemapPullRequests>());
+    }
+
+    [Fact]
+    public void TheReleaseClient_TalksToTheGitHubApi_AtThePinnedVersion()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapReleases));
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+    }
+
+    [Fact]
+    public void TheReleaseClient_FollowsNoRedirects()
+    {
+        using var provider = Build(Enabled);
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapReleases));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void TheReleaseClient_CanBeBuilt_ByTheActivitiesThatNeedIt()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<LivemapReleases>(scope.ServiceProvider.GetRequiredService<ILivemapReleases>());
+    }
+
+    [Fact]
+    public void TheNoticeClient_TalksToTheGitHubApi_AtThePinnedVersion_AndFollowsNoRedirects()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapNotices));
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapNotices));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void TheNoticeClientAndTheReleaseVerifier_CanBeBuilt_ByTheActivitiesThatNeedThem()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<LivemapNotices>(scope.ServiceProvider.GetRequiredService<ILivemapNotices>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapReleaseVerifier>());
+    }
+
+    [Fact]
+    public void ThePinPullRequestClient_TalksToTheGitHubApi_AtThePinnedVersion()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapPinPullRequests));
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+    }
+
+    [Fact]
+    public void ThePinPullRequestClient_FollowsNoRedirects()
+    {
+        using var provider = Build(Enabled);
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapPinPullRequests));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public async Task ThePinPullRequestClient_IsBuiltForThePinRepository()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        var pin = scope.ServiceProvider.GetRequiredService<ILivemapPinPullRequests>();
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => pin.ListCheckRunsAsync(new string('a', 40), TestContext.Current.CancellationToken));
     }
 
     [Fact]

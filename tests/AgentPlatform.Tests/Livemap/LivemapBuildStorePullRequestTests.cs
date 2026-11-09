@@ -22,15 +22,19 @@ public class LivemapBuildStorePullRequestTests
 
     private static readonly LivemapBuildState[] PullRequestPhase = [LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging];
 
+    private static readonly LivemapBuildState[] ShipPhase = [LivemapBuildState.Merged, LivemapBuildState.Released, LivemapBuildState.Verified, LivemapBuildState.PinOpen, LivemapBuildState.Pinned];
+
     public static TheoryData<LivemapBuildState> StatesOtherThanClassified => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.Classified));
 
     public static TheoryData<LivemapBuildState> StatesOtherThanOpenOrMerging => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)));
 
     public static TheoryData<LivemapBuildState> StatesOtherThanMerging => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.Merging));
 
-    public static TheoryData<LivemapBuildState> StatesOtherThanWaiting => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.PullRequestWaiting));
+    public static TheoryData<LivemapBuildState> StatesOtherThanWaiting => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.PullRequestWaiting or LivemapBuildState.ReleaseWaiting or LivemapBuildState.PinWaiting)));
 
-    public static TheoryData<LivemapBuildState> StatesOutsideThePullRequestPhase => new(Enum.GetValues<LivemapBuildState>().Where(s => !PullRequestPhase.Contains(s) && s != LivemapBuildState.Detected));
+    public static TheoryData<LivemapBuildState> StatesOutsideThePullRequestPhase => new(Enum.GetValues<LivemapBuildState>().Where(s => !PullRequestPhase.Contains(s) && !ShipPhase.Contains(s) && s != LivemapBuildState.Detected));
+
+    public static TheoryData<LivemapBuildState> StatesThatMayNotBeHeld => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging or LivemapBuildState.Merged or LivemapBuildState.PinOpen)));
 
     public static TheoryData<LivemapBuildState> StatesThatMayRestart => new(LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.PullRequestWaiting);
 
@@ -336,8 +340,8 @@ public class LivemapBuildStorePullRequestTests
     }
 
     [Theory]
-    [MemberData(nameof(StatesOtherThanOpenOrMerging))]
-    public async Task OnlyAnOpenOrMergingBuild_CanBeHeld(LivemapBuildState state)
+    [MemberData(nameof(StatesThatMayNotBeHeld))]
+    public async Task OnlyABuildAtAMerge_CanBeHeld(LivemapBuildState state)
     {
         var data = await SeedAsync(state);
 

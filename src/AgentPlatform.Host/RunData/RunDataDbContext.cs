@@ -115,6 +115,9 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             build.Property(b => b.Classification).HasConversion<string>().HasMaxLength(8);
             build.Property(b => b.Detail).HasMaxLength(LivemapBuildStore.MaxDetailChars);
             build.Property(b => b.HeadSha).HasMaxLength(40);
+            build.Property(b => b.ReleaseTag).HasMaxLength(16);
+            build.Property(b => b.ReleaseSha256).HasMaxLength(64);
+            build.Property(b => b.PinHeadSha).HasMaxLength(40);
             build.Property(b => b.Version).IsConcurrencyToken();
         });
 

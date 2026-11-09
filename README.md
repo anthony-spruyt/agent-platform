@@ -59,7 +59,9 @@ The Web and Worker roles serve `/health` (all checks) and `/alive` (liveness) th
 | `Livemap:PollInterval`                                   | `00:15:00`                                                            | Worker and Web roles. How often the poll runs (a .NET time span). At least one minute, or startup fails; a new value updates the schedule at start                                                                                         |
 | `Livemap:TrackingIssue`                                  | none, required when enabled                                           | Worker and Web roles. The number of the fork issue that tracks the Livemap worker; every data pull request links it. At least 1, or startup fails                                                                                          |
 | `Livemap:RequiredChecks`                                 | none, required when enabled                                           | Worker and Web roles. A list (`Livemap:RequiredChecks:0`, ...) of check run names that must each conclude `success` on a data pull request head, from GitHub Actions, before it merges. Trimmed, unique, at least one, or startup fails    |
-| `Livemap:AutoMerge`                                      | `false`                                                               | Worker and Web roles. While `false`, the worker opens the data pull request and stops; turning it on lets the worker merge a pull request whose checks have passed                                                                         |
+| `Livemap:ReleaseBot`                                     | none, required when enabled                                           | Worker and Web roles. The login of the account that opens the fork's release pull request, with its `[bot]` suffix; the worker merges only a release pull request that account opened                                                      |
+| `Livemap:ReleaseRequiredChecks`                          | none, required when enabled                                           | Worker and Web roles. A list (`Livemap:ReleaseRequiredChecks:0`, ...) of check run names that must each conclude `success` on a release pull request head, from GitHub Actions, before it merges. Same rules as `Livemap:RequiredChecks`   |
+| `Livemap:AutoMerge`                                      | `false`                                                               | Worker and Web roles. While `false`, the worker merges no pull request: it opens the data and pin pull requests and waits; turning it on lets it merge the data, release and pin pull requests that pass their gates                       |
 | `TextScanner:BaseUrl`                                    | `http://litellm-llm-tool-guard.litellm.svc:8080`                      | Worker role. The llm-tool-guard service that scans untrusted pull request text; an absolute http or https URL                                                                                                                              |
 | `TextScanner:RequestTimeout`                             | `00:05:30`                                                            | Worker role. Time allowed for one scan request; a slower one leaves the text unchecked                                                                                                                                                     |
 | `TextScanner:RetryBudget`                                | `00:10:00`                                                            | Worker role. How long a busy (503) or unreachable scanner is retried before the text is left unchecked                                                                                                                                     |
@@ -357,6 +359,7 @@ The comments:
 ## Livemap
 
 The Livemap worker watches Steam for new Enshrouded server builds, so nobody has to notice them. It detects and records builds, then has the Livemap fork's own workflows check each new one and sorts it as known, easy or hard. For a known or easy build it opens a data pull request in the fork, and while `Livemap:AutoMerge` is on it merges that pull request once the fork's required checks pass.
+Then it merges the fork's release pull request, checks the release that comes out of it, opens a pull request that pins the release in `Livemap:PinRepo` and merges that too, and tells the fork's tracking issue how the build ended.
 
 A hosted service on the worker creates the Temporal Schedule `livemap-poll` at startup, or updates it when it exists, so a changed `Livemap:PollInterval` takes effect on the next start. When `Livemap:Enabled` is `false` it deletes the schedule instead. Startup retries until Temporal answers.
 
@@ -370,9 +373,10 @@ Each poll runs the `LivemapPoll` activity, tried up to 3 times. Its result is `U
 2. When `livemap_builds` already has a row for the build id, nothing is recorded and the result is `Unchanged`. The poll goes on with step 5.
 3. Otherwise read the pin file from the default branch of `Livemap:PinRepo`. It must hold exactly one `LIVEMAP_VERSION` line with a release tag. Then read `data/builds.json` of `Livemap:Repo` at that tag.
 4. A build id listed in that file is already supported: the row is recorded as `Done` and the result is `Shipped`. Any other build is recorded as `Detected` and the result is `Detected`.
-5. Every older row that is still `Detected`, `Parked`, `Classified`, `PullRequestOpen` or `PullRequestWaiting` becomes `Superseded`: only the newest public build matters.
+5. Every older row that is still `Detected`, `Parked`, `Classified`, `PullRequestOpen` or `PullRequestWaiting` becomes `Superseded`: only the newest public build matters. A row whose data pull request already merged is shipping and is never superseded, parked or not.
 6. A `Parked` row whose retry time has passed goes back to where it stopped, and so does a `PullRequestWaiting` row once `Livemap:AutoMerge` is on. A row that is `Detected`, `Classified`, `PullRequestOpen` or `Merging`, or was just put back, gets its build workflow started; one already running for the build is kept.
-   A `Merging` row of an older build is started too, because a newer build never replaces a merge that was begun and nothing else would finish it.
+   A `Merging` row of an older build is started too, because a newer build never replaces a merge that was begun and nothing else would finish it. So is a row of any build that is `Merged`, `Released`, `Verified`, `PinOpen` or `Pinned`, and a `NeedsOwner` row whose notice has not gone out.
+   Once `Livemap:AutoMerge` is on, a `ReleaseWaiting` row of any build goes back to `Merged` and a `PinWaiting` row to `PinOpen`, and both are started.
 7. Every `Superseded` row that has a pull request, or was classified and so may have one, gets the pull request read first. One that is still open is closed; one that is gone or can no longer change counts as closed.
    Then the branch is deleted and the row lets go of the pull request. A row that never stored a pull request number is looked up by its branch `livemap/build-<build id>` in the fork.
    This runs last, so a slow fork never holds up the newest build; a failure fails the attempt, and the next poll repeats it.
@@ -385,7 +389,7 @@ Steam's info API is a community mirror, not Valve, so a `Detected` row is only a
 
 `LivemapBuildWorkflow` runs on the `agent-platform` queue, one per build, with the id `livemap-build-<build id>`; a workflow already running for the build is kept.
 The build's row says what is left to do: each turn the workflow reads it (`LivemapBuildPlan`), does the one step the state calls for and reads it again, until the state is one the worker leaves alone or 30 turns have passed, which parks the build.
-A `Detected` row is checked in the fork, a `Classified` row gets its pull request, and a row with an open pull request is watched until it merges. A `Superseded` row ends the workflow, and the check step looks for it before each dispatch.
+A `Detected` row is checked in the fork, a `Classified` row gets its pull request, and a row with an open pull request is watched until it merges. A merged row is shipped (see Release and pin) until it is `Done`, held, or flagged for the owner. A `Superseded` row ends the workflow, and the check step looks for it before each dispatch.
 
 A `Detected` row goes through these steps:
 
@@ -406,18 +410,24 @@ Everything the report does not name must be the fork's text unchanged: each unto
 
 A step that fails (a run that is missing, failed or too slow, an artifact that is missing) parks the build. The third parking flags it for the owner.
 
-| State                | Meaning                                                                                                                                                                      |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Detected`           | New and waiting for, or going through, its build workflow                                                                                                                    |
-| `Done`               | Already covered by the pinned release; nothing to do                                                                                                                         |
-| `Classified`         | The fork's check confirmed it is `Known` or `Easy`; `classification` and `compat_run_id` say which and from which run; its pull request is next                              |
-| `PullRequestOpen`    | The data pull request is open; `pull_request_number` and `head_sha` say which and at which commit, and the workflow waits for its checks                                     |
-| `PullRequestWaiting` | The data pull request is open and `Livemap:AutoMerge` is off, so the workflow has ended; the poll resumes the row once the switch is on                                      |
-| `Merging`            | The squash merge was begun; a retry goes on from here                                                                                                                        |
-| `Merged`             | The data pull request is merged                                                                                                                                              |
-| `NeedsOwner`         | A hard or invalid result, a required check that failed or did not finish, a pull request the gate refuses or that was closed unmerged, or a third parking; `detail` says why |
-| `Parked`             | A step failed; `attempts` counts the failures and `next_retry_at` is 30 minutes later, when the poll puts the row back where it stopped                                      |
-| `Superseded`         | A newer build appeared                                                                                                                                                       |
+| State                | Meaning                                                                                                                                                                                                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Detected`           | New and waiting for, or going through, its build workflow                                                                                                                                                                                                               |
+| `Done`               | Covered by the pinned release, or shipped: the pin holds the build and the fork was told; nothing to do                                                                                                                                                                 |
+| `Classified`         | The fork's check confirmed it is `Known` or `Easy`; `classification` and `compat_run_id` say which and from which run; its pull request is next                                                                                                                         |
+| `PullRequestOpen`    | The data pull request is open; `pull_request_number` and `head_sha` say which and at which commit, and the workflow waits for its checks                                                                                                                                |
+| `PullRequestWaiting` | The data pull request is open and `Livemap:AutoMerge` is off, so the workflow has ended; the poll resumes the row once the switch is on                                                                                                                                 |
+| `Merging`            | The squash merge was begun; a retry goes on from here                                                                                                                                                                                                                   |
+| `Merged`             | The data pull request is merged; the release pull request is next                                                                                                                                                                                                       |
+| `ReleaseWaiting`     | The data pull request is merged and `Livemap:AutoMerge` is off, so the workflow has ended; the poll puts the row back to `Merged` once the switch is on                                                                                                                 |
+| `Released`           | The release pull request is merged, or the release is out; `release_tag` says which release, and its check is next                                                                                                                                                      |
+| `Verified`           | The release passed its check; `release_sha256` holds the digest of its zip, and the pin pull request is next                                                                                                                                                            |
+| `PinOpen`            | The pin pull request is open; `pin_pull_request_number` and `pin_head_sha` say which and at which commit, and the worker merges it once its gate passes                                                                                                                 |
+| `PinWaiting`         | The pin pull request is open and `Livemap:AutoMerge` is off, so the workflow has ended; the poll puts the row back to `PinOpen` once the switch is on                                                                                                                   |
+| `Pinned`             | The pin holds the release; the fork's tracking issue is told next                                                                                                                                                                                                       |
+| `NeedsOwner`         | A hard or invalid result, a required check that failed or did not finish, a pull request a gate refuses or that was closed unmerged, a release or pin step that could not go on, or a third parking; `detail` says why, and `notified_at` is set once the fork was told |
+| `Parked`             | A step failed; `attempts` counts the failures and `next_retry_at` is 30 minutes later, when the poll puts the row back where it stopped                                                                                                                                 |
+| `Superseded`         | A newer build appeared                                                                                                                                                                                                                                                  |
 
 Every state change is a write that expects the row's current state and `version`, so a workflow that lost a race changes nothing.
 
@@ -454,7 +464,45 @@ What the gate finds decides the turn:
   A build that no longer classifies the same way on the new `main` starts again from `Detected`. Both are counted in `attempts`, and the third time the build is flagged for the owner.
 - **Refused**: anything else the gate finds, such as another author, another file, a draft, or a pull request that was closed without a merge, flags the build for the owner with the reason.
 
-Each call to the fork mints an installation token for the fork alone with only the permission that call needs (`contents`, `pull_requests` or `checks`, read or write), so the App installation must grant the fork those repository permissions.
+Each call to the fork mints an installation token for the fork alone with only the permission that call needs (`contents`, `pull_requests`, `checks`, `actions` or `issues`, read or write), so the App installation must grant the fork those repository permissions. Each call to `Livemap:PinRepo` does the same for that repository.
+
+### Release and pin
+
+A `Merged` row is shipped by `LivemapBuildShip`, one step per call. A step that must wait on something outside the worker answers so, and the workflow asks again after 5 minutes. Every other answer means the state moved, and the workflow reads the plan again.
+A step that keeps failing parks the build where it stopped, like any other step. Each step is retried safely: a write expects the row's state, and a repeat finds what the first try did.
+
+The steps keep their results in the row: `release_tag` and `release_sha256`, `pin_pull_request_number`, `pin_head_sha` and `pin_attempts`, and the times `merged_at`, `released_at`, `pinned_at` and `notified_at`.
+
+`Livemap:AutoMerge` gates every merge in this section. While it is off the worker merges nothing: a `Merged` row becomes `ReleaseWaiting` and a `PinOpen` row `PinWaiting`, the workflow ends, and the poll resumes the row once the switch is on.
+
+**Release** (`Merged`):
+
+1. When the fork's latest release has a `data/builds.json` that lists the build, the step ends at once, whoever merged the release pull request. The row becomes `Released` with that release's tag.
+2. Otherwise exactly one pull request must be open from the branch `release-please--branches--main` into `main`. None, or more than one, is waited on.
+3. The release gate passes only when all of this holds:
+   - The pull request is open, not a draft, between branches of the fork, and `Livemap:ReleaseBot` opened it. Its title is `chore(main): release <version>`.
+   - It is one commit whose parent is the head of `main`. It changes only `.release-please-manifest.json`, `CHANGELOG.md`, `version.txt` and the project version line of `CMakeLists.txt`, and `version.txt` at the head holds the title's version.
+   - Every check run named in `Livemap:ReleaseRequiredChecks` exists on the head, comes from GitHub Actions, concluded `success` and sits in the check suite of the fork's own CI run for the branch.
+4. The pull request is squash merged like the data pull request: the head commit as `sha`, a title that ends with `(#<number>)`, `main` read again before each try, up to 3 tries after a 405, 5 seconds apart, and a pull request merged at the head commit after a lost answer counts as merged. The row becomes `Released` with the tag `v<version>`.
+
+No pull request or more than one, a required check that has not finished or has failed, a `main` that moved, a pull request the gate refuses and a merge GitHub refuses are all waited on, and 6 hours after the row last changed the build is flagged for the owner with the reason.
+
+**Check** (`Released`): the release is read by its tag. It must be published and immutable, and have `EnshroudedLiveMap-<version>.zip` and `EnshroudedLiveMap-<version>.zip.sha256`. The zip asset must carry a `sha256` digest, and the first field of the `.sha256` asset must equal it.
+The attestation check then reads the build provenance GitHub holds for that digest. One statement must name the zip with that digest, come from `.github/workflows/release.yaml` at `refs/tags/<tag>` of the fork, and carry the tag's commit. The fork's `data/builds.json` at that commit must list the build.
+A release that is not published yet or has no provenance yet is waited on for 2 hours after the row last changed. While it is waited on, a failed run of the tag's workflow gets its failed jobs run again once; a second failure flags the build for the owner. Any other finding flags it at once. A release that passes stores the digest, and the row becomes `Verified`.
+
+**Pin** (`Verified`): the head of `main` of `Livemap:PinRepo` is read first, then the pin file `Livemap:PinPath` at that head.
+
+- A pin that already holds this release or a newer one makes the row `Pinned` without a pull request. Versions compare as semver with the leading `v` removed, so the pin only moves forward.
+- Otherwise the `LIVEMAP_VERSION` and `LIVEMAP_SHA256` lines take the release's tag and digest and the rest of the file stays as it was, so the Renovate annotated manager still matches it. A file without exactly those two lines flags the build for the owner.
+- The branch `livemap/pin-<tag>` is made at that head and the file is committed with `createCommitOnBranch` and the head as `expectedHeadOid`, so GitHub signs the commit. The pull request is titled `chore(enshrouded): update livemap to <tag>`, and its body links the release and the fork issue `Livemap:TrackingIssue`.
+- The row holds the pull request number and its head commit, and is `PinOpen`, or `PinWaiting` while the switch is off.
+
+The pin gate passes only when the pull request is open, not a draft, between branches of the pin repository, opened by the platform's GitHub App from `livemap/pin-<tag>`, and is the one commit the worker made, whose parent is the head of `main`, changing only the pin file.
+A pull request the gate refuses is closed, its branch deleted and the build flagged for the owner. A moved `main` or a merge GitHub refuses closes the pull request and its branch as well, and the pin is made again from the new head once; the second time the build is flagged. A pin pull request merged at the commit the worker made counts as pinned. Once merged the row becomes `Pinned`.
+
+**Notice** (`Pinned`, or `NeedsOwner` with no notice yet): the worker posts one comment on the fork issue `Livemap:TrackingIssue` with the result, links to the compat run, the data pull request, the release and the pin pull request, and the time each step took from detection. The comment carries a marker for the build, so a retry finds the one already posted and a build is never told twice.
+A `Pinned` row then becomes `Done`; a `NeedsOwner` row stays and records that the notice went out. A refused pin, a flagged release and every other end state a person must act on are told the same way.
 
 ### Waking a build
 
@@ -484,7 +532,7 @@ Every workflow run is recorded in a PostgreSQL database (`rundata`) through EF C
 | `claude_cooldowns`         | scope                 | `scope` (primary key: `global` or a repo), `until`, `cause`; a write never shortens a running cooldown                                                                                                                                                                                                                                         |
 | `renovate_triage_pending`  | pull request          | `repo` + `pr_number` (unique), `head_sha`, `reason`, `status`, `attempts` (failed Claude runs on this head), `created_at`, `opened_at` (when the row was created or its head last moved), `held_at` (while `blocked`), `updated_at`; a head move carries the row and resets `attempts` and `held_at`                                           |
 | `sweeper_state`            | singleton             | `id`, `last_seen_delivered_at`, `last_success_at`; written by the sweeper (see Sweeper)                                                                                                                                                                                                                                                        |
-| `livemap_builds`           | Steam server build    | `build_id` (primary key), `manifest_gid`, `steam_updated_at`, `state` (see Livemap), `classification`, `compat_run_id`, `detail`, `pull_request_number`, `head_sha`, `attempts`, `next_retry_at`, `version`, `created_at`, `updated_at`; written by the Livemap poll and build workflow (see Livemap)                                          |
+| `livemap_builds`           | Steam server build    | `build_id` (primary key), `manifest_gid`, `steam_updated_at`, `state` (see Livemap), `classification`, `compat_run_id`, `detail`, `pull_request_number`, `head_sha`, the release and pin columns (see Release and pin), `attempts`, `next_retry_at`, `version`, `created_at`, `updated_at`; written by the Livemap poll and build workflow     |
 | `prompts`                  | distinct prompt       | `hash` (SHA-256 of the body, primary key), `name`, `body`; a Claude step stores the prompt template it ran                                                                                                                                                                                                                                     |
 
 `claude_runs` keeps `repo`, `pr_number` and `head_sha` (filled for `RenovateTriage` runs) for one release so the previous image can still read and write the table; a trigger fills the key columns of an insert that names only those three.

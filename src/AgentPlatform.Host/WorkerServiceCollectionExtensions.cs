@@ -48,6 +48,7 @@ public static class WorkerServiceCollectionExtensions
             .AddScopedActivities<LivemapPollActivities>()
             .AddScopedActivities<LivemapBuildActivities>()
             .AddScopedActivities<LivemapPullRequestActivities>()
+            .AddScopedActivities<LivemapShipActivities>()
             .AddScopedActivities<LivemapWakeActivities>()
             .AddScopedActivities<AgentPodActivities>();
 

@@ -12,6 +12,16 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
 
     private static readonly LivemapBuildState[] _pullRequestPhase = [LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging];
 
+    // From the data pull request's merge to the pin: a workflow works on each of these, and a newer build never replaces it.
+    private static readonly LivemapBuildState[] _shipPhase =
+    [
+        LivemapBuildState.Merged,
+        LivemapBuildState.Released,
+        LivemapBuildState.Verified,
+        LivemapBuildState.PinOpen,
+        LivemapBuildState.Pinned,
+    ];
+
     // A build that is merging has the merge in flight, so only a newer build waits behind it.
     private static readonly LivemapBuildState[] _supersedable =
     [
@@ -69,14 +79,139 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             cancellationToken).ConfigureAwait(false) is not null;
 
     public async Task<bool> ResumeWaitingAsync(long buildId, CancellationToken cancellationToken) =>
-        await MoveAsync(buildId, (build, _) => build.State == LivemapBuildState.PullRequestWaiting ? LivemapBuildState.PullRequestOpen : null, cancellationToken).ConfigureAwait(false) is not null;
+        await MoveAsync(
+            buildId,
+            (build, _) => build.State switch
+            {
+                LivemapBuildState.PullRequestWaiting => LivemapBuildState.PullRequestOpen,
+                LivemapBuildState.ReleaseWaiting => LivemapBuildState.Merged,
+                LivemapBuildState.PinWaiting => LivemapBuildState.PinOpen,
+                _ => null,
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
 
     // A merge that was begun may be begun again: the activity that merges is retried and must go on where it stopped.
     public async Task<bool> BeginMergeAsync(long buildId, CancellationToken cancellationToken) =>
         await MoveAsync(buildId, (build, _) => build.State is LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging ? LivemapBuildState.Merging : null, cancellationToken).ConfigureAwait(false) is not null;
 
     public async Task<bool> MergedAsync(long buildId, CancellationToken cancellationToken) =>
-        await MoveAsync(buildId, (build, _) => build.State == LivemapBuildState.Merging ? LivemapBuildState.Merged : null, cancellationToken).ConfigureAwait(false) is not null;
+        await MoveAsync(
+            buildId,
+            (build, now) =>
+            {
+                if (build.State != LivemapBuildState.Merging)
+                {
+                    return null;
+                }
+
+                build.MergedAt = now;
+                build.Attempts = 0;
+                return LivemapBuildState.Merged;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
+
+    public async Task<bool> ReleasedAsync(long buildId, string tag, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, now) =>
+            {
+                if (build.State != LivemapBuildState.Merged)
+                {
+                    return null;
+                }
+
+                build.ReleaseTag = tag;
+                build.ReleasedAt = now;
+                return LivemapBuildState.Released;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
+
+    public async Task<bool> VerifiedAsync(long buildId, string sha256, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State != LivemapBuildState.Released)
+                {
+                    return null;
+                }
+
+                build.ReleaseSha256 = sha256;
+                return LivemapBuildState.Verified;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
+
+    public async Task<bool> OpenPinAsync(long buildId, int number, string headSha, bool waiting, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State != LivemapBuildState.Verified)
+                {
+                    return null;
+                }
+
+                build.PinPullRequestNumber = number;
+                build.PinHeadSha = headSha;
+                return waiting ? LivemapBuildState.PinWaiting : LivemapBuildState.PinOpen;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
+
+    // A pin that was already in place needs no pull request, so a verified build can be pinned as well.
+    public async Task<bool> PinnedAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, now) =>
+            {
+                if (build.State is not (LivemapBuildState.Verified or LivemapBuildState.PinOpen))
+                {
+                    return null;
+                }
+
+                build.PinnedAt = now;
+                return LivemapBuildState.Pinned;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
+
+    // The caller has closed the pin pull request; the pin is made again from the current main, and the owner is asked once the attempts are used up.
+    public async Task<LivemapBuildState?> RedoPinAsync(long buildId, string detail, int maxAttempts, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, _) =>
+            {
+                if (build.State is not (LivemapBuildState.PinOpen or LivemapBuildState.PinWaiting))
+                {
+                    return null;
+                }
+
+                build.PinAttempts++;
+                build.Detail = Truncate(detail);
+                if (build.PinAttempts >= maxAttempts)
+                {
+                    return LivemapBuildState.NeedsOwner;
+                }
+
+                build.PinPullRequestNumber = null;
+                build.PinHeadSha = null;
+                return LivemapBuildState.Verified;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+    // A notice goes out once: for a pinned build that finishes it, and for one that waits for the owner.
+    public async Task<bool> NotifiedAsync(long buildId, CancellationToken cancellationToken) =>
+        await MoveAsync(
+            buildId,
+            (build, now) =>
+            {
+                if (build.State is not (LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner) || build.NotifiedAt is not null)
+                {
+                    return null;
+                }
+
+                build.NotifiedAt = now;
+                return build.State == LivemapBuildState.Pinned ? LivemapBuildState.Done : LivemapBuildState.NeedsOwner;
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
 
     // The pull request stays recorded, so the owner finds it.
     public async Task<bool> FlagPullRequestAsync(long buildId, string detail, CancellationToken cancellationToken) =>
@@ -84,7 +219,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             buildId,
             (build, _) =>
             {
-                if (!_pullRequestPhase.Contains(build.State))
+                if (!_pullRequestPhase.Contains(build.State) && !_shipPhase.Contains(build.State))
                 {
                     return null;
                 }
@@ -145,7 +280,16 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             cancellationToken).ConfigureAwait(false);
 
     public async Task<bool> HoldAsync(long buildId, CancellationToken cancellationToken) =>
-        await MoveAsync(buildId, (build, _) => build.State is LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging ? LivemapBuildState.PullRequestWaiting : null, cancellationToken).ConfigureAwait(false) is not null;
+        await MoveAsync(
+            buildId,
+            (build, _) => build.State switch
+            {
+                LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging => LivemapBuildState.PullRequestWaiting,
+                LivemapBuildState.Merged => LivemapBuildState.ReleaseWaiting,
+                LivemapBuildState.PinOpen => LivemapBuildState.PinWaiting,
+                _ => null,
+            },
+            cancellationToken).ConfigureAwait(false) is not null;
 
     // A build that reached its classification may have a pull request and a branch in the fork, even when its row never stored the number.
     public async Task<IReadOnlyList<LivemapBuild>> FindSupersededWithLeftoversAsync(CancellationToken cancellationToken)
@@ -163,6 +307,36 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         return await db.LivemapBuilds.AsNoTracking()
             .Where(b => b.State == LivemapBuildState.Merging)
+            .OrderBy(b => b.BuildId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<LivemapBuild>> FindShippingAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.LivemapBuilds.AsNoTracking()
+            .Where(b => _shipPhase.Contains(b.State))
+            .OrderBy(b => b.BuildId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<LivemapBuild>> FindShipWaitingAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.LivemapBuilds.AsNoTracking()
+            .Where(b => b.State == LivemapBuildState.ReleaseWaiting || b.State == LivemapBuildState.PinWaiting)
+            .OrderBy(b => b.BuildId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<LivemapBuild>> FindUnnotifiedAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.LivemapBuilds.AsNoTracking()
+            .Where(b => b.State == LivemapBuildState.NeedsOwner && b.NotifiedAt == null)
             .OrderBy(b => b.BuildId)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -222,7 +396,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             buildId,
             (build, now) =>
             {
-                if (build.State != LivemapBuildState.Detected && !_pullRequestPhase.Contains(build.State))
+                if (build.State != LivemapBuildState.Detected && !_pullRequestPhase.Contains(build.State) && !_shipPhase.Contains(build.State))
                 {
                     return null;
                 }
@@ -249,6 +423,11 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
                     return null;
                 }
 
+                if (ShipStepOf(build) is { } shipStep)
+                {
+                    return shipStep;
+                }
+
                 if (build.PullRequestNumber is not null)
                 {
                     return LivemapBuildState.PullRequestOpen;
@@ -264,8 +443,10 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
         {
             await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
             var now = time.GetUtcNow();
+            // A merged build is shipping, even while parked, and its pin pull request may be open: it finishes.
             var older = await db.LivemapBuilds
                 .Where(b => b.BuildId < buildId
+                    && b.MergedAt == null
                     && _supersedable.Contains(b.State))
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -314,6 +495,17 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
         build.Version++;
         return await TrySaveAsync(db, cancellationToken).ConfigureAwait(false) ? next : null;
     }
+
+    // The columns say how far a build got, newest first: a parked ship step goes back to the step it stopped in.
+    private static LivemapBuildState? ShipStepOf(LivemapBuild build) => build switch
+    {
+        { PinnedAt: not null } => LivemapBuildState.Pinned,
+        { PinPullRequestNumber: not null } => LivemapBuildState.PinOpen,
+        { ReleaseSha256: not null } => LivemapBuildState.Verified,
+        { ReleaseTag: not null } => LivemapBuildState.Released,
+        { MergedAt: not null } => LivemapBuildState.Merged,
+        _ => null,
+    };
 
     private static string Truncate(string detail) => detail.Length > MaxDetailChars ? detail[..MaxDetailChars] : detail;
 

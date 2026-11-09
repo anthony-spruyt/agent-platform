@@ -21,7 +21,8 @@ public class LivemapBuildWorkflowTests
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<LivemapBuildWorkflow>()
                 .AddAllActivities(rig.Activities)
-                .AddAllActivities(rig.PullRequestActivities(time)));
+                .AddAllActivities(rig.PullRequestActivities(time))
+                .AddAllActivities(rig.HeldShipActivities(time)));
         return await worker.ExecuteAsync(body, Ct);
     }
 
@@ -96,6 +97,7 @@ public class LivemapBuildWorkflowTests
 
         Assert.Equal(LivemapBuildOutcome.NeedsOwner, outcome);
         Assert.Equal(LivemapBuildState.NeedsOwner, (await rig.RowAsync()).State);
+        Assert.Equal(BuildId, Assert.Single(rig.Notices.Posts).BuildId);
     }
 
     [Fact]
@@ -330,9 +332,10 @@ public class LivemapBuildWorkflowTests
     [Theory]
     [InlineData(LivemapBuildState.Superseded, LivemapBuildOutcome.Superseded)]
     [InlineData(LivemapBuildState.Parked, LivemapBuildOutcome.Parked)]
-    [InlineData(LivemapBuildState.NeedsOwner, LivemapBuildOutcome.NeedsOwner)]
     [InlineData(LivemapBuildState.PullRequestWaiting, LivemapBuildOutcome.PullRequestWaiting)]
-    [InlineData(LivemapBuildState.Merged, LivemapBuildOutcome.Merged)]
+    [InlineData(LivemapBuildState.ReleaseWaiting, LivemapBuildOutcome.ReleaseWaiting)]
+    [InlineData(LivemapBuildState.PinWaiting, LivemapBuildOutcome.PinWaiting)]
+    [InlineData(LivemapBuildState.Done, LivemapBuildOutcome.Shipped)]
     public async Task ABuildThatHasNothingLeftToDo_IsLeftAlone_WithoutSpendingAnything(LivemapBuildState state, LivemapBuildOutcome expected)
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();

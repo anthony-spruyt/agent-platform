@@ -108,7 +108,7 @@ public static class LivemapMergeGate
             : $"{BuildsPath} is not a plain file.";
     }
 
-    private static LivemapGateVerdict Checks(IReadOnlyList<LivemapCheckRun> runs, IReadOnlySet<long> ciSuites, IReadOnlyList<string> required)
+    internal static LivemapGateVerdict Checks(IReadOnlyList<LivemapCheckRun> runs, IReadOnlySet<long> ciSuites, IReadOnlyList<string> required)
     {
         var failed = new List<string>();
         var pending = new List<string>();

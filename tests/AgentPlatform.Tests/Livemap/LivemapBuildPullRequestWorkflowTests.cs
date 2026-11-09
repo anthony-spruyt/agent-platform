@@ -67,10 +67,10 @@ public class LivemapBuildPullRequestWorkflowTests
             return result;
         });
 
-        Assert.Equal(LivemapBuildOutcome.Merged, outcome);
+        Assert.Equal(LivemapBuildOutcome.ReleaseWaiting, outcome);
         Assert.Equal(2, rig.GitHub.Dispatches.Count);
         var row = await rig.RowAsync();
-        Assert.Equal(LivemapBuildState.Merged, row.State);
+        Assert.Equal(LivemapBuildState.ReleaseWaiting, row.State);
         var merge = Assert.Single(rig.PullRequests.Merges);
         Assert.Equal((row.PullRequestNumber, row.HeadSha), (merge.Number, merge.Sha));
     }
@@ -95,7 +95,7 @@ public class LivemapBuildPullRequestWorkflowTests
             return (result, await ElapsedAsync(handle));
         });
 
-        Assert.Equal(LivemapBuildOutcome.Merged, outcome);
+        Assert.Equal(LivemapBuildOutcome.ReleaseWaiting, outcome);
         Assert.True(elapsed < LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
@@ -118,7 +118,7 @@ public class LivemapBuildPullRequestWorkflowTests
             return (await ResultAsync(handle), await ElapsedAsync(handle));
         });
 
-        Assert.Equal(LivemapBuildOutcome.Merged, outcome);
+        Assert.Equal(LivemapBuildOutcome.ReleaseWaiting, outcome);
         Assert.True(elapsed >= LivemapBuildWorkflow.CheckInterval, $"The wait took {elapsed}.");
     }
 
@@ -184,14 +184,14 @@ public class LivemapBuildPullRequestWorkflowTests
 
         var outcome = await RunToTheEndAsync(env, rig);
 
-        Assert.Equal(LivemapBuildOutcome.Merged, outcome);
+        Assert.Equal(LivemapBuildOutcome.ReleaseWaiting, outcome);
         Assert.Equal(2, rig.GitHub.Dispatches.Count);
         Assert.Equal(2, rig.PullRequests.Opened.Count);
         Assert.Equal([rig.PullRequests.Opened[0].Number], rig.PullRequests.Closed);
         Assert.Equal(moved, rig.PullRequests.Commits[1].ExpectedHeadOid);
         var row = await rig.RowAsync();
-        Assert.Equal(LivemapBuildState.Merged, row.State);
-        Assert.Equal(1, row.Attempts);
+        Assert.Equal(LivemapBuildState.ReleaseWaiting, row.State);
+        Assert.Equal(0, row.Attempts);
         Assert.Equal(rig.PullRequests.Opened[1].Number, Assert.Single(rig.PullRequests.Merges).Number);
     }
 
@@ -227,7 +227,7 @@ public class LivemapBuildPullRequestWorkflowTests
 
         var outcome = await RunToTheEndAsync(env, rig);
 
-        Assert.Equal(LivemapBuildOutcome.Merged, outcome);
+        Assert.Equal(LivemapBuildOutcome.ReleaseWaiting, outcome);
         Assert.Empty(rig.GitHub.Dispatches);
         Assert.Single(rig.PullRequests.Merges);
     }
@@ -242,9 +242,9 @@ public class LivemapBuildPullRequestWorkflowTests
 
         var outcome = await RunToTheEndAsync(env, rig);
 
-        Assert.Equal(LivemapBuildOutcome.Merged, outcome);
+        Assert.Equal(LivemapBuildOutcome.ReleaseWaiting, outcome);
         Assert.Equal(2, rig.GitHub.Dispatches.Count);
-        Assert.Equal(1, (await rig.RowAsync()).Attempts);
+        Assert.Equal(0, (await rig.RowAsync()).Attempts);
     }
 
     [Fact]

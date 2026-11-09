@@ -10,6 +10,7 @@ public enum LivemapStep
     Check,
     OpenPullRequest,
     Watch,
+    Ship,
 }
 
 // Outcome is what the workflow ends with when the step is Stop; the head is the commit a Watch waits on.
@@ -31,7 +32,7 @@ public sealed class LivemapPullRequestActivities(
     public const string OpenPullRequestName = "LivemapBuildOpenPullRequest";
     public const string AdvanceName = "LivemapBuildAdvance";
 
-    private const int MergeRetries = 3;
+    internal const int MergeRetries = 3;
 
     private const string MainMovedDetail = "Main moved on before the pull request was merged.";
 
@@ -45,7 +46,11 @@ public sealed class LivemapPullRequestActivities(
             LivemapBuildState.Classified => new LivemapPlan(LivemapStep.OpenPullRequest),
             LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging => new LivemapPlan(LivemapStep.Watch, HeadSha: row.HeadSha),
             LivemapBuildState.PullRequestWaiting => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.PullRequestWaiting),
-            LivemapBuildState.Merged => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Merged),
+            LivemapBuildState.Merged or LivemapBuildState.Released or LivemapBuildState.Verified or LivemapBuildState.PinOpen or LivemapBuildState.Pinned => new LivemapPlan(LivemapStep.Ship),
+            LivemapBuildState.ReleaseWaiting => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.ReleaseWaiting),
+            LivemapBuildState.PinWaiting => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.PinWaiting),
+            LivemapBuildState.Done => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Shipped),
+            LivemapBuildState.NeedsOwner when row.NotifiedAt is null => new LivemapPlan(LivemapStep.Ship),
             LivemapBuildState.NeedsOwner => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.NeedsOwner),
             LivemapBuildState.Parked => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Parked),
             _ => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Superseded),
@@ -205,27 +210,7 @@ public sealed class LivemapPullRequestActivities(
             HeadFileMode: headMode,
             MainFileMode: mainMode,
             CheckRuns: checkRuns,
-            CiSuiteIds: await CiSuitesAsync(checkRuns, branch, cancellationToken).ConfigureAwait(false));
-    }
-
-    // A required name only counts in the check suite of the fork's own CI run for the branch.
-    private async Task<IReadOnlySet<long>> CiSuitesAsync(IReadOnlyList<LivemapCheckRun> checkRuns, string branch, CancellationToken cancellationToken)
-    {
-        var suites = new HashSet<long>();
-        var candidates = checkRuns
-            .Where(run => run.AppSlug == LivemapMergeGate.ChecksApp && run.CheckSuiteId > 0 && options.Value.RequiredChecks.Contains(run.Name))
-            .Select(run => run.CheckSuiteId)
-            .Distinct();
-        foreach (var suite in candidates)
-        {
-            var runs = await github.ListSuiteRunsAsync(suite, cancellationToken).ConfigureAwait(false);
-            if (runs.Count > 0 && runs.All(run => run.IsCiRunOf(branch)))
-            {
-                suites.Add(suite);
-            }
-        }
-
-        return suites;
+            CiSuiteIds: await LivemapCiSuites.FindAsync(github, checkRuns, branch, options.Value.RequiredChecks, cancellationToken).ConfigureAwait(false));
     }
 
     private async Task SettleMergedAsync(long buildId, LivemapPullRequest pull, string head, CancellationToken cancellationToken)
@@ -304,13 +289,6 @@ public sealed class LivemapPullRequestActivities(
     private async Task StartOverAsync(long buildId, string detail, CancellationToken cancellationToken) =>
         await builds.RestartAsync(buildId, detail, LivemapBuildActivities.MaxAttempts, cancellationToken).ConfigureAwait(false);
 
-    private async Task RemoveAsync(string branch, CancellationToken cancellationToken)
-    {
-        foreach (var pull in await pullRequests.FindOpenByBranchAsync(branch, cancellationToken).ConfigureAwait(false))
-        {
-            await pullRequests.ClosePullRequestAsync(pull.Number, cancellationToken).ConfigureAwait(false);
-        }
-
-        await pullRequests.DeleteBranchAsync(branch, cancellationToken).ConfigureAwait(false);
-    }
+    private async Task RemoveAsync(string branch, CancellationToken cancellationToken) =>
+        await LivemapBranches.RemoveAsync(pullRequests, branch, cancellationToken).ConfigureAwait(false);
 }
