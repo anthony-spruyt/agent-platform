@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.GitHub;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -29,6 +30,7 @@ public static class LivemapServiceCollectionExtensions
     public static IServiceCollection AddLivemap(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddLivemapEvents(configuration);
+        services.PostConfigure<ClaudeBudgetOptions>(budget => budget.Kinds.TryAdd(LivemapBudget.Kind, LivemapBudget.DefaultCaps()));
         services.TryAddSingleton(TimeProvider.System);
         services.AddHttpClient<ISteamAppInfo, SteamAppInfoClient>(client =>
         {
@@ -108,7 +110,58 @@ public static class LivemapServiceCollectionExtensions
         {
             throw new InvalidOperationException("Livemap:ReleaseRequiredChecks must list at least one check run name, each trimmed, non-empty and given once.");
         }
+
+        if (options.HardPath)
+        {
+            ValidateHardPath(options);
+        }
     }
+
+    private static void ValidateHardPath(LivemapOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.AgentModel))
+        {
+            throw new InvalidOperationException("Livemap:AgentModel must name the model the hard-patch agent runs.");
+        }
+
+        if (options.AgentMaxTurns < 1)
+        {
+            throw new InvalidOperationException("Livemap:AgentMaxTurns must be at least 1.");
+        }
+
+        if (options.AgentMaxBudgetUsd <= 0)
+        {
+            throw new InvalidOperationException("Livemap:AgentMaxBudgetUsd must be greater than 0.");
+        }
+
+        if (options.AgentRunsPerBuild is < 1 or > LivemapOptions.MaxAgentRunsPerBuild)
+        {
+            throw new InvalidOperationException($"Livemap:AgentRunsPerBuild must be between 1 and {LivemapOptions.MaxAgentRunsPerBuild}.");
+        }
+
+        if (options.AgentDeadlineSeconds is < LivemapOptions.MinAgentDeadlineSeconds or > LivemapOptions.MaxAgentDeadlineSeconds)
+        {
+            throw new InvalidOperationException($"Livemap:AgentDeadlineSeconds must be between {LivemapOptions.MinAgentDeadlineSeconds} and {LivemapOptions.MaxAgentDeadlineSeconds}.");
+        }
+
+        if (!Uri.TryCreate(options.DepotDownloaderUrl, UriKind.Absolute, out var tool) || tool.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new InvalidOperationException("Livemap:DepotDownloaderUrl must be an https URL.");
+        }
+
+        if (!IsLowerSha256(options.DepotDownloaderSha256))
+        {
+            throw new InvalidOperationException("Livemap:DepotDownloaderSha256 must be 64 lower-case hex characters.");
+        }
+
+        if (!Uri.TryCreate(options.PythonIndexUrl, UriKind.Absolute, out var index) || index.Scheme is not ("http" or "https"))
+        {
+            throw new InvalidOperationException("Livemap:PythonIndexUrl must be an http or https URL.");
+        }
+    }
+
+    private static bool IsLowerSha256(string? value) =>
+        value is { Length: 64 } && value.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f'));
 
     private static bool AreCheckNames(List<string> names) =>
         names.Count > 0
