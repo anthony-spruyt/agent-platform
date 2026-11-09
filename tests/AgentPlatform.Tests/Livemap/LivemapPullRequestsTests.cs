@@ -262,22 +262,23 @@ public class LivemapPullRequestsTests
     }
 
     [Fact]
-    public async Task TheCheckRuns_AreTheLatestOnesOfTheSha_WithEveryPageAndTheirApp()
+    public async Task TheCheckRuns_AreTheLatestOnesOfTheSha_WithEveryPageTheirAppAndTheirCheckSuite()
     {
         var calls = 0;
         var (client, handler, tokens) = Create(request =>
         {
             calls++;
             return request.Uri.Query.Contains("page=2", StringComparison.Ordinal)
-                ? StubHttpHandler.Json("""{"total_count":101,"check_runs":[{"name":"last","status":"completed","conclusion":"success","app":{"slug":"github-actions"}}]}""")
-                : StubHttpHandler.Json($$"""{"total_count":101,"check_runs":[{{string.Join(',', Enumerable.Range(0, 100).Select(i => $$"""{"name":"n{{i}}","status":"completed","conclusion":"success","app":null}"""))}}]}""");
+                ? StubHttpHandler.Json("""{"total_count":101,"check_runs":[{"name":"last","status":"completed","conclusion":"success","app":{"slug":"github-actions"},"check_suite":{"id":5001}}]}""")
+                : StubHttpHandler.Json($$"""{"total_count":101,"check_runs":[{{string.Join(',', Enumerable.Range(0, 100).Select(i => $$"""{"name":"n{{i}}","status":"completed","conclusion":"success","app":null,"check_suite":null}"""))}}]}""");
         });
 
         var runs = await client.ListCheckRunsAsync(Oid, Ct);
 
         Assert.Equal(101, runs.Count);
-        Assert.Equal(new LivemapCheckRun("last", "completed", "success", "github-actions"), runs[^1]);
+        Assert.Equal(new LivemapCheckRun("last", "completed", "success", "github-actions", 5001), runs[^1]);
         Assert.Null(runs[0].AppSlug);
+        Assert.Equal(0, runs[0].CheckSuiteId);
         Assert.Equal(2, calls);
         Assert.All(handler.Requests, r => Assert.Contains("filter=latest", r.Uri.Query, StringComparison.Ordinal));
         Assert.Equal(Perms("checks", "read"), tokens.Minted.First().Permissions);
@@ -302,7 +303,6 @@ public class LivemapPullRequestsTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.MethodNotAllowed)]
     [InlineData(HttpStatusCode.Conflict)]
     [InlineData(HttpStatusCode.UnprocessableEntity)]
     public async Task AMergeGitHubRefuses_IsReportedAsRefused(HttpStatusCode status)
@@ -310,6 +310,14 @@ public class LivemapPullRequestsTests
         var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"message":"Head branch was modified"}""", status));
 
         Assert.Equal(LivemapMergeResult.Refused, await client.MergeAsync(7, Oid, "t (#7)", Ct));
+    }
+
+    [Fact]
+    public async Task AMergeGitHubAnswersNotAllowed_IsReportedAsNotMergeable()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"message":"Pull Request is not mergeable"}""", HttpStatusCode.MethodNotAllowed));
+
+        Assert.Equal(LivemapMergeResult.NotMergeable, await client.MergeAsync(7, Oid, "t (#7)", Ct));
     }
 
     [Fact]
@@ -332,6 +340,26 @@ public class LivemapPullRequestsTests
         Assert.Equal($"/repos/{Fork}/pulls/7", request.Uri.AbsolutePath);
         Assert.Equal("closed", (string?)JsonNode.Parse(request.Body!)!["state"]);
         Assert.Equal(Perms("pull_requests", "write"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    public async Task APullRequest_ThatCannotBeClosedAnyMore_IsDone(HttpStatusCode status)
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}", status));
+
+        await client.ClosePullRequestAsync(7, Ct);
+
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task APullRequestCloseThatFailsOtherwise_IsAnError()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}", HttpStatusCode.BadGateway));
+
+        await Assert.ThrowsAsync<GitHubApiException>(() => client.ClosePullRequestAsync(7, Ct));
     }
 
     [Theory]

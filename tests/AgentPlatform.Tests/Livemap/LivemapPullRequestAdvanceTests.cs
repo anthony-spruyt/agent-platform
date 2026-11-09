@@ -78,6 +78,36 @@ public class LivemapPullRequestAdvanceTests
         Assert.Equal(LivemapBuildState.PullRequestWaiting, (await rig.RowAsync()).State);
     }
 
+    [Fact]
+    public async Task WithAutoMergeTurnedOff_AMergeThatWasBegun_IsHeld_NotMerged()
+    {
+        var rig = new LivemapBuildRig();
+        var (number, head) = await rig.OpenedAsync();
+        Assert.True(await rig.Store.BeginMergeAsync(BuildId, Ct));
+        rig.Config.AutoMerge = false;
+
+        var pending = await AdvanceAsync(rig);
+
+        Assert.False(pending);
+        Assert.Empty(rig.PullRequests.Merges);
+        var row = await rig.RowAsync();
+        Assert.Equal((LivemapBuildState.PullRequestWaiting, number, head), (row.State, row.PullRequestNumber, row.HeadSha));
+    }
+
+    [Fact]
+    public async Task WithAutoMergeTurnedOff_AMergeThatFinishedMeanwhile_IsStillRecorded()
+    {
+        var rig = new LivemapBuildRig();
+        var (number, _) = await rig.OpenedAsync();
+        Assert.True(await rig.Store.BeginMergeAsync(BuildId, Ct));
+        rig.PullRequests.Pulls[number] = rig.PullRequests.Pulls[number] with { State = "closed", Merged = true };
+        rig.Config.AutoMerge = false;
+
+        await AdvanceAsync(rig);
+
+        Assert.Equal(LivemapBuildState.Merged, (await rig.RowAsync()).State);
+    }
+
     [Theory]
     [InlineData(LivemapBuildState.Detected)]
     [InlineData(LivemapBuildState.Classified)]
@@ -223,7 +253,7 @@ public class LivemapPullRequestAdvanceTests
     {
         var rig = new LivemapBuildRig();
         var (number, head) = await rig.OpenedAsync();
-        rig.PullRequests.Checks[head] = [new LivemapCheckRun(RequiredChecks[0], "completed", "failure", "github-actions"), .. GreenChecks().Skip(1)];
+        rig.PullRequests.Checks[head] = [CheckRun(RequiredChecks[0], conclusion: "failure"), .. GreenChecks().Skip(1)];
 
         var pending = await AdvanceAsync(rig);
 
@@ -273,6 +303,44 @@ public class LivemapPullRequestAdvanceTests
     }
 
     [Fact]
+    public async Task WhenMainMovesOnAfterTheGateJudged_NothingIsMerged_AndThePullRequestIsMadeAgain()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.OpenedAsync();
+        rig.PullRequests.Hook = call =>
+        {
+            if (call.StartsWith("checks:", StringComparison.Ordinal))
+            {
+                rig.PullRequests.MainHead = new string('d', 40);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        var pending = await AdvanceAsync(rig);
+
+        Assert.False(pending);
+        Assert.Empty(rig.PullRequests.Merges);
+        var row = await rig.RowAsync();
+        Assert.Equal((LivemapBuildState.Classified, 1), (row.State, row.Attempts));
+        Assert.Null(row.PullRequestNumber);
+    }
+
+    [Fact]
+    public async Task TheHeadOfMain_IsReadAgain_ImmediatelyBeforeTheMerge()
+    {
+        var rig = new LivemapBuildRig();
+        var (number, _) = await rig.OpenedAsync();
+        rig.PullRequests.Calls.Clear();
+
+        await AdvanceAsync(rig);
+
+        var merge = rig.PullRequests.Calls.IndexOf($"merge:{number}");
+        Assert.True(merge > 0);
+        Assert.Equal("main-head", rig.PullRequests.Calls[merge - 1]);
+    }
+
+    [Fact]
     public async Task WhenMainKeepsMovingOn_TheOwnerIsAskedAtTheAttemptCap()
     {
         var rig = new LivemapBuildRig();
@@ -319,6 +387,82 @@ public class LivemapPullRequestAdvanceTests
         Assert.Equal(LivemapBuildState.NeedsOwner, row.State);
         Assert.Equal(number, row.PullRequestNumber);
         Assert.Empty(rig.PullRequests.Closed);
+        Assert.Single(rig.PullRequests.Merges);
+        Assert.Empty(rig.Time.Waits);
+    }
+
+    [Fact]
+    public async Task AMergeGitHubIsNotReadyForAtFirst_IsAskedForAgain_FiveSecondsLater()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.OpenedAsync();
+        rig.PullRequests.NotMergeableAnswers = 2;
+
+        await AdvanceAsync(rig);
+
+        Assert.Equal(3, rig.PullRequests.Merges.Count);
+        Assert.Equal([TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5)], rig.Time.Waits);
+        Assert.Equal(LivemapBuildState.Merged, (await rig.RowAsync()).State);
+    }
+
+    [Fact]
+    public async Task AMergeGitHubIsNeverReadyFor_NeedsTheOwner_AfterThreeRetries()
+    {
+        var rig = new LivemapBuildRig();
+        var (number, _) = await rig.OpenedAsync();
+        rig.PullRequests.MergeResult = LivemapMergeResult.NotMergeable;
+
+        await AdvanceAsync(rig);
+
+        Assert.Equal(4, rig.PullRequests.Merges.Count);
+        Assert.Equal([TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5)], rig.Time.Waits);
+        var row = await rig.RowAsync();
+        Assert.Equal((LivemapBuildState.NeedsOwner, number), (row.State, row.PullRequestNumber));
+    }
+
+    [Fact]
+    public async Task AMergeGitHubIsNotReadyFor_ThatHasMergedMeanwhile_IsNotAskedForAgain()
+    {
+        var rig = new LivemapBuildRig();
+        var (number, _) = await rig.OpenedAsync();
+        rig.PullRequests.NotMergeableAnswers = 1;
+        rig.PullRequests.Hook = call =>
+        {
+            if (call.StartsWith("merge:", StringComparison.Ordinal))
+            {
+                rig.PullRequests.Pulls[number] = rig.PullRequests.Pulls[number] with { State = "closed", Merged = true };
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await AdvanceAsync(rig);
+
+        Assert.Single(rig.PullRequests.Merges);
+        Assert.Equal(LivemapBuildState.Merged, (await rig.RowAsync()).State);
+    }
+
+    [Fact]
+    public async Task AMergeGitHubIsNotReadyFor_WhenMainMovesOnMeanwhile_IsMadeAgainWithoutAskingAgain()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.OpenedAsync();
+        rig.PullRequests.NotMergeableAnswers = 1;
+        rig.PullRequests.Hook = call =>
+        {
+            if (call.StartsWith("merge:", StringComparison.Ordinal))
+            {
+                rig.PullRequests.MainHead = new string('d', 40);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await AdvanceAsync(rig);
+
+        Assert.Single(rig.PullRequests.Merges);
+        var row = await rig.RowAsync();
+        Assert.Equal((LivemapBuildState.Classified, 1), (row.State, row.Attempts));
     }
 
     [Fact]
@@ -384,5 +528,46 @@ public class LivemapPullRequestAdvanceTests
         var row = await rig.RowAsync();
         Assert.Equal((LivemapBuildState.Classified, 1), (row.State, row.Attempts));
         Assert.Null(row.PullRequestNumber);
+    }
+
+    private static readonly Dictionary<string, LivemapSuiteRun[]> _notTheForksCiRun = new()
+    {
+        ["another workflow"] = [CiRun(path: ".github/workflows/pr-title.yaml")],
+        ["a push"] = [CiRun(runEvent: "push")],
+        ["another branch"] = [CiRun(branch: "livemap/build-401")],
+        ["main"] = [CiRun(branch: "main")],
+        ["another head repository"] = [CiRun(headRepositoryId: 900)],
+        ["no workflow run"] = [],
+        ["a second run of another workflow"] = [CiRun(), CiRun(path: ".github/workflows/pr-title.yaml")],
+    };
+
+    public static TheoryData<string> NotTheForksCiRun => new(_notTheForksCiRun.Keys);
+
+    [Theory]
+    [MemberData(nameof(NotTheForksCiRun))]
+    public async Task RequiredChecksOfASuiteThatIsNotTheForksCiRunOfTheBranch_NeverLetThePullRequestMerge(string which)
+    {
+        var rig = new LivemapBuildRig();
+        await rig.OpenedAsync();
+        rig.GitHub.SuiteRunsBySuite[CiSuiteId] = _notTheForksCiRun[which];
+
+        var pending = await AdvanceAsync(rig);
+
+        Assert.True(pending);
+        Assert.Empty(rig.PullRequests.Merges);
+        Assert.Equal(LivemapBuildState.PullRequestOpen, (await rig.RowAsync()).State);
+    }
+
+    [Fact]
+    public async Task OnlyTheSuitesOfTheRequiredChecks_AreLookedUp_OnceEach()
+    {
+        var rig = new LivemapBuildRig();
+        var (_, head) = await rig.OpenedAsync();
+        rig.PullRequests.Checks[head] = [.. GreenChecks(), CheckRun("docs / Spelling", suite: 9999), CheckRun(RequiredChecks[0], app: "some-other-app", suite: 9998)];
+
+        await AdvanceAsync(rig);
+
+        Assert.Equal([CiSuiteId], rig.GitHub.SuiteLookups);
+        Assert.Single(rig.PullRequests.Merges);
     }
 }

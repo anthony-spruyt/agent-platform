@@ -337,6 +337,106 @@ public class LivemapPollActivitiesTests
         Assert.Single(rig.PullRequests.Deleted);
     }
 
+    [Theory]
+    [InlineData("closed")]
+    [InlineData("gone")]
+    public async Task AReplacedPullRequestThatIsNotOpen_IsNotClosed_ButItsBranchGoesAndTheBuildIsReleased(string how)
+    {
+        var rig = new Rig();
+        await WithPullRequestAsync(rig, 100, 7, waiting: false);
+        if (how == "closed")
+        {
+            rig.PullRequests.Pulls[7] = rig.PullRequests.Pulls[7] with { State = "closed", Merged = true };
+        }
+        else
+        {
+            rig.PullRequests.Pulls.Remove(7);
+        }
+
+        await rig.PollAsync();
+
+        Assert.Empty(rig.PullRequests.Closed);
+        Assert.Equal([LivemapBuildBranch.For(100)], rig.PullRequests.Deleted);
+        Assert.Null((await rig.Store.FindAsync(100, Ct))!.PullRequestNumber);
+    }
+
+    private static async Task ClassifiedWithoutANumberAsync(Rig rig, long buildId)
+    {
+        await rig.Store.RecordAsync(buildId, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+        Assert.True(await rig.Store.ClassifyAsync(buildId, LivemapClassification.Easy, 777, Ct));
+    }
+
+    [Fact]
+    public async Task AReplacedBuildThatNeverStoredItsPullRequestNumber_LosesTheOpenPullRequestOnItsBranch()
+    {
+        var rig = new Rig();
+        await ClassifiedWithoutANumberAsync(rig, 100);
+        var leftover = rig.PullRequests.Leftover(LivemapBuildBranch.For(100));
+
+        await rig.PollAsync();
+        await rig.PollAsync();
+
+        Assert.Equal([leftover.Number], rig.PullRequests.Closed);
+        Assert.Equal([LivemapBuildBranch.For(100)], rig.PullRequests.Deleted);
+        var row = (await rig.Store.FindAsync(100, Ct))!;
+        Assert.Equal(LivemapBuildState.Superseded, row.State);
+        Assert.Null(row.Classification);
+    }
+
+    [Fact]
+    public async Task AReplacedBuildWithABranchButNoPullRequest_HasItsBranchDeleted()
+    {
+        var rig = new Rig();
+        await ClassifiedWithoutANumberAsync(rig, 100);
+        rig.PullRequests.Branches[LivemapBuildBranch.For(100)] = new string('a', 40);
+
+        await rig.PollAsync();
+
+        Assert.Empty(rig.PullRequests.Closed);
+        Assert.Equal([LivemapBuildBranch.For(100)], rig.PullRequests.Deleted);
+        Assert.Empty(rig.PullRequests.Branches);
+    }
+
+    [Fact]
+    public async Task OlderBuildsStillMerging_AreStartedAgainByEveryPoll_UntilTheyFinish()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(100, "g100", SteamUpdated, LivemapBuildState.Merging, Ct);
+        await rig.Store.RecordAsync(200, "g200", SteamUpdated, LivemapBuildState.Merging, Ct);
+
+        await rig.PollAsync();
+        await rig.PollAsync();
+
+        Assert.Equal(
+            [(26430253L, Gid), (100L, "g100"), (200L, "g200"), (26430253L, Gid), (100L, "g100"), (200L, "g200")],
+            rig.Starter.Started);
+        Assert.Equal(LivemapBuildState.Merging, (await rig.Store.FindAsync(100, Ct))!.State);
+    }
+
+    [Fact]
+    public async Task TheCurrentBuildMerging_IsStartedOnce()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.Merging, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+    }
+
+    [Fact]
+    public async Task OlderBuildsStillMerging_AreStartedBeforeAnyPullRequestIsReleased()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(100, "g100", SteamUpdated, LivemapBuildState.Merging, Ct);
+        await WithPullRequestAsync(rig, 50, 7, waiting: false);
+        rig.PullRequests.Hook = _ => throw new InvalidOperationException("GitHub is down");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(rig.PollAsync);
+
+        Assert.Equal([26430253L, 100L], rig.Starter.Started.Select(s => s.BuildId));
+    }
+
     [Fact]
     public async Task OlderBuildsWithoutAPullRequest_CostNoCallToTheFork()
     {

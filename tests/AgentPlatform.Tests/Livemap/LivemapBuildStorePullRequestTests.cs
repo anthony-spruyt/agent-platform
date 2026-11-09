@@ -26,8 +26,6 @@ public class LivemapBuildStorePullRequestTests
 
     public static TheoryData<LivemapBuildState> StatesOtherThanOpenOrMerging => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging)));
 
-    public static TheoryData<LivemapBuildState> StatesOtherThanOpen => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.PullRequestOpen));
-
     public static TheoryData<LivemapBuildState> StatesOtherThanMerging => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.Merging));
 
     public static TheoryData<LivemapBuildState> StatesOtherThanWaiting => new(Enum.GetValues<LivemapBuildState>().Where(s => s != LivemapBuildState.PullRequestWaiting));
@@ -323,10 +321,11 @@ public class LivemapBuildStorePullRequestTests
         Assert.Equal(state, (await ReadAsync(data)).State);
     }
 
-    [Fact]
-    public async Task AnOpenBuild_CanBeHeldAsWaiting_WithItsPullRequestKept()
+    [Theory]
+    [MemberData(nameof(StatesThatMayReopen))]
+    public async Task AnOpenOrMergingBuild_CanBeHeldAsWaiting_WithItsPullRequestKept(LivemapBuildState state)
     {
-        var data = await SeedAsync(LivemapBuildState.PullRequestOpen);
+        var data = await SeedAsync(state);
 
         Assert.True(await Store(data).HoldAsync(Build, Ct));
 
@@ -337,8 +336,8 @@ public class LivemapBuildStorePullRequestTests
     }
 
     [Theory]
-    [MemberData(nameof(StatesOtherThanOpen))]
-    public async Task OnlyAnOpenBuild_CanBeHeld(LivemapBuildState state)
+    [MemberData(nameof(StatesOtherThanOpenOrMerging))]
+    public async Task OnlyAnOpenOrMergingBuild_CanBeHeld(LivemapBuildState state)
     {
         var data = await SeedAsync(state);
 
@@ -364,21 +363,52 @@ public class LivemapBuildStorePullRequestTests
     }
 
     [Fact]
-    public async Task ASupersededBuild_WithAPullRequest_IsListedUntilItsPullRequestIsReleased()
+    public async Task ASupersededBuild_WithAPullRequestOrAClassification_IsListedUntilItsLeftoversAreReleased()
     {
         var data = await SeedAsync(LivemapBuildState.PullRequestOpen, 100);
         await SeedAsync(LivemapBuildState.Classified, 200, data);
+        await SeedAsync(LivemapBuildState.Detected, 150, data);
         await Store(data).SupersedeOlderAsync(300, Ct);
 
-        var listed = await Store(data).FindSupersededWithPullRequestAsync(Ct);
+        var listed = await Store(data).FindSupersededWithLeftoversAsync(Ct);
 
-        var only = Assert.Single(listed);
-        Assert.Equal(100, only.BuildId);
-        Assert.Equal(Pr, only.PullRequestNumber);
+        Assert.Equal([100L, 200L], listed.Select(b => b.BuildId));
+        Assert.Equal(Pr, listed[0].PullRequestNumber);
+        Assert.Null(listed[1].PullRequestNumber);
         Assert.True(await Store(data).ReleasePullRequestAsync(100, Ct));
-        Assert.Empty(await Store(data).FindSupersededWithPullRequestAsync(Ct));
-        Assert.Null((await ReadAsync(data, 100)).PullRequestNumber);
-        Assert.Equal(LivemapBuildState.Superseded, (await ReadAsync(data, 100)).State);
+        Assert.True(await Store(data).ReleasePullRequestAsync(200, Ct));
+        Assert.Empty(await Store(data).FindSupersededWithLeftoversAsync(Ct));
+        foreach (var id in new long[] { 100, 200 })
+        {
+            var released = await ReadAsync(data, id);
+            Assert.Equal(LivemapBuildState.Superseded, released.State);
+            Assert.Null(released.PullRequestNumber);
+            Assert.Null(released.HeadSha);
+            Assert.Null(released.Classification);
+            Assert.Null(released.CompatRunId);
+        }
+    }
+
+    [Fact]
+    public async Task ASupersededBuild_WithNothingLeftToRelease_IsLeftAlone()
+    {
+        var data = await SeedAsync(LivemapBuildState.Detected, 100);
+        await Store(data).SupersedeOlderAsync(300, Ct);
+
+        Assert.False(await Store(data).ReleasePullRequestAsync(100, Ct));
+    }
+
+    [Fact]
+    public async Task OnlyTheBuildsThatAreMerging_AreListedAsMerging()
+    {
+        var data = await SeedAsync(LivemapBuildState.Merging, 300);
+        await SeedAsync(LivemapBuildState.Merging, 100, data);
+        await SeedAsync(LivemapBuildState.PullRequestOpen, 200, data);
+        await SeedAsync(LivemapBuildState.Merged, 400, data);
+
+        var listed = await Store(data).FindMergingAsync(Ct);
+
+        Assert.Equal([100L, 300L], listed.Select(b => b.BuildId));
     }
 
     [Fact]

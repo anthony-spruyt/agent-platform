@@ -145,13 +145,24 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             cancellationToken).ConfigureAwait(false);
 
     public async Task<bool> HoldAsync(long buildId, CancellationToken cancellationToken) =>
-        await MoveAsync(buildId, (build, _) => build.State == LivemapBuildState.PullRequestOpen ? LivemapBuildState.PullRequestWaiting : null, cancellationToken).ConfigureAwait(false) is not null;
+        await MoveAsync(buildId, (build, _) => build.State is LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging ? LivemapBuildState.PullRequestWaiting : null, cancellationToken).ConfigureAwait(false) is not null;
 
-    public async Task<IReadOnlyList<LivemapBuild>> FindSupersededWithPullRequestAsync(CancellationToken cancellationToken)
+    // A build that reached its classification may have a pull request and a branch in the fork, even when its row never stored the number.
+    public async Task<IReadOnlyList<LivemapBuild>> FindSupersededWithLeftoversAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         return await db.LivemapBuilds.AsNoTracking()
-            .Where(b => b.State == LivemapBuildState.Superseded && b.PullRequestNumber != null)
+            .Where(b => b.State == LivemapBuildState.Superseded && (b.PullRequestNumber != null || b.Classification != null))
+            .OrderBy(b => b.BuildId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<LivemapBuild>> FindMergingAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await db.LivemapBuilds.AsNoTracking()
+            .Where(b => b.State == LivemapBuildState.Merging)
             .OrderBy(b => b.BuildId)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -162,13 +173,15 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             buildId,
             (build, _) =>
             {
-                if (build.State != LivemapBuildState.Superseded || build.PullRequestNumber is null)
+                if (build.State != LivemapBuildState.Superseded || (build.PullRequestNumber is null && build.Classification is null))
                 {
                     return null;
                 }
 
                 build.PullRequestNumber = null;
                 build.HeadSha = null;
+                build.Classification = null;
+                build.CompatRunId = null;
                 return LivemapBuildState.Superseded;
             },
             cancellationToken).ConfigureAwait(false) is not null;

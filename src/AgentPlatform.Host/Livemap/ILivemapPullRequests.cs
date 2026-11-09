@@ -16,12 +16,15 @@ public sealed record LivemapPullRequest(
 
 public sealed record LivemapPullRequestFile(string Filename, string Status, string? PreviousFilename);
 
-public sealed record LivemapCheckRun(string Name, string Status, string? Conclusion, string? AppSlug);
+public sealed record LivemapCheckRun(string Name, string Status, string? Conclusion, string? AppSlug, long CheckSuiteId);
 
 public enum LivemapMergeResult
 {
     Merged,
     Refused,
+
+    // GitHub answers 405 while it still works out whether the pull request can merge, so the merge is asked for again.
+    NotMergeable,
 }
 
 public interface ILivemapPullRequests

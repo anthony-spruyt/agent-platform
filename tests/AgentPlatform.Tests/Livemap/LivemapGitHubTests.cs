@@ -158,18 +158,18 @@ public class LivemapGitHubTests
     }
 
     [Fact]
-    public async Task ListSuiteRuns_ReadsTheEventBranchAndBothRepositoriesOfEachRun()
+    public async Task ListSuiteRuns_ReadsTheEventBranchPathAndBothRepositoriesOfEachRun()
     {
         var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""
             {"total_count":2,"workflow_runs":[
               {"id":1,"event":"workflow_dispatch","head_branch":"main","repository":{"id":500},"head_repository":{"id":500}},
-              {"id":2,"event":"pull_request","head_branch":"livemap/build-26430253","repository":{"id":500},"head_repository":{"id":900}}]}
+              {"id":2,"event":"pull_request","head_branch":"livemap/build-26430253","path":".github/workflows/ci.yaml","repository":{"id":500},"head_repository":{"id":900}}]}
             """));
 
         var runs = await client.ListSuiteRunsAsync(5001, Ct);
 
         Assert.Equal(
-            new[] { new LivemapSuiteRun("workflow_dispatch", "main", 500, 500), new LivemapSuiteRun("pull_request", "livemap/build-26430253", 500, 900) },
+            new[] { new LivemapSuiteRun("workflow_dispatch", "main", 500, 500), new LivemapSuiteRun("pull_request", "livemap/build-26430253", 500, 900, ".github/workflows/ci.yaml") },
             runs);
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
@@ -251,6 +251,25 @@ public class LivemapGitHubTests
     public void ARun_IsTheForksOwnBuildRunOnlyWhenItsHeadIsTheForkAndItIsADispatchOrABuildPullRequest(string runEvent, string? branch, long repositoryId, long headRepositoryId, bool own)
     {
         Assert.Equal(own, new LivemapSuiteRun(runEvent, branch, repositoryId, headRepositoryId).IsOwnBuildRun);
+    }
+
+    [Theory]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 500, ".github/workflows/ci.yaml", true)]
+    [InlineData("push", "livemap/build-26430253", 500, 500, ".github/workflows/ci.yaml", false)]
+    [InlineData("workflow_dispatch", "livemap/build-26430253", 500, 500, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request_target", "livemap/build-26430253", 500, 500, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request", "livemap/build-26430254", 500, 500, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request", "main", 500, 500, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request", null, 500, 500, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 900, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 0, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request", "livemap/build-26430253", 0, 0, ".github/workflows/ci.yaml", false)]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 500, ".github/workflows/pr-title.yaml", false)]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 500, ".github/workflows/ci.yaml@refs/pull/7/merge", false)]
+    [InlineData("pull_request", "livemap/build-26430253", 500, 500, null, false)]
+    public void ARun_IsTheForksCiRunOfABuildBranchOnlyWhenEveryPartMatches(string runEvent, string? branch, long repositoryId, long headRepositoryId, string? path, bool ci)
+    {
+        Assert.Equal(ci, new LivemapSuiteRun(runEvent, branch, repositoryId, headRepositoryId, path).IsCiRunOf("livemap/build-26430253"));
     }
 
     private static readonly string[] ReportAndBuilds = ["report.json", "builds.json"];

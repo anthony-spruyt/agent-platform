@@ -25,9 +25,15 @@ public sealed class LivemapPullRequestActivities(
 {
     public static readonly TimeSpan ChecksLimit = TimeSpan.FromHours(3);
 
+    public static readonly TimeSpan MergeRetryWait = TimeSpan.FromSeconds(5);
+
     public const string PlanName = "LivemapBuildPlan";
     public const string OpenPullRequestName = "LivemapBuildOpenPullRequest";
     public const string AdvanceName = "LivemapBuildAdvance";
+
+    private const int MergeRetries = 3;
+
+    private const string MainMovedDetail = "Main moved on before the pull request was merged.";
 
     [Activity(PlanName)]
     public async Task<LivemapPlan> PlanAsync(long buildId)
@@ -146,6 +152,12 @@ public sealed class LivemapPullRequestActivities(
             return false;
         }
 
+        if (!options.Value.AutoMerge)
+        {
+            await builds.HoldAsync(buildId, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
         var mainHead = await pullRequests.GetMainHeadAsync(cancellationToken).ConfigureAwait(false);
         var verdict = LivemapMergeGate.Evaluate(await ReadFactsAsync(buildId, pull, head, mainHead, cancellationToken).ConfigureAwait(false), options.Value.RequiredChecks);
         switch (verdict.Outcome)
@@ -172,18 +184,49 @@ public sealed class LivemapPullRequestActivities(
         return false;
     }
 
-    private async Task<LivemapGateFacts> ReadFactsAsync(long buildId, LivemapPullRequest pull, string head, string mainHead, CancellationToken cancellationToken) => new(
-        Pull: pull,
-        Fork: options.Value.Repo,
-        Branch: LivemapBuildBranch.For(buildId),
-        ExpectedHeadSha: head,
-        AppLogin: await pullRequests.GetAppLoginAsync(cancellationToken).ConfigureAwait(false),
-        MainHead: mainHead,
-        HeadParents: await pullRequests.GetParentsAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false),
-        Files: await pullRequests.ListFilesAsync(pull.Number, cancellationToken).ConfigureAwait(false),
-        HeadFileMode: await pullRequests.GetFileModeAsync(pull.HeadSha, LivemapMergeGate.BuildsPath, cancellationToken).ConfigureAwait(false),
-        MainFileMode: await pullRequests.GetFileModeAsync(mainHead, LivemapMergeGate.BuildsPath, cancellationToken).ConfigureAwait(false),
-        CheckRuns: await pullRequests.ListCheckRunsAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false));
+    private async Task<LivemapGateFacts> ReadFactsAsync(long buildId, LivemapPullRequest pull, string head, string mainHead, CancellationToken cancellationToken)
+    {
+        var branch = LivemapBuildBranch.For(buildId);
+        var appLogin = await pullRequests.GetAppLoginAsync(cancellationToken).ConfigureAwait(false);
+        var parents = await pullRequests.GetParentsAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false);
+        var files = await pullRequests.ListFilesAsync(pull.Number, cancellationToken).ConfigureAwait(false);
+        var headMode = await pullRequests.GetFileModeAsync(pull.HeadSha, LivemapMergeGate.BuildsPath, cancellationToken).ConfigureAwait(false);
+        var mainMode = await pullRequests.GetFileModeAsync(mainHead, LivemapMergeGate.BuildsPath, cancellationToken).ConfigureAwait(false);
+        var checkRuns = await pullRequests.ListCheckRunsAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false);
+        return new LivemapGateFacts(
+            Pull: pull,
+            Fork: options.Value.Repo,
+            Branch: branch,
+            ExpectedHeadSha: head,
+            AppLogin: appLogin,
+            MainHead: mainHead,
+            HeadParents: parents,
+            Files: files,
+            HeadFileMode: headMode,
+            MainFileMode: mainMode,
+            CheckRuns: checkRuns,
+            CiSuiteIds: await CiSuitesAsync(checkRuns, branch, cancellationToken).ConfigureAwait(false));
+    }
+
+    // A required name only counts in the check suite of the fork's own CI run for the branch.
+    private async Task<IReadOnlySet<long>> CiSuitesAsync(IReadOnlyList<LivemapCheckRun> checkRuns, string branch, CancellationToken cancellationToken)
+    {
+        var suites = new HashSet<long>();
+        var candidates = checkRuns
+            .Where(run => run.AppSlug == LivemapMergeGate.ChecksApp && run.CheckSuiteId > 0 && options.Value.RequiredChecks.Contains(run.Name))
+            .Select(run => run.CheckSuiteId)
+            .Distinct();
+        foreach (var suite in candidates)
+        {
+            var runs = await github.ListSuiteRunsAsync(suite, cancellationToken).ConfigureAwait(false);
+            if (runs.Count > 0 && runs.All(run => run.IsCiRunOf(branch)))
+            {
+                suites.Add(suite);
+            }
+        }
+
+        return suites;
+    }
 
     private async Task SettleMergedAsync(long buildId, LivemapPullRequest pull, string head, CancellationToken cancellationToken)
     {
@@ -206,25 +249,50 @@ public sealed class LivemapPullRequestActivities(
         }
 
         var title = $"{Headline(classification, buildId)} (#{number.ToString(CultureInfo.InvariantCulture)})";
-        if (await pullRequests.MergeAsync(number, head, title, cancellationToken).ConfigureAwait(false) == LivemapMergeResult.Merged)
+        for (var retry = 0; ; retry++)
         {
-            await builds.MergedAsync(buildId, cancellationToken).ConfigureAwait(false);
-            return;
+            if (await ReopenIfMainMovedAsync(buildId, mainHead, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            var result = await pullRequests.MergeAsync(number, head, title, cancellationToken).ConfigureAwait(false);
+            if (result == LivemapMergeResult.Merged)
+            {
+                await builds.MergedAsync(buildId, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var after = await pullRequests.GetAsync(number, cancellationToken).ConfigureAwait(false);
+            if (after is { Merged: true } && after.HeadSha == head)
+            {
+                await builds.MergedAsync(buildId, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (result != LivemapMergeResult.NotMergeable || retry >= MergeRetries)
+            {
+                if (!await ReopenIfMainMovedAsync(buildId, mainHead, cancellationToken).ConfigureAwait(false))
+                {
+                    await builds.FlagPullRequestAsync(buildId, "GitHub refused to merge the pull request.", cancellationToken).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
+            await Task.Delay(MergeRetryWait, time, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> ReopenIfMainMovedAsync(long buildId, string mainHead, CancellationToken cancellationToken)
+    {
+        if (await pullRequests.GetMainHeadAsync(cancellationToken).ConfigureAwait(false) == mainHead)
+        {
+            return false;
         }
 
-        var after = await pullRequests.GetAsync(number, cancellationToken).ConfigureAwait(false);
-        if (after is { Merged: true } && after.HeadSha == head)
-        {
-            await builds.MergedAsync(buildId, cancellationToken).ConfigureAwait(false);
-        }
-        else if (await pullRequests.GetMainHeadAsync(cancellationToken).ConfigureAwait(false) != mainHead)
-        {
-            await builds.ReopenAsync(buildId, "Main moved on before the pull request was merged.", LivemapBuildActivities.MaxAttempts, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            await builds.FlagPullRequestAsync(buildId, "GitHub refused to merge the pull request.", cancellationToken).ConfigureAwait(false);
-        }
+        await builds.ReopenAsync(buildId, MainMovedDetail, LivemapBuildActivities.MaxAttempts, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private static string Headline(LivemapClassification classification, long buildId) =>

@@ -48,7 +48,7 @@ public class LivemapBuildPullRequestWorkflowTests
     }
 
     private static List<LivemapCheckRun> Pending() =>
-        [.. RequiredChecks.Select(name => new LivemapCheckRun(name, "in_progress", null, "github-actions"))];
+        [.. RequiredChecks.Select(name => CheckRun(name, "in_progress", null))];
 
     private static string HeadOfThePullRequest(LivemapBuildRig rig) => rig.PullRequests.CheckRunReads.First();
 
@@ -152,7 +152,7 @@ public class LivemapBuildPullRequestWorkflowTests
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = await RigAsync();
         Succeed(rig, KnownArtifact());
-        rig.PullRequests.DefaultChecks = [new LivemapCheckRun(RequiredChecks[0], "completed", "failure", "github-actions"), .. GreenChecks().Skip(1)];
+        rig.PullRequests.DefaultChecks = [CheckRun(RequiredChecks[0], conclusion: "failure"), .. GreenChecks().Skip(1)];
 
         var outcome = await RunToTheEndAsync(env, rig);
 

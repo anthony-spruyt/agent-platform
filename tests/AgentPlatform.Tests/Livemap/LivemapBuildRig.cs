@@ -38,6 +38,8 @@ internal sealed class LivemapBuildRig
 
     public static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    public const long CiSuiteId = 8100;
+
     public const long ExeCaptureSuiteId = 8001;
     public const long CompatSuiteId = 8002;
 
@@ -94,7 +96,11 @@ internal sealed class LivemapBuildRig
         Store = new LivemapBuildStore(Data.Factory, new FixedTimeProvider(Now));
         Activities = new LivemapBuildActivities(GitHub, Store);
         GitHub.ForkBuilds = ForkBuilds;
+        GitHub.SuiteRunsBySuite[CiSuiteId] = [CiRun()];
     }
+
+    public static LivemapSuiteRun CiRun(string? path = LivemapSuiteRun.CiWorkflowPath, string runEvent = "pull_request", string? branch = null, long headRepositoryId = FakeLivemapGitHub.ForkId) =>
+        new(runEvent, branch ?? LivemapBuildBranch.For(BuildId), FakeLivemapGitHub.ForkId, headRepositoryId, path);
 
     public InMemoryRunData Data { get; }
 
@@ -117,11 +123,15 @@ internal sealed class LivemapBuildRig
         RequiredChecks = [.. RequiredChecks],
     };
 
-    public LivemapPullRequestActivities PullRequestActivities(TimeProvider? time = null) =>
-        new(Options.Create(Config), Store, PullRequests, GitHub, BuildsSchema, time ?? new FixedTimeProvider(Now));
+    public InstantTimeProvider Time { get; } = new(Now);
 
-    public static List<LivemapCheckRun> GreenChecks() =>
-        [.. RequiredChecks.Select(name => new LivemapCheckRun(name, "completed", "success", "github-actions"))];
+    public LivemapPullRequestActivities PullRequestActivities(TimeProvider? time = null) =>
+        new(Options.Create(Config), Store, PullRequests, GitHub, BuildsSchema, time ?? Time);
+
+    public static LivemapCheckRun CheckRun(string name, string status = "completed", string? conclusion = "success", string? app = "github-actions", long suite = CiSuiteId) =>
+        new(name, status, conclusion, app, suite);
+
+    public static List<LivemapCheckRun> GreenChecks() => [.. RequiredChecks.Select(name => CheckRun(name))];
 
     public async Task SeedClassifiedAsync(LivemapClassification classification = LivemapClassification.Known)
     {

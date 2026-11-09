@@ -85,7 +85,7 @@ public sealed class LivemapGitHub(HttpClient http, IGitHubInstallationTokenProvi
             "workflow run list",
             cancellationToken).ConfigureAwait(false);
         return list.WorkflowRuns is { } runs
-            ? [.. runs.Select(run => new LivemapSuiteRun(run.Event ?? string.Empty, run.HeadBranch, run.Repository?.Id ?? 0, run.HeadRepository?.Id ?? 0))]
+            ? [.. runs.Select(run => new LivemapSuiteRun(run.Event ?? string.Empty, run.HeadBranch, run.Repository?.Id ?? 0, run.HeadRepository?.Id ?? 0, run.Path))]
             : throw new GitHubApiException("GitHub workflow run list returned no runs array.", HttpStatusCode.OK);
     }
 
@@ -224,7 +224,7 @@ public sealed class LivemapGitHub(HttpClient http, IGitHubInstallationTokenProvi
 
     private sealed record RunListDto(List<ListedRunDto>? WorkflowRuns);
 
-    private sealed record ListedRunDto(string? Event, string? HeadBranch, RepositoryDto? Repository, RepositoryDto? HeadRepository);
+    private sealed record ListedRunDto(string? Event, string? HeadBranch, string? Path, RepositoryDto? Repository, RepositoryDto? HeadRepository);
 
     private sealed record RepositoryDto(long Id);
 }

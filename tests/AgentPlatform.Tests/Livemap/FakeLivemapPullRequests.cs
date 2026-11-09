@@ -46,6 +46,8 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
 
     public LivemapMergeResult MergeResult { get; set; } = LivemapMergeResult.Merged;
 
+    public int NotMergeableAnswers { get; set; }
+
     public Func<string, Task>? Hook { get; set; }
 
     public List<string> Calls { get; } = [];
@@ -146,6 +148,12 @@ internal sealed class FakeLivemapPullRequests : ILivemapPullRequests
     {
         await EnterAsync($"merge:{number}");
         Merges.Add((number, sha, title));
+        if (NotMergeableAnswers > 0)
+        {
+            NotMergeableAnswers--;
+            return LivemapMergeResult.NotMergeable;
+        }
+
         if (MergeResult == LivemapMergeResult.Merged && Pulls.TryGetValue(number, out var pull))
         {
             Pulls[number] = pull with { State = "closed", Merged = true };

@@ -12,6 +12,8 @@ public class LivemapMergeGateTests
 
     private static readonly string Main = new('b', 40);
 
+    private const long CiSuite = 7000;
+
     private static readonly string[] _required = ["lint / MegaLinter", "repo / Build, test, package"];
 
     private static LivemapGateFacts Good() => new(
@@ -25,10 +27,11 @@ public class LivemapMergeGateTests
         Files: [new LivemapPullRequestFile("data/builds.json", "modified", null)],
         HeadFileMode: "100644",
         MainFileMode: "100644",
-        CheckRuns: [.. _required.Select(name => Run(name))]);
+        CheckRuns: [.. _required.Select(name => Run(name))],
+        CiSuiteIds: new HashSet<long> { CiSuite });
 
-    private static LivemapCheckRun Run(string name, string status = "completed", string? conclusion = "success", string? app = "github-actions") =>
-        new(name, status, status == "completed" ? conclusion : null, app);
+    private static LivemapCheckRun Run(string name, string status = "completed", string? conclusion = "success", string? app = "github-actions", long suite = CiSuite) =>
+        new(name, status, status == "completed" ? conclusion : null, app, suite);
 
     private static LivemapGateVerdict Evaluate(LivemapGateFacts facts, params string[] required) =>
         LivemapMergeGate.Evaluate(facts, required.Length == 0 ? _required : required);
@@ -192,6 +195,35 @@ public class LivemapMergeGateTests
         var verdict = Evaluate(Good() with { CheckRuns = [.. Good().CheckRuns, Run("lint / MegaLinter", conclusion: "failure", app: "some-other-app")] });
 
         Assert.Equal(LivemapGateOutcome.Passed, verdict.Outcome);
+    }
+
+    [Fact]
+    public void ARequiredNameInASuiteThatIsNotTheForksCiRun_NeverCounts()
+    {
+        var verdict = Evaluate(Good() with
+        {
+            CheckRuns = [Run("lint / MegaLinter"), Run("repo / Build, test, package", suite: CiSuite + 1)],
+        });
+
+        Assert.Equal(LivemapGateOutcome.Pending, verdict.Outcome);
+        Assert.Equal(["repo / Build, test, package"], verdict.Names);
+    }
+
+    [Fact]
+    public void ARequiredNameInASuiteThatIsNotTheForksCiRun_CannotFailTheOneInTheCiRun()
+    {
+        var verdict = Evaluate(Good() with { CheckRuns = [.. Good().CheckRuns, Run("lint / MegaLinter", conclusion: "failure", suite: CiSuite + 1)] });
+
+        Assert.Equal(LivemapGateOutcome.Passed, verdict.Outcome);
+    }
+
+    [Fact]
+    public void WithNoCiRunOfTheForkForTheHead_EveryRequiredCheckIsPending()
+    {
+        var verdict = Evaluate(Good() with { CiSuiteIds = new HashSet<long>() });
+
+        Assert.Equal(LivemapGateOutcome.Pending, verdict.Outcome);
+        Assert.Equal(_required, verdict.Names);
     }
 
     [Fact]

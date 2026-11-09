@@ -22,7 +22,7 @@ public sealed record LivemapGateVerdict(LivemapGateOutcome Outcome, IReadOnlyLis
     public static LivemapGateVerdict Refused(string reason) => new(LivemapGateOutcome.Refused, [], reason);
 }
 
-// Everything the gate reads comes from the GitHub API for the head sha the worker committed.
+// Everything the gate reads comes from the GitHub API for the head sha the worker committed; CiSuiteIds holds the check suites of the fork's own CI run for it.
 public sealed record LivemapGateFacts(
     LivemapPullRequest Pull,
     string Fork,
@@ -34,7 +34,8 @@ public sealed record LivemapGateFacts(
     IReadOnlyList<LivemapPullRequestFile> Files,
     string? HeadFileMode,
     string? MainFileMode,
-    IReadOnlyList<LivemapCheckRun> CheckRuns);
+    IReadOnlyList<LivemapCheckRun> CheckRuns,
+    IReadOnlySet<long> CiSuiteIds);
 
 public static class LivemapMergeGate
 {
@@ -42,9 +43,9 @@ public static class LivemapMergeGate
 
     public const string PlainFileMode = "100644";
 
-    private const string MainBranch = "main";
+    public const string ChecksApp = "github-actions";
 
-    private const string ChecksApp = "github-actions";
+    private const string MainBranch = "main";
 
     public static LivemapGateVerdict Evaluate(LivemapGateFacts facts, IReadOnlyList<string> requiredChecks)
     {
@@ -61,7 +62,7 @@ public static class LivemapMergeGate
             return LivemapGateVerdict.Refused(reason);
         }
 
-        return facts.HeadParents[0] != facts.MainHead ? LivemapGateVerdict.MainMoved : Checks(facts.CheckRuns, requiredChecks);
+        return facts.HeadParents[0] != facts.MainHead ? LivemapGateVerdict.MainMoved : Checks(facts.CheckRuns, facts.CiSuiteIds, requiredChecks);
     }
 
     private static string? Refusal(LivemapGateFacts facts)
@@ -107,13 +108,13 @@ public static class LivemapMergeGate
             : $"{BuildsPath} is not a plain file.";
     }
 
-    private static LivemapGateVerdict Checks(IReadOnlyList<LivemapCheckRun> runs, IReadOnlyList<string> required)
+    private static LivemapGateVerdict Checks(IReadOnlyList<LivemapCheckRun> runs, IReadOnlySet<long> ciSuites, IReadOnlyList<string> required)
     {
         var failed = new List<string>();
         var pending = new List<string>();
         foreach (var name in required)
         {
-            var own = runs.Where(run => run.Name == name && run.AppSlug == ChecksApp).ToList();
+            var own = runs.Where(run => run.Name == name && run.AppSlug == ChecksApp && ciSuites.Contains(run.CheckSuiteId)).ToList();
             if (own.Any(run => run.Status == "completed" && run.Conclusion != "success"))
             {
                 failed.Add(name);

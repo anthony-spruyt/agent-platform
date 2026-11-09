@@ -220,7 +220,7 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
                 throw new GitHubApiException("GitHub check runs read returned no check runs array.", HttpStatusCode.OK);
             }
 
-            runs.AddRange(batch.Select(run => new LivemapCheckRun(run.Name ?? string.Empty, run.Status ?? string.Empty, run.Conclusion, run.App?.Slug)));
+            runs.AddRange(batch.Select(run => new LivemapCheckRun(run.Name ?? string.Empty, run.Status ?? string.Empty, run.Conclusion, run.App?.Slug, run.CheckSuite?.Id ?? 0)));
             if (batch.Count == 0 || runs.Count >= list.TotalCount)
             {
                 return runs;
@@ -241,7 +241,12 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
         var payload = new JsonObject { ["merge_method"] = "squash", ["sha"] = sha, ["commit_title"] = title };
         using var request = GitHubHttp.Request(HttpMethod.Put, $"repos/{owner}/{name}/pulls/{number}/merge", token, Json(payload));
         using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (response.StatusCode is HttpStatusCode.MethodNotAllowed or HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity)
+        if (response.StatusCode == HttpStatusCode.MethodNotAllowed)
+        {
+            return LivemapMergeResult.NotMergeable;
+        }
+
+        if (response.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity)
         {
             return LivemapMergeResult.Refused;
         }
@@ -250,17 +255,19 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
         return LivemapMergeResult.Merged;
     }
 
+    // A pull request that is already closed or gone answers 404 or 422, and either way it is closed.
     public async Task ClosePullRequestAsync(int number, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
 
         var (owner, name) = Fork();
         var token = await tokens.GetTokenAsync($"{owner}/{name}", _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
-        await GitHubHttp.SendIfPresentAsync(
-            http,
-            GitHubHttp.Request(HttpMethod.Patch, $"repos/{owner}/{name}/pulls/{number}", token, Json(new JsonObject { ["state"] = "closed" })),
-            "pull request close",
-            cancellationToken).ConfigureAwait(false);
+        using var request = GitHubHttp.Request(HttpMethod.Patch, $"repos/{owner}/{name}/pulls/{number}", token, Json(new JsonObject { ["state"] = "closed" }));
+        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode is not (HttpStatusCode.NotFound or HttpStatusCode.UnprocessableEntity))
+        {
+            GitHubHttp.EnsureSuccess(response, "pull request close");
+        }
     }
 
     // A branch that is already gone answers 404 or 422, and either way it is deleted.
@@ -366,9 +373,11 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
 
     private sealed record CheckRunListDto(int TotalCount, List<CheckRunDto>? CheckRuns);
 
-    private sealed record CheckRunDto(string? Name, string? Status, string? Conclusion, CheckRunAppDto? App);
+    private sealed record CheckRunDto(string? Name, string? Status, string? Conclusion, CheckRunAppDto? App, CheckRunSuiteDto? CheckSuite);
 
     private sealed record CheckRunAppDto(string? Slug);
+
+    private sealed record CheckRunSuiteDto(long Id);
 
     private sealed record AppDto(string? Slug);
 }

@@ -13,12 +13,21 @@ public sealed record LivemapRun(long Id, string Status, string? Conclusion, stri
     public bool Succeeded => IsCompleted && Conclusion == "success";
 }
 
-public sealed record LivemapSuiteRun(string Event, string? HeadBranch, long RepositoryId, long HeadRepositoryId)
+public sealed record LivemapSuiteRun(string Event, string? HeadBranch, long RepositoryId, long HeadRepositoryId, string? Path = null)
 {
+    public const string CiWorkflowPath = ".github/workflows/ci.yaml";
+
     public bool IsOwnBuildRun =>
         HeadRepositoryId > 0
         && HeadRepositoryId == RepositoryId
         && (Event == "workflow_dispatch" || (Event == "pull_request" && LivemapBuildBranch.IsMatch(HeadBranch)));
+
+    public bool IsCiRunOf(string branch) =>
+        HeadRepositoryId > 0
+        && HeadRepositoryId == RepositoryId
+        && Event == "pull_request"
+        && HeadBranch == branch
+        && Path == CiWorkflowPath;
 }
 
 public interface ILivemapGitHub
