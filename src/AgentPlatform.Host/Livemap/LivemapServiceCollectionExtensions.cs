@@ -71,7 +71,22 @@ public static class LivemapServiceCollectionExtensions
         {
             throw new InvalidOperationException("Livemap:PollInterval must be at least one minute.");
         }
+
+        if (options.TrackingIssue < 1)
+        {
+            throw new InvalidOperationException("Livemap:TrackingIssue must be the number of the fork's tracking issue.");
+        }
+
+        if (!AreCheckNames(options.RequiredChecks))
+        {
+            throw new InvalidOperationException("Livemap:RequiredChecks must list at least one check run name, each trimmed, non-empty and given once.");
+        }
     }
+
+    private static bool AreCheckNames(List<string> names) =>
+        names.Count > 0
+        && names.All(name => !string.IsNullOrEmpty(name) && name == name.Trim())
+        && names.Distinct(StringComparer.Ordinal).Count() == names.Count;
 
     private static bool IsRepoRelativePath(string? path) =>
         path is { Length: > 0 }
