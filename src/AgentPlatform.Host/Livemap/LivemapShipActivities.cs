@@ -69,7 +69,7 @@ public sealed class LivemapShipActivities(
         }
 
         var mainHead = await forkPulls.GetMainHeadAsync(cancellationToken).ConfigureAwait(false);
-        var verdict = LivemapReleaseGate.Evaluate(await ReadReleaseFactsAsync(pull, mainHead, cancellationToken).ConfigureAwait(false), options.Value.ReleaseRequiredChecks);
+        var verdict = LivemapReleaseGate.Evaluate(await ReadReleaseFactsAsync(pull, cancellationToken).ConfigureAwait(false), options.Value.ReleaseRequiredChecks);
         if (verdict.Outcome != LivemapGateOutcome.Passed)
         {
             return await WaitAsync(row, ReleaseLimit, Describe(verdict), cancellationToken).ConfigureAwait(false);
@@ -85,7 +85,7 @@ public sealed class LivemapShipActivities(
         return false;
     }
 
-    private async Task<LivemapReleaseFacts> ReadReleaseFactsAsync(LivemapPullRequest pull, string mainHead, CancellationToken cancellationToken)
+    private async Task<LivemapReleaseFacts> ReadReleaseFactsAsync(LivemapPullRequest pull, CancellationToken cancellationToken)
     {
         var commit = await forkPulls.GetCommitAsync(pull.HeadSha, cancellationToken).ConfigureAwait(false);
         var version = await forkPulls.ReadFileAsync(pull.HeadSha, LivemapReleaseGate.VersionPath, cancellationToken).ConfigureAwait(false);
@@ -94,7 +94,6 @@ public sealed class LivemapShipActivities(
             Pull: pull,
             Fork: options.Value.Repo,
             ReleaseBot: options.Value.ReleaseBot,
-            MainHead: mainHead,
             HeadParents: commit.Parents,
             Files: commit.Files,
             VersionAtHead: version,

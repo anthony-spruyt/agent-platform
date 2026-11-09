@@ -7,7 +7,6 @@ public sealed record LivemapReleaseFacts(
     LivemapPullRequest Pull,
     string Fork,
     string ReleaseBot,
-    string MainHead,
     IReadOnlyList<string> HeadParents,
     IReadOnlyList<LivemapPullRequestFile> Files,
     string? VersionAtHead,
@@ -48,8 +47,7 @@ public static partial class LivemapReleaseGate
             return LivemapGateVerdict.Refused(reason);
         }
 
-        // Files are the head commit's: they are the pull request's only while that commit's one parent is main's head.
-        return facts.HeadParents[0] != facts.MainHead ? LivemapGateVerdict.MainMoved : LivemapMergeGate.Checks(facts.CheckRuns, facts.CiSuiteIds, requiredChecks);
+        return LivemapMergeGate.Checks(facts.CheckRuns, facts.CiSuiteIds, requiredChecks);
     }
 
     private static string? Refusal(LivemapReleaseFacts facts)

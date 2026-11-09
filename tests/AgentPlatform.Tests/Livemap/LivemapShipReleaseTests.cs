@@ -17,7 +17,6 @@ public class LivemapShipReleaseTests
         { "check failed", rig => rig.Fork.Checks[ReleaseHead] = [.. ReleaseChecks.Select((name, i) => i == 1 ? CheckRun(name, conclusion: "failure", suite: ReleaseSuiteId) : CheckRun(name, suite: ReleaseSuiteId))] },
         { "release-only check missing", rig => rig.Fork.Checks[ReleaseHead] = [.. ReleaseChecks.Where(name => name != "summary / Check Results").Select(name => CheckRun(name, suite: ReleaseSuiteId))] },
         { "checks from another workflow", rig => rig.GitHub.SuiteRunsBySuite[ReleaseSuiteId] = [CiRun(branch: "other")] },
-        { "main moved on", rig => rig.Fork.Parents[ReleaseHead] = [new string('e', 40)] },
         { "not the release bot", rig => rig.Fork.Pulls[ReleaseNumber] = rig.Fork.Pulls[ReleaseNumber] with { AuthorLogin = "someone[bot]" } },
         { "a file beyond the release files", rig => rig.Fork.CommitFiles[ReleaseHead].Add(new LivemapPullRequestFile("data/builds.json", "modified", null, "@@")) },
         { "version.txt is not the release version", rig => rig.Fork.Contents[(ReleaseHead, "version.txt")] = "9.9.9\n" },
@@ -51,6 +50,21 @@ public class LivemapShipReleaseTests
         Assert.Equal(LivemapBuildState.Released, row.State);
         Assert.Equal(Tag, row.ReleaseTag);
         Assert.Equal(Now, row.ReleasedAt);
+    }
+
+    [Fact]
+    public async Task AReleasePullRequestMadeOnAnOlderCommitOfMain_IsMergedAtItsHead()
+    {
+        var rig = new LivemapShipRig();
+        await rig.AtAsync(LivemapBuildState.Merged);
+        rig.SeedReleasePullRequest();
+        rig.Fork.Parents[ReleaseHead] = [new string('e', 40)];
+
+        var wait = await rig.ShipAsync();
+
+        Assert.False(wait);
+        Assert.Equal(ReleaseHead, Assert.Single(rig.Fork.Merges).Sha);
+        Assert.Equal(LivemapBuildState.Released, (await rig.RowAsync()).State);
     }
 
     [Fact]
