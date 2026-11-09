@@ -34,6 +34,8 @@ public static class WorkerServiceCollectionExtensions
             .AddWorkflow<RenovateTriageWorkflow>()
             .AddWorkflow<RenovateTriageSweeperWorkflow>()
             .AddWorkflow<LivemapPollWorkflow>()
+            .AddWorkflow<LivemapBuildWorkflow>()
+            .AddWorkflow<LivemapWakeWorkflow>()
             .AddSingletonActivities<PingActivities>()
             .AddSingletonActivities<PromptActivities>()
             .AddSingletonActivities<RunDataActivities>()
@@ -44,6 +46,8 @@ public static class WorkerServiceCollectionExtensions
             .AddScopedActivities<TriageCheckActivities>()
             .AddScopedActivities<SweeperActivities>()
             .AddScopedActivities<LivemapPollActivities>()
+            .AddScopedActivities<LivemapBuildActivities>()
+            .AddScopedActivities<LivemapWakeActivities>()
             .AddScopedActivities<AgentPodActivities>();
 
         services

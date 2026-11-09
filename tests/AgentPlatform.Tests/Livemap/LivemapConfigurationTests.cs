@@ -108,6 +108,50 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void TheWorker_RunsTheBuildWorkflowAndItsActivities()
+    {
+        using var provider = Build();
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(typeof(LivemapBuildWorkflow), options.Workflows.Select(w => w.Type));
+        foreach (var name in new[] { LivemapBuildActivities.InFlightName, LivemapBuildActivities.DispatchName, LivemapBuildActivities.GetRunName, LivemapBuildActivities.ClassifyName, LivemapBuildActivities.ParkName })
+        {
+            Assert.Contains(options.Activities, a => a.Name == name);
+        }
+    }
+
+    [Fact]
+    public void TheBuildActivities_CanBeBuilt_WithTheirCollaborators()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapBuildActivities>());
+    }
+
+    [Fact]
+    public void TheWorker_RunsTheWakeWorkflowAndItsActivity()
+    {
+        using var provider = Build();
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(typeof(LivemapWakeWorkflow), options.Workflows.Select(w => w.Type));
+        Assert.Contains(options.Activities, a => a.Name == LivemapWakeActivities.WakeName);
+    }
+
+    [Fact]
+    public void TheWakeActivities_CanBeBuilt_WithTheirCollaborators()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapWakeActivities>());
+        Assert.IsType<TemporalLivemapBuildSignaler>(scope.ServiceProvider.GetRequiredService<ILivemapBuildSignaler>());
+    }
+
+    [Fact]
     public void TheWorker_HostsTheScheduleService()
     {
         using var provider = Build();
@@ -124,6 +168,41 @@ public class LivemapConfigurationTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapPollActivities>());
         Assert.IsType<SteamAppInfoClient>(scope.ServiceProvider.GetRequiredService<ISteamAppInfo>());
         Assert.IsType<ShippedBuildsReader>(scope.ServiceProvider.GetRequiredService<IShippedBuilds>());
+        Assert.IsType<TemporalLivemapBuildStarter>(scope.ServiceProvider.GetRequiredService<ILivemapBuildStarter>());
+    }
+
+    [Fact]
+    public void TheGitHubClient_TalksToTheGitHubApi_AtThePinnedVersion()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapGitHub));
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+    }
+
+    [Fact]
+    public void TheGitHubClient_LeavesRedirectsToItsOwnCode_SoTheTokenStaysOnTheFirstHop()
+    {
+        using var provider = Build(Enabled);
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapGitHub));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void TheGitHubClient_CanBeBuilt_ByTheActivitiesThatNeedIt()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<LivemapGitHub>(scope.ServiceProvider.GetRequiredService<ILivemapGitHub>());
     }
 
     [Fact]
