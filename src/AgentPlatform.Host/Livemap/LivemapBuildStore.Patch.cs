@@ -44,7 +44,7 @@ public sealed partial class LivemapBuildStore
                     return null;
                 }
 
-                build.PatchNotes = notes.Length > LivemapResult.MaxNotesLength ? notes[..LivemapResult.MaxNotesLength] : notes;
+                build.PatchNotes = CutOnCharacter(notes, LivemapResult.MaxNotesLength);
                 return LivemapBuildState.Patching;
             },
             cancellationToken).ConfigureAwait(false) is not null;
@@ -119,6 +119,17 @@ public sealed partial class LivemapBuildStore
                 return LivemapBuildState.OwnerReview;
             },
             cancellationToken).ConfigureAwait(false) is not null;
+
+    // A lone surrogate cannot be written to the database, so a cut never leaves half of a pair.
+    public static string CutOnCharacter(string text, int max)
+    {
+        if (text.Length <= max)
+        {
+            return text;
+        }
+
+        return char.IsHighSurrogate(text[max - 1]) ? text[..(max - 1)] : text[..max];
+    }
 
     private static void ClearPatch(LivemapBuild build)
     {

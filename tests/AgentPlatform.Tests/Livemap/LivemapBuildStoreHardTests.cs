@@ -162,6 +162,19 @@ public class LivemapBuildStoreHardTests
         Assert.Equal(LivemapResult.MaxNotesLength, (await Store(data).FindAsync(Build, Ct))!.PatchNotes!.Length);
     }
 
+    [Fact]
+    public async Task TheCapOfTheNotes_NeverSplitsACharacterMadeOfTwoUtf16Units()
+    {
+        var data = await SeedPatchingAsync();
+        var straddling = new string('n', LivemapResult.MaxNotesLength - 1) + "\U0001F600" + "tail";
+
+        await Store(data).SavePartialAsync(Build, straddling, Ct);
+
+        var notes = (await Store(data).FindAsync(Build, Ct))!.PatchNotes!;
+        Assert.False(char.IsHighSurrogate(notes[^1]));
+        Assert.Equal(LivemapResult.MaxNotesLength - 1, notes.Length);
+    }
+
     [Theory]
     [MemberData(nameof(StatesOtherThanPatching))]
     public async Task ABuildThatIsNotPatching_KeepsNoPartialNotes(LivemapBuildState state)
