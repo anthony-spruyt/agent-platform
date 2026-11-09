@@ -442,8 +442,10 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
         {
             await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
             var now = time.GetUtcNow();
+            // A merged build is shipping, even while parked, and its pin pull request may be open: it finishes.
             var older = await db.LivemapBuilds
                 .Where(b => b.BuildId < buildId
+                    && b.MergedAt == null
                     && _supersedable.Contains(b.State))
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);

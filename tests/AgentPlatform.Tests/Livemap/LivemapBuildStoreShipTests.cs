@@ -462,4 +462,15 @@ public class LivemapBuildStoreShipTests
         Assert.Equal(0, await Store(data).SupersedeOlderAsync(Build + 1, Ct));
         Assert.Equal(state, (await ReadAsync(data)).State);
     }
+
+    [Theory]
+    [MemberData(nameof(ShipStates))]
+    public async Task ANewerBuild_NeverSupersedesAShipBuildThatIsParked(LivemapBuildState state)
+    {
+        var data = await SeedAsync(state);
+        Assert.Equal(LivemapBuildState.Parked, await Store(data).ParkAsync(Build, "GitHub was down", 3, TimeSpan.FromMinutes(10), Ct));
+
+        Assert.Equal(0, await Store(data).SupersedeOlderAsync(Build + 1, Ct));
+        Assert.Equal(LivemapBuildState.Parked, (await ReadAsync(data)).State);
+    }
 }
