@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.21.0...v1.22.0) (2026-11-08)
+
+
+### Features
+
+* **livemap:** detect new Enshrouded server builds ([#274](https://github.com/anthony-spruyt/agent-platform/issues/274)) ([b15471a](https://github.com/anthony-spruyt/agent-platform/commit/b15471ad1569db203d51d7f2f2fd67c0481aa82a))
+
 ## [1.21.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.20.5...v1.21.0) (2026-11-08)
 
 
