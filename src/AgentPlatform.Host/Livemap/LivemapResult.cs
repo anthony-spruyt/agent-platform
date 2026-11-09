@@ -40,6 +40,33 @@ public sealed record LivemapResult(LivemapResultStatus Status, string Summary, s
         return true;
     }
 
+    // The same limits apply where the worker commits the files, so a stored result is held to them again.
+    public static string? CheckFiles(IReadOnlyList<LivemapFile> files)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count > MaxFiles)
+        {
+            return $"data.files may hold at most {MaxFiles} files.";
+        }
+
+        foreach (var file in files)
+        {
+            if (PathError(file.Path) is { } pathError)
+            {
+                return pathError;
+            }
+
+            if (file.Content.Length > MaxFileLength)
+            {
+                return $"The content of {file.Path} is over {MaxFileLength} characters.";
+            }
+        }
+
+        return files.Sum(f => f.Content.Length) > MaxFilesLength
+            ? $"The files together are over {MaxFilesLength} characters."
+            : ClashError(files);
+    }
+
     private static string? Check(SubmitResultPayload payload, out LivemapResult? parsed)
     {
         parsed = null;
@@ -156,27 +183,12 @@ public sealed record LivemapResult(LivemapResultStatus Status, string Summary, s
                 return "each data.files entry needs a string path and a string content.";
             }
 
-            if (PathError(path) is { } pathError)
-            {
-                return pathError;
-            }
-
-            if (content.Length > MaxFileLength)
-            {
-                return $"The content of {path} is over {MaxFileLength} characters.";
-            }
-
             read.Add(new LivemapFile(path, content));
         }
 
-        if (read.Sum(f => f.Content.Length) > MaxFilesLength)
+        if (CheckFiles(read) is { } error)
         {
-            return $"The files together are over {MaxFilesLength} characters.";
-        }
-
-        if (ClashError(read) is { } clash)
-        {
-            return clash;
+            return error;
         }
 
         files = read;
@@ -199,7 +211,7 @@ public sealed record LivemapResult(LivemapResultStatus Status, string Summary, s
             : null;
     }
 
-    private static string? ClashError(List<LivemapFile> files)
+    private static string? ClashError(IReadOnlyList<LivemapFile> files)
     {
         var paths = files.Select(f => f.Path).ToList();
         foreach (var path in paths)
