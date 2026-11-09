@@ -24,7 +24,6 @@ public class LivemapReleaseGateTests
         Pull: new LivemapPullRequest(33, "open", false, false, "main", Fork, Branch, Fork, Head, Bot, "Bot", 0, "chore(main): release 1.10.0"),
         Fork: Fork,
         ReleaseBot: Bot,
-        MainHead: Main,
         HeadParents: [Main],
         Files:
         [
@@ -169,22 +168,6 @@ public class LivemapReleaseGateTests
         var verdict = Evaluate(WithCMake(Good(), Patch + "\n\\ No newline at end of file"));
 
         Assert.Equal(LivemapGateOutcome.Passed, verdict.Outcome);
-    }
-
-    [Fact]
-    public void WhenMainHasMovedOnFromTheParent_TheVerdictIsMainMoved_EvenWithEveryCheckGreen()
-    {
-        var verdict = Evaluate(Good() with { MainHead = new string('e', 40) });
-
-        Assert.Equal(LivemapGateOutcome.MainMoved, verdict.Outcome);
-    }
-
-    [Fact]
-    public void ARefusalOutranksAMovedMain()
-    {
-        var verdict = Evaluate(Good() with { MainHead = new string('e', 40), Files = [] });
-
-        Assert.Equal(LivemapGateOutcome.Refused, verdict.Outcome);
     }
 
     [Fact]

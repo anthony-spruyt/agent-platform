@@ -481,11 +481,11 @@ The steps keep their results in the row: `release_tag` and `release_sha256`, `pi
 2. Otherwise exactly one pull request must be open from the branch `release-please--branches--main` into `main`. None, or more than one, is waited on.
 3. The release gate passes only when all of this holds:
    - The pull request is open, not a draft, between branches of the fork, and `Livemap:ReleaseBot` opened it. Its title is `chore(main): release <version>`.
-   - It is one commit whose parent is the head of `main`. It changes only `.release-please-manifest.json`, `CHANGELOG.md`, `version.txt` and the project version line of `CMakeLists.txt`, and `version.txt` at the head holds the title's version.
+   - Its head is one commit with a single parent. It changes only `.release-please-manifest.json`, `CHANGELOG.md`, `version.txt` and the project version line of `CMakeLists.txt`, and `version.txt` at the head holds the title's version.
    - Every check run named in `Livemap:ReleaseRequiredChecks` exists on the head, comes from GitHub Actions, concluded `success` and sits in the check suite of the fork's own CI run for the branch.
 4. The pull request is squash merged like the data pull request: the head commit as `sha`, a title that ends with `(#<number>)`, `main` read again before each try, up to 3 tries after a 405, 5 seconds apart, and a pull request merged at the head commit after a lost answer counts as merged. The row becomes `Released` with the tag `v<version>`.
 
-No pull request or more than one, a required check that has not finished or has failed, a `main` that moved, a pull request the gate refuses and a merge GitHub refuses are all waited on, and 6 hours after the row last changed the build is flagged for the owner with the reason.
+No pull request or more than one, a required check that has not finished or has failed, a `main` that moves before the merge, a pull request the gate refuses and a merge GitHub refuses are all waited on, and 6 hours after the row last changed the build is flagged for the owner with the reason.
 
 **Check** (`Released`): the release is read by its tag. It must be published and immutable, and have `EnshroudedLiveMap-<version>.zip` and `EnshroudedLiveMap-<version>.zip.sha256`. The zip asset must carry a `sha256` digest, and the first field of the `.sha256` asset must equal it.
 The attestation check then reads the build provenance GitHub holds for that digest. One statement must name the zip with that digest, come from `.github/workflows/release.yaml` at `refs/tags/<tag>` of the fork, and carry the tag's commit. The fork's `data/builds.json` at that commit must list the build.
