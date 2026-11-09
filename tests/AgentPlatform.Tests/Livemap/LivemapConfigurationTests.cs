@@ -131,6 +131,27 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void TheWorker_RunsTheWakeWorkflowAndItsActivity()
+    {
+        using var provider = Build();
+
+        var options = provider.GetRequiredService<IOptionsMonitor<TemporalWorkerServiceOptions>>().Get(TaskQueues.AgentPlatform);
+
+        Assert.Contains(typeof(LivemapWakeWorkflow), options.Workflows.Select(w => w.Type));
+        Assert.Contains(options.Activities, a => a.Name == LivemapWakeActivities.WakeName);
+    }
+
+    [Fact]
+    public void TheWakeActivities_CanBeBuilt_WithTheirCollaborators()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapWakeActivities>());
+        Assert.IsType<TemporalLivemapBuildSignaler>(scope.ServiceProvider.GetRequiredService<ILivemapBuildSignaler>());
+    }
+
+    [Fact]
     public void TheWorker_HostsTheScheduleService()
     {
         using var provider = Build();

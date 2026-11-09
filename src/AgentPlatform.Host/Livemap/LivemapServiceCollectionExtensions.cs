@@ -30,6 +30,7 @@ public static class LivemapServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddSingleton<LivemapBuildStore>();
         services.TryAddSingleton<ILivemapBuildStarter, TemporalLivemapBuildStarter>();
+        services.TryAddSingleton<ILivemapBuildSignaler, TemporalLivemapBuildSignaler>();
         services.AddTransient<IShippedBuilds, ShippedBuildsReader>();
         services.AddHostedService<LivemapScheduleService>();
         return services;
