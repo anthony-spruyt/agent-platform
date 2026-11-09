@@ -29,6 +29,7 @@ public static class LivemapServiceCollectionExtensions
         services.AddHttpClient<ILivemapGitHub, LivemapGitHub>(GitHubHttp.Configure)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddSingleton<LivemapBuildStore>();
+        services.TryAddSingleton<ILivemapBuildStarter, TemporalLivemapBuildStarter>();
         services.AddTransient<IShippedBuilds, ShippedBuildsReader>();
         services.AddHostedService<LivemapScheduleService>();
         return services;

@@ -202,17 +202,6 @@ public class LivemapBuildStoreTransitionTests
     }
 
     [Fact]
-    public async Task ABuildThatResumed_IsNoLongerDue()
-    {
-        var data = await SeedAsync();
-        await Store(data).ParkAsync(Build, "the runner was busy", 3, TimeSpan.FromMinutes(10), Ct);
-        var later = Store(data, Now.AddHours(1));
-        await later.ResumeAsync(Build, Ct);
-
-        Assert.Empty(await later.ListDueAsync(Ct));
-    }
-
-    [Fact]
     public async Task ADetectedBuild_CannotResume()
     {
         var data = await SeedAsync();
@@ -221,28 +210,11 @@ public class LivemapBuildStoreTransitionTests
     }
 
     [Fact]
-    public async Task ABuildThatIsParkedWithoutARetryTime_IsNeverDue()
+    public async Task ABuildThatIsParkedWithoutARetryTime_CannotResume()
     {
         var data = await SeedAsync(state: LivemapBuildState.Parked);
 
         Assert.False(await Store(data, Now.AddDays(1)).ResumeAsync(Build, Ct));
-        Assert.Empty(await Store(data, Now.AddDays(1)).ListDueAsync(Ct));
-    }
-
-    [Fact]
-    public async Task OnlyTheParkedBuilds_WhoseTimeHasCome_AreDue()
-    {
-        var data = await SeedAsync(100);
-        await SeedAsync(200, data: data);
-        await SeedAsync(300, data: data);
-        await SeedAsync(400, LivemapBuildState.Done, data);
-        await Store(data).ParkAsync(300, "busy", 3, TimeSpan.FromMinutes(5), Ct);
-        await Store(data).ParkAsync(100, "busy", 3, TimeSpan.FromMinutes(30), Ct);
-        await Store(data).ParkAsync(200, "busy", 3, TimeSpan.FromMinutes(10), Ct);
-
-        var due = await Store(data, Now.AddMinutes(10)).ListDueAsync(Ct);
-
-        Assert.Equal([200L, 300L], due.Select(b => b.BuildId));
     }
 
     [Fact]

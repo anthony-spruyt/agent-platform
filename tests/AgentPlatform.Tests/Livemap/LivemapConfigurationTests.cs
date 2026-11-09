@@ -147,6 +147,7 @@ public class LivemapConfigurationTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<LivemapPollActivities>());
         Assert.IsType<SteamAppInfoClient>(scope.ServiceProvider.GetRequiredService<ISteamAppInfo>());
         Assert.IsType<ShippedBuildsReader>(scope.ServiceProvider.GetRequiredService<IShippedBuilds>());
+        Assert.IsType<TemporalLivemapBuildStarter>(scope.ServiceProvider.GetRequiredService<ILivemapBuildStarter>());
     }
 
     [Fact]

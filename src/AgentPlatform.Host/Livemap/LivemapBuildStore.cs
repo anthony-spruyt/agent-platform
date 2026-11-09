@@ -37,17 +37,6 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             .ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<LivemapBuild>> ListDueAsync(CancellationToken cancellationToken)
-    {
-        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var now = time.GetUtcNow();
-        return await db.LivemapBuilds.AsNoTracking()
-            .Where(b => b.State == LivemapBuildState.Parked && b.NextRetryAt <= now)
-            .OrderBy(b => b.BuildId)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-    }
-
     public async Task<bool> ClassifyAsync(long buildId, LivemapClassification classification, long compatRunId, CancellationToken cancellationToken) =>
         await MoveAsync(
             buildId,
