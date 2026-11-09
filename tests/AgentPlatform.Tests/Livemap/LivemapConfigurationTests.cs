@@ -236,6 +236,40 @@ public class LivemapConfigurationTests
     }
 
     [Fact]
+    public void ThePullRequestClient_TalksToTheGitHubApi_AtThePinnedVersion()
+    {
+        using var provider = Build(Enabled);
+
+        using var http = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(ILivemapPullRequests));
+
+        Assert.Equal("api.github.com", http.BaseAddress?.Host);
+        Assert.Equal(["2022-11-28"], http.DefaultRequestHeaders.GetValues("X-GitHub-Api-Version"));
+    }
+
+    [Fact]
+    public void ThePullRequestClient_FollowsNoRedirects()
+    {
+        using var provider = Build(Enabled);
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(nameof(ILivemapPullRequests));
+        while (handler is DelegatingHandler outer)
+        {
+            handler = outer.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void ThePullRequestClient_CanBeBuilt_ByTheActivitiesThatNeedIt()
+    {
+        using var provider = Build(Enabled);
+        using var scope = provider.CreateScope();
+
+        Assert.IsType<LivemapPullRequests>(scope.ServiceProvider.GetRequiredService<ILivemapPullRequests>());
+    }
+
+    [Fact]
     public void TheSteamClient_TalksToTheSteamInfoHost_WithABoundedResponse()
     {
         using var provider = Build();

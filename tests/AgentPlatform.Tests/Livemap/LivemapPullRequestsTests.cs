@@ -1,0 +1,363 @@
+using System.Net;
+using System.Text;
+using System.Text.Json.Nodes;
+using AgentPlatform.Host.GitHub;
+using AgentPlatform.Host.Livemap;
+using AgentPlatform.Tests.Support;
+using Microsoft.Extensions.Options;
+
+namespace AgentPlatform.Tests.Livemap;
+
+public class LivemapPullRequestsTests
+{
+    private const string Fork = "octo/livemap";
+
+    private static readonly string Oid = new('a', 40);
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private sealed class RecordingTokens : IGitHubInstallationTokenProvider
+    {
+        public List<(string Repo, Dictionary<string, string> Permissions)> Minted { get; } = [];
+
+        public Task<string> GetTokenAsync(string repo, IReadOnlyDictionary<string, string> permissions, CancellationToken cancellationToken)
+        {
+            Minted.Add((repo, permissions.ToDictionary(p => p.Key, p => p.Value)));
+            return Task.FromResult("ghs_install_token");
+        }
+    }
+
+    private sealed class FixedJwt : IGitHubAppJwtSource
+    {
+        public string CreateJwt() => "app.jwt.value";
+    }
+
+    private static (LivemapPullRequests Client, StubHttpHandler Handler, RecordingTokens Tokens) Create(Func<RecordedRequest, HttpResponseMessage> respond)
+    {
+        var handler = new StubHttpHandler(respond);
+        var http = new HttpClient(handler, disposeHandler: false) { BaseAddress = new Uri("https://api.github.example/") };
+        var tokens = new RecordingTokens();
+        return (new LivemapPullRequests(http, tokens, new FixedJwt(), Options.Create(new LivemapOptions { Enabled = true, Repo = Fork })), handler, tokens);
+    }
+
+    private static Dictionary<string, string> Perms(params string[] pairs)
+    {
+        var result = new Dictionary<string, string>();
+        for (var i = 0; i < pairs.Length; i += 2)
+        {
+            result[pairs[i]] = pairs[i + 1];
+        }
+
+        return result;
+    }
+
+    private static string PullJson(int number = 7, string? headRepo = Fork)
+    {
+        var repo = headRepo is null ? "null" : $$"""{ "full_name": "{{headRepo}}" }""";
+        return $$"""
+            {
+              "number": {{number}}, "state": "open", "merged": false, "draft": false, "commits": 1,
+              "user": { "login": "skynet-rw[bot]", "type": "Bot" },
+              "base": { "ref": "main", "repo": { "full_name": "{{Fork}}" } },
+              "head": { "ref": "livemap/build-400", "sha": "{{Oid}}", "repo": {{repo}} }
+            }
+            """;
+    }
+
+    [Fact]
+    public async Task TheMainHead_IsReadFromTheRefOfTheFork_WithAContentsReadToken()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json($$"""{"object":{"sha":"{{Oid}}","type":"commit"} }"""));
+
+        var oid = await client.GetMainHeadAsync(Ct);
+
+        Assert.Equal(Oid, oid);
+        Assert.Equal($"/repos/{Fork}/git/ref/heads/main", Assert.Single(handler.Requests).Uri.AbsolutePath);
+        var minted = Assert.Single(tokens.Minted);
+        Assert.Equal(Fork, minted.Repo);
+        Assert.Equal(Perms("contents", "read"), minted.Permissions);
+    }
+
+    [Fact]
+    public async Task ABranch_IsCreatedAtTheGivenOid_WithAContentsWriteToken()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("{}", HttpStatusCode.Created));
+
+        await client.CreateBranchAsync("livemap/build-400", Oid, Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal($"/repos/{Fork}/git/refs", request.Uri.AbsolutePath);
+        var body = JsonNode.Parse(request.Body!)!;
+        Assert.Equal("refs/heads/livemap/build-400", (string?)body["ref"]);
+        Assert.Equal(Oid, (string?)body["sha"]);
+        Assert.Equal(Perms("contents", "write"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Theory]
+    [InlineData("main")]
+    [InlineData("livemap/build-")]
+    [InlineData("livemap/build-4x")]
+    [InlineData("livemap/build-400/../main")]
+    public async Task OnlyABuildBranch_CanBeCreatedCommittedToOrDeleted(string branch)
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateBranchAsync(branch, Oid, Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CommitFileAsync(branch, Oid, "fix(builds): add server build 1", "data/builds.json", "{}", Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.DeleteBranchAsync(branch, Ct));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("/data/builds.json")]
+    [InlineData("data/../builds.json")]
+    [InlineData("data//builds.json")]
+    [InlineData("data/builds.json?x=1")]
+    public async Task OnlyAPlainRelativePath_CanBeCommittedOrLookedUp(string path)
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CommitFileAsync("livemap/build-400", Oid, "fix(builds): add server build 400", path, "{}", Ct));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.GetFileModeAsync(Oid, path, Ct));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task TheCommit_GoesThroughGraphQlWithTheExpectedHead_AndCarriesTheFileAsItIs()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"data":{"createCommitOnBranch":{"commit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}"""));
+
+        var oid = await client.CommitFileAsync("livemap/build-400", Oid, "fix(builds): add server build 400", "data/builds.json", "{\"a\":1}\n", Ct);
+
+        Assert.Equal(new string('b', 40), oid);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/graphql", request.Uri.AbsolutePath);
+        var input = JsonNode.Parse(request.Body!)!["variables"]!["input"]!;
+        Assert.Equal(Fork, (string?)input["branch"]!["repositoryNameWithOwner"]);
+        Assert.Equal("livemap/build-400", (string?)input["branch"]!["branchName"]);
+        Assert.Equal(Oid, (string?)input["expectedHeadOid"]);
+        Assert.Equal("fix(builds): add server build 400", (string?)input["message"]!["headline"]);
+        var file = Assert.Single(input["fileChanges"]!["additions"]!.AsArray())!;
+        Assert.Equal("data/builds.json", (string?)file["path"]);
+        Assert.Equal("{\"a\":1}\n", Encoding.UTF8.GetString(Convert.FromBase64String((string)file["contents"]!)));
+        Assert.Null(input["fileChanges"]!["deletions"]);
+        Assert.Equal(Perms("contents", "write"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Fact]
+    public async Task ACommitThatGraphQlRefuses_IsAnError_EvenOnAn200()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"errors":[{"message":"Expected branch to point to abc"}],"data":{"createCommitOnBranch":null}}"""));
+
+        var failure = await Assert.ThrowsAsync<GitHubApiException>(() => client.CommitFileAsync("livemap/build-400", Oid, "fix(builds): add server build 400", "data/builds.json", "{}", Ct));
+
+        Assert.Contains("Expected branch to point to abc", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APullRequest_IsOpenedAgainstMain_FromTheBranch()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"number":42}""", HttpStatusCode.Created));
+
+        var number = await client.OpenAsync("livemap/build-400", "fix(builds): add server build 400", "Compat run: x", Ct);
+
+        Assert.Equal(42, number);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal($"/repos/{Fork}/pulls", request.Uri.AbsolutePath);
+        var body = JsonNode.Parse(request.Body!)!;
+        Assert.Equal("main", (string?)body["base"]);
+        Assert.Equal("livemap/build-400", (string?)body["head"]);
+        Assert.Equal("fix(builds): add server build 400", (string?)body["title"]);
+        Assert.Equal(Perms("pull_requests", "write"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Fact]
+    public async Task APullRequest_IsReadWithItsRepositoriesAuthorAndHead()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json(PullJson()));
+
+        var pull = await client.GetAsync(7, Ct);
+
+        Assert.Equal(new LivemapPullRequest(7, "open", false, false, "main", Fork, "livemap/build-400", Fork, Oid, "skynet-rw[bot]", "Bot", 1), pull);
+        Assert.Equal($"/repos/{Fork}/pulls/7", Assert.Single(handler.Requests).Uri.AbsolutePath);
+        Assert.Equal(Perms("pull_requests", "read"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Fact]
+    public async Task APullRequestWhoseHeadRepositoryIsGone_ReadsWithAnEmptyHeadRepo()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json(PullJson(headRepo: null)));
+
+        Assert.Equal(string.Empty, (await client.GetAsync(7, Ct))!.HeadRepo);
+    }
+
+    [Fact]
+    public async Task AMissingPullRequest_ReadsAsNull()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}", HttpStatusCode.NotFound));
+
+        Assert.Null(await client.GetAsync(7, Ct));
+    }
+
+    [Fact]
+    public async Task TheOpenPullRequestsOfABranch_AreFoundByTheForkOwnedHead()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json($"[{PullJson(9)}]"));
+
+        var found = await client.FindOpenByBranchAsync("livemap/build-400", Ct);
+
+        Assert.Equal(9, Assert.Single(found).Number);
+        var query = Assert.Single(handler.Requests).Uri.Query;
+        Assert.Contains("head=octo%3Alivemap%2Fbuild-400", query, StringComparison.Ordinal);
+        Assert.Contains("state=open", query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APullRequestFromAnotherRepository_IsNotOneOfTheBranchesOpenPullRequests()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json($"[{PullJson(9, headRepo: "octo/other")},{PullJson(10)}]"));
+
+        Assert.Equal(10, Assert.Single(await client.FindOpenByBranchAsync("livemap/build-400", Ct)).Number);
+    }
+
+    [Fact]
+    public async Task TheFilesOfAPullRequest_ListTheirStatusAndAnyPreviousName()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("""[{"filename":"data/builds.json","status":"modified"},{"filename":"b","status":"renamed","previous_filename":"a"}]"""));
+
+        var files = await client.ListFilesAsync(7, Ct);
+
+        Assert.Equal([new("data/builds.json", "modified", null), new("b", "renamed", "a")], files);
+        Assert.Equal($"/repos/{Fork}/pulls/7/files", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TheParentsOfACommit_AreItsParentShas()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json($$"""{"parents":[{"sha":"{{Oid}}"}]}"""));
+
+        Assert.Equal([Oid], await client.GetParentsAsync(new string('c', 40), Ct));
+        Assert.Equal($"/repos/{Fork}/git/commits/{new string('c', 40)}", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TheModeOfAFile_IsReadFromTheTreeOfItsDirectoryAtTheCommit()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("""{"tree":[{"path":"builds.schema.json","mode":"100644","type":"blob"},{"path":"builds.json","mode":"100755","type":"blob"}]}"""));
+
+        var mode = await client.GetFileModeAsync(Oid, "data/builds.json", Ct);
+
+        Assert.Equal("100755", mode);
+        Assert.Equal($"/repos/{Fork}/git/trees/{Oid}:data", Uri.UnescapeDataString(Assert.Single(handler.Requests).Uri.AbsolutePath));
+    }
+
+    [Fact]
+    public async Task AFileThatIsNotInItsTree_HasNoMode()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"tree":[{"path":"other.json","mode":"100644","type":"blob"}]}"""));
+
+        Assert.Null(await client.GetFileModeAsync(Oid, "data/builds.json", Ct));
+    }
+
+    [Fact]
+    public async Task TheCheckRuns_AreTheLatestOnesOfTheSha_WithEveryPageAndTheirApp()
+    {
+        var calls = 0;
+        var (client, handler, tokens) = Create(request =>
+        {
+            calls++;
+            return request.Uri.Query.Contains("page=2", StringComparison.Ordinal)
+                ? StubHttpHandler.Json("""{"total_count":101,"check_runs":[{"name":"last","status":"completed","conclusion":"success","app":{"slug":"github-actions"}}]}""")
+                : StubHttpHandler.Json($$"""{"total_count":101,"check_runs":[{{string.Join(',', Enumerable.Range(0, 100).Select(i => $$"""{"name":"n{{i}}","status":"completed","conclusion":"success","app":null}"""))}}]}""");
+        });
+
+        var runs = await client.ListCheckRunsAsync(Oid, Ct);
+
+        Assert.Equal(101, runs.Count);
+        Assert.Equal(new LivemapCheckRun("last", "completed", "success", "github-actions"), runs[^1]);
+        Assert.Null(runs[0].AppSlug);
+        Assert.Equal(2, calls);
+        Assert.All(handler.Requests, r => Assert.Contains("filter=latest", r.Uri.Query, StringComparison.Ordinal));
+        Assert.Equal(Perms("checks", "read"), tokens.Minted.First().Permissions);
+    }
+
+    [Fact]
+    public async Task TheMerge_IsASquashOfTheGivenHead_UnderTheGivenTitle()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"merged":true,"sha":"dddddddddddddddddddddddddddddddddddddddd"}"""));
+
+        var result = await client.MergeAsync(7, Oid, "fix(builds): add server build 400 (#7)", Ct);
+
+        Assert.Equal(LivemapMergeResult.Merged, result);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal($"/repos/{Fork}/pulls/7/merge", request.Uri.AbsolutePath);
+        var body = JsonNode.Parse(request.Body!)!;
+        Assert.Equal("squash", (string?)body["merge_method"]);
+        Assert.Equal(Oid, (string?)body["sha"]);
+        Assert.Equal("fix(builds): add server build 400 (#7)", (string?)body["commit_title"]);
+        Assert.Equal(Perms("contents", "write", "pull_requests", "write"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.MethodNotAllowed)]
+    [InlineData(HttpStatusCode.Conflict)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    public async Task AMergeGitHubRefuses_IsReportedAsRefused(HttpStatusCode status)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"message":"Head branch was modified"}""", status));
+
+        Assert.Equal(LivemapMergeResult.Refused, await client.MergeAsync(7, Oid, "t (#7)", Ct));
+    }
+
+    [Fact]
+    public async Task AMergeThatFailsOtherwise_IsAnError()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{}", HttpStatusCode.BadGateway));
+
+        await Assert.ThrowsAsync<GitHubApiException>(() => client.MergeAsync(7, Oid, "t (#7)", Ct));
+    }
+
+    [Fact]
+    public async Task APullRequest_IsClosedWithoutMerging()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await client.ClosePullRequestAsync(7, Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        Assert.Equal($"/repos/{Fork}/pulls/7", request.Uri.AbsolutePath);
+        Assert.Equal("closed", (string?)JsonNode.Parse(request.Body!)!["state"]);
+        Assert.Equal(Perms("pull_requests", "write"), Assert.Single(tokens.Minted).Permissions);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NoContent)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.UnprocessableEntity)]
+    public async Task ABranch_IsDeleted_AndAMissingOneIsFine(HttpStatusCode status)
+    {
+        var (client, handler, _) = Create(_ => new HttpResponseMessage(status));
+
+        await client.DeleteBranchAsync("livemap/build-400", Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Delete, request.Method);
+        Assert.Equal($"/repos/{Fork}/git/refs/heads/livemap/build-400", request.Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TheAppLogin_IsTheSlugOfTheAppThatTheJwtNames_WithTheBotSuffix()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"slug":"skynet-rw"}"""));
+
+        Assert.Equal("skynet-rw[bot]", await client.GetAppLoginAsync(Ct));
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/app", request.Uri.AbsolutePath);
+        Assert.Equal("Bearer app.jwt.value", request.Authorization);
+        Assert.Empty(tokens.Minted);
+    }
+}

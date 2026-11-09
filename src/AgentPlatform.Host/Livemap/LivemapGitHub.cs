@@ -4,13 +4,12 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using AgentPlatform.Host.GitHub;
 using Microsoft.Extensions.Options;
 
 namespace AgentPlatform.Host.Livemap;
 
-public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTokenProvider tokens, IOptions<LivemapOptions> options) : ILivemapGitHub
+public sealed class LivemapGitHub(HttpClient http, IGitHubInstallationTokenProvider tokens, IOptions<LivemapOptions> options) : ILivemapGitHub
 {
     public const int MaxArtifactBytes = 1024 * 1024;
 
@@ -127,7 +126,7 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
 
     private async Task<string?> ReadForkFileAsync(string path, string operation, string sha, CancellationToken cancellationToken)
     {
-        if (sha is null || !CommitSha().IsMatch(sha))
+        if (!LivemapCommitSha.IsMatch(sha))
         {
             throw new ArgumentException("The commit must be given as a lowercase hex sha.", nameof(sha));
         }
@@ -214,9 +213,6 @@ public sealed partial class LivemapGitHub(HttpClient http, IGitHubInstallationTo
     }
 
     private (string Owner, string Name) Fork() => GitHubRepoName.Parse(options.Value.Repo, nameof(LivemapOptions.Repo));
-
-    [GeneratedRegex(@"^[0-9a-f]{40}\z")]
-    private static partial Regex CommitSha();
 
     private sealed record ArtifactListDto(List<ArtifactDto>? Artifacts);
 
