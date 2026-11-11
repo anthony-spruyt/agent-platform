@@ -131,15 +131,19 @@ public class LivemapPullRequestsTests
     {
         var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"data":{"createCommitOnBranch":{"commit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}"""));
 
+        var accepted = 0;
         for (var c = '\0'; c < '\u0300'; c++)
         {
             var path = $"src/a{c}b.cpp";
             if (LivemapResult.CheckFiles([new LivemapFile(path, "x")]) is null)
             {
+                accepted++;
                 var oid = await client.CommitFilesAsync("livemap/build-400", Oid, "fix(builds): support server build 400", [new LivemapFile(path, "x")], Ct);
                 Assert.Equal(new string('b', 40), oid);
             }
         }
+
+        Assert.True(accepted > 0, "no path was accepted, so nothing was checked");
     }
 
     [Fact]
