@@ -501,7 +501,7 @@ The pod has four tools besides the fork:
 
 - DepotDownloader from `Livemap:DepotDownloaderUrl`, checked against `Livemap:DepotDownloaderSha256` before it runs, to fetch the new server executable only.
 - The last supported executable, mounted read-only as an image volume of `ghcr.io/anthony-spruyt/enshrouded-server-exe:<build id>`. The node pulls it with its own registry login, so the pod holds no pull secret.
-- `capstone`, installed from `Livemap:PythonIndexUrl` at `Livemap:CapstoneVersion` as a wheel whose sha256 is `Livemap:CapstoneSha256`. The install runs in hash-checking mode with no dependencies, so pip refuses any other file.
+- `capstone`, installed from `Livemap:PythonIndexUrl` at `Livemap:CapstoneVersion` as a wheel whose sha256 is `Livemap:CapstoneSha256`. The install runs in hash-checking mode with no dependencies, so pip refuses any other file. For an http index the install names that index's host with `--trusted-host`, which pip needs before it reads an http index; an https index is used with its certificate checked.
 - The compat tool's Linux binary, from the fork's latest release.
 
 The agent ends with `submit_result`. Its `data.status` is one of:

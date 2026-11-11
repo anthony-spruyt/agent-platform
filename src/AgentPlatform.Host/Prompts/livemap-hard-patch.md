@@ -51,7 +51,7 @@ capstone is for reading code. It is pinned by version and hash, and pip installs
 ```sh
 mkdir -p /workspace/work/pylib
 printf 'capstone=={{capstone_version}} --hash=sha256:{{capstone_sha256}}\n' > /workspace/work/requirements.txt
-PIP_INDEX_URL="{{pip_index_url}}" PIP_TRUSTED_HOST="{{pip_trusted_host}}" python3 -m pip install --require-hashes --only-binary :all: --no-deps --target /workspace/work/pylib -r /workspace/work/requirements.txt
+PIP_INDEX_URL="{{pip_index_url}}" python3 -m pip install {{pip_trusted_host_arg}}--require-hashes --only-binary :all: --no-deps --target /workspace/work/pylib -r /workspace/work/requirements.txt
 ```
 
 Run your Python with `python3 -I` and add `/workspace/work/pylib` to `sys.path` inside the script.

@@ -55,7 +55,7 @@ public static partial class LivemapHardPatchPrompt
             ["depot_downloader_url"] = options.DepotDownloaderUrl,
             ["depot_downloader_sha256"] = options.DepotDownloaderSha256,
             ["pip_index_url"] = options.PythonIndexUrl,
-            ["pip_trusted_host"] = new Uri(options.PythonIndexUrl).Authority,
+            ["pip_trusted_host_arg"] = TrustedHostArgument(options.PythonIndexUrl),
             ["capstone_version"] = options.CapstoneVersion,
             ["capstone_sha256"] = options.CapstoneSha256,
             ["max_growth_bytes"] = Number(LivemapPatchValidator.MaxGrowthBytes),
@@ -65,6 +65,13 @@ public static partial class LivemapHardPatchPrompt
             ["report"] = Report(inputs.Report),
             ["notes"] = inputs.Notes is null ? NoNotes : Fenced(inputs.Notes),
         };
+
+    // pip refuses an http index unless its host is trusted; for https the flag would switch certificate checks off, so it is left out.
+    private static string TrustedHostArgument(string indexUrl)
+    {
+        var index = new Uri(indexUrl);
+        return index.Scheme == Uri.UriSchemeHttp ? $"--trusted-host {index.Authority} " : string.Empty;
+    }
 
     private static string Report(string report) =>
         report.Length > MaxReportChars

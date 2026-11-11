@@ -23,6 +23,16 @@ public class LivemapHardPatchPromptTests
     private static LivemapHardPatchInputs Inputs(string report = "{\"result\":\"hard\"}", string previousRow = "{\"label\":\"100\"}", string? notes = null, int run = 1) =>
         new(BuildId: 26430253, ManifestGid: "8886672487109033979", PreviousBuildId: 26404334, PreviousRow: previousRow, Report: report, BaseSha: BaseSha, Notes: notes, Run: run, Runs: 3);
 
+    private static LivemapOptions WithIndex(string indexUrl) => new()
+    {
+        Repo = Options.Repo,
+        DepotDownloaderUrl = Options.DepotDownloaderUrl,
+        DepotDownloaderSha256 = Options.DepotDownloaderSha256,
+        PythonIndexUrl = indexUrl,
+        CapstoneVersion = Options.CapstoneVersion,
+        CapstoneSha256 = Options.CapstoneSha256,
+    };
+
     private static string Render(LivemapHardPatchInputs? inputs = null, LivemapOptions? options = null, string? template = null) =>
         LivemapHardPatchPrompt.Render(template ?? Template, options ?? Options, inputs ?? Inputs());
 
@@ -73,7 +83,6 @@ public class LivemapHardPatchPromptTests
         Assert.Contains("https://example.com/dd/DepotDownloader-linux-x64.zip", rendered, StringComparison.Ordinal);
         Assert.Contains(new string('d', 64), rendered, StringComparison.Ordinal);
         Assert.Contains("http://nexus.example.svc:8081/repository/pypi-proxy/simple", rendered, StringComparison.Ordinal);
-        Assert.Contains("PIP_TRUSTED_HOST=\"nexus.example.svc:8081\"", rendered, StringComparison.Ordinal);
         Assert.Contains("https://github.com/owner/fork/releases/latest/download/livemap-compat-linux-x64", rendered, StringComparison.Ordinal);
     }
 
@@ -86,6 +95,30 @@ public class LivemapHardPatchPromptTests
         Assert.Contains("--require-hashes", rendered, StringComparison.Ordinal);
         Assert.Contains("--only-binary :all:", rendered, StringComparison.Ordinal);
         Assert.Contains("--no-deps", rendered, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("http://nexus.example.svc:8081/repository/pypi-proxy/simple", "nexus.example.svc:8081")]
+    [InlineData("http://index.example.org/simple", "index.example.org")]
+    [InlineData("http://cache.example.org:3141/root/pypi/+simple/", "cache.example.org:3141")]
+    public void AnHttpIndex_IsTrustedByHost_InTheInstallCommand(string indexUrl, string host)
+    {
+        var rendered = Render(options: WithIndex(indexUrl));
+
+        Assert.Contains($"python3 -m pip install --trusted-host {host} --require-hashes", rendered, StringComparison.Ordinal);
+        Assert.Equal(1, Regex.Count(rendered, "--trusted-host"));
+    }
+
+    [Theory]
+    [InlineData("https://index.example.org/simple")]
+    [InlineData("https://nexus.example.svc:8443/repository/pypi-proxy/simple")]
+    public void AnHttpsIndex_IsUsedWithItsCertificateChecked(string indexUrl)
+    {
+        var rendered = Render(options: WithIndex(indexUrl));
+
+        Assert.Contains("python3 -m pip install --require-hashes", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("--trusted-host", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("PIP_TRUSTED_HOST", rendered, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -115,7 +148,6 @@ public class LivemapHardPatchPromptTests
         Assert.Contains("https://example.org/other.zip", rendered, StringComparison.Ordinal);
         Assert.Contains(new string('e', 64), rendered, StringComparison.Ordinal);
         Assert.Contains("https://index.example.org/simple", rendered, StringComparison.Ordinal);
-        Assert.Contains("PIP_TRUSTED_HOST=\"index.example.org\"", rendered, StringComparison.Ordinal);
         Assert.Contains("https://github.com/someone/else/releases/latest/download/livemap-compat-linux-x64", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("owner/fork", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("example.com/dd", rendered, StringComparison.Ordinal);
