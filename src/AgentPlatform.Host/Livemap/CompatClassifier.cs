@@ -64,29 +64,29 @@ public static class CompatClassifier
             ? "The compat run found the patch hard."
             : string.Join("; ", reasons.Take(MaxReasons).Select(reason => reason.Length > MaxReasonChars ? reason[..MaxReasonChars] : reason));
 
-    private static JsonArray? Rows(JsonObject document) =>
+    internal static JsonArray? Rows(JsonObject document) =>
         document["builds"] is JsonArray rows && rows.All(row => row is JsonObject) ? rows : null;
 
     // JsonNode.DeepEquals ignores key order and number spelling, so anything the fork's file must keep is compared as text.
-    private static bool SameText(JsonNode? first, JsonNode? second) =>
+    internal static bool SameText(JsonNode? first, JsonNode? second) =>
         string.Equals(first?.ToJsonString(), second?.ToJsonString(), StringComparison.Ordinal);
 
     private static bool OnlyRowsDiffer(JsonObject fork, JsonObject proposed) =>
         fork.Select(p => p.Key).SequenceEqual(proposed.Select(p => p.Key), StringComparer.Ordinal)
         && fork.All(p => p.Key == "builds" || SameText(p.Value, proposed[p.Key]));
 
-    private static List<string>? Ids(JsonObject row) =>
+    internal static List<string>? Ids(JsonObject row) =>
         row["buildids"] is JsonArray ids && ids.All(id => CompatReport.Text(id) is not null) ? [.. ids.Select(id => CompatReport.Text(id)!)] : null;
 
-    private static string? Label(JsonObject row) => CompatReport.Text(row["label"]);
+    internal static string? Label(JsonObject row) => CompatReport.Text(row["label"]);
 
-    private static bool Lists(JsonArray rows, string id) =>
+    internal static bool Lists(JsonArray rows, string id) =>
         rows.Any(row => Label(row!.AsObject()) == id || Ids(row.AsObject())?.Contains(id) == true);
 
     private static bool SameKeys(JsonObject first, JsonObject second) =>
         first.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(second.Select(p => p.Key).Order(StringComparer.Ordinal), StringComparer.Ordinal);
 
-    private static bool HasFingerprint(JsonObject row, CompatReport report) =>
+    internal static bool HasFingerprint(JsonObject row, CompatReport report) =>
         row["time_date_stamp"] is JsonValue stamp
         && stamp.TryGetValue<long>(out var stampValue)
         && stampValue == report.TimeDateStamp

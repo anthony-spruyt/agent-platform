@@ -93,6 +93,14 @@ internal sealed class LivemapShipRig
         return row;
     }
 
+    public async Task AtOwnerReviewAsync(int number = 52)
+    {
+        await Store.RecordAsync(BuildId, Gid, SteamUpdated, LivemapBuildState.Detected, Ct);
+        Assert.True(await Store.BeginPatchAsync(BuildId, FakeLivemapGitHub.CompatRunId, Ct));
+        Assert.True(await Store.StorePatchAsync(BuildId, "{}", Sha, Ct));
+        Assert.True(await Store.OpenOwnerReviewAsync(BuildId, number, Sha, Ct));
+    }
+
     public LivemapPullRequest SeedReleasePullRequest()
     {
         var pull = new LivemapPullRequest(ReleaseNumber, "open", false, false, "main", FakeLivemapPullRequests.Fork, LivemapReleaseGate.Branch, FakeLivemapPullRequests.Fork, ReleaseHead, ReleaseBot, "Bot", 1, "chore(main): release 2.0.0");

@@ -526,6 +526,54 @@ public class AgentPodSpecBuilderTests
         Assert.Equal("1", Env(pod, "OTEL_LOG_TOOL_CONTENT").Value);
     }
 
+    private static AgentRunRequest WithImages(params (string Name, string Reference)[] images) =>
+        RepoRequest with { Overrides = new AgentRunOverrides(ImageVolumes: [.. images.Select(i => new AgentImageVolume(i.Name, i.Reference))]) };
+
+    [Fact]
+    public void Pod_MountsAnImageVolumeReadOnlyInTheAgentContainerOnly()
+    {
+        var pod = Build(WithImages(("exe", "ghcr.io/octo/exe:123")));
+
+        var volume = Assert.Single(pod.Spec.Volumes, v => v.Image is not null);
+        Assert.Equal("ghcr.io/octo/exe:123", volume.Image.Reference);
+        var mount = Assert.Single(Agent(pod).VolumeMounts, m => m.Name == volume.Name);
+        Assert.True(mount.ReadOnlyProperty);
+        Assert.Equal(AgentPodSpecBuilder.ImageVolumePath("exe"), mount.MountPath);
+        Assert.All(pod.Spec.InitContainers, c => Assert.DoesNotContain(c.VolumeMounts, m => m.Name == volume.Name));
+    }
+
+    [Fact]
+    public void Pod_PullsAnImageVolumeWithoutAPullSecret()
+    {
+        var pod = Build(WithImages(("exe", "ghcr.io/octo/exe:123")));
+
+        Assert.Empty(pod.Spec.ImagePullSecrets ?? []);
+        Assert.Equal("IfNotPresent", Assert.Single(pod.Spec.Volumes, v => v.Image is not null).Image.PullPolicy);
+    }
+
+    [Fact]
+    public void Pod_KeepsEveryVolumeNameUniqueWhenAnImageVolumeIsNamedLikeAnother()
+    {
+        var pod = Build(WithImages(("workspace", "ghcr.io/octo/a:1"), ("claude-home", "ghcr.io/octo/b:1")));
+
+        var names = pod.Spec.Volumes.Select(v => v.Name).ToList();
+        Assert.Equal(names.Count, names.Distinct().Count());
+        Assert.Equal(2, pod.Spec.Volumes.Count(v => v.Image is not null));
+        Assert.Equal(2, Agent(pod).VolumeMounts.Count(m => m.ReadOnlyProperty == true && pod.Spec.Volumes.Any(v => v.Image is not null && v.Name == m.Name)));
+        Assert.Contains(Agent(pod).VolumeMounts, m => m.Name == "workspace" && m.MountPath == "/workspace");
+    }
+
+    [Fact]
+    public void Pod_MountsEachImageVolumeAtItsOwnPath()
+    {
+        var pod = Build(WithImages(("exe", "ghcr.io/octo/a:1"), ("tools", "ghcr.io/octo/b:1")));
+
+        var paths = Agent(pod).VolumeMounts.Select(m => m.MountPath).ToList();
+        Assert.Equal(paths.Count, paths.Distinct().Count());
+        Assert.Contains(AgentPodSpecBuilder.ImageVolumePath("exe"), paths);
+        Assert.Contains(AgentPodSpecBuilder.ImageVolumePath("tools"), paths);
+    }
+
     [Fact]
     public void Pod_RejectsAMalformedRepoContext()
     {

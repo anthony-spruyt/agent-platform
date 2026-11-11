@@ -28,8 +28,36 @@ public class AgentRunOverridesTests
         new AgentRunOverrides(TokenPermissions: new Dictionary<string, string> { [name] = "read" }).Validate();
     }
 
+    [Theory]
+    [InlineData("ghcr.io/octo/exe:25988414")]
+    [InlineData("ghcr.io/octo/nested/exe:v1.2_x-y")]
+    [InlineData("registry.example.com:5000/octo/exe:1")]
+    [InlineData("ghcr.io/octo/exe@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    public void Validate_AcceptsAnImageVolumeThatNamesATaggedOrPinnedImage(string reference)
+    {
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", reference), new AgentImageVolume("tools-2", reference)]).Validate();
+    }
+
     public static TheoryData<AgentRunOverrides> Invalid() => new()
     {
+        new AgentRunOverrides(ImageVolumes: []),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/octo/exe:1"), new AgentImageVolume("exe", "ghcr.io/octo/exe:2")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("", "ghcr.io/octo/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("Exe", "ghcr.io/octo/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("a_b", "ghcr.io/octo/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("-exe", "ghcr.io/octo/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume(new string('a', 21), "ghcr.io/octo/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/octo/exe")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/octo/exe:")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "octo/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "localhost/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/octo/exe:1 --privileged")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/octo/exe:1\n")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/Octo/exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/../exe:1")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "ghcr.io/octo/exe@sha256:abc")]),
+        new AgentRunOverrides(ImageVolumes: [new AgentImageVolume("exe", "https://ghcr.io/octo/exe:1")]),
         new AgentRunOverrides(Model: ""),
         new AgentRunOverrides(Model: "  "),
         new AgentRunOverrides(MaxTurns: 0),

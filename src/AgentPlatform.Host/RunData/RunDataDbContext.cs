@@ -118,6 +118,7 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             build.Property(b => b.ReleaseTag).HasMaxLength(16);
             build.Property(b => b.ReleaseSha256).HasMaxLength(64);
             build.Property(b => b.PinHeadSha).HasMaxLength(40);
+            build.Property(b => b.PatchBaseSha).HasMaxLength(40);
             build.Property(b => b.Version).IsConcurrencyToken();
         });
 

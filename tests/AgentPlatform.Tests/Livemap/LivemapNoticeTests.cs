@@ -118,10 +118,35 @@ public class LivemapNoticeTests
         Assert.DoesNotContain("\n\n\n", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ACodePullRequest_SaysItWaitsForTheOwner_AndLinksItAsCode()
+    {
+        var build = new LivemapBuild
+        {
+            BuildId = 777,
+            State = LivemapBuildState.OwnerReview,
+            CompatRunId = 9002,
+            PullRequestNumber = 52,
+            CreatedAt = Detected,
+        };
+
+        var text = LivemapNotice.Compose(build, Fork, PinRepo);
+
+        Assert.Contains("waits for the owner", text, StringComparison.Ordinal);
+        Assert.Contains("does not merge it", text, StringComparison.Ordinal);
+        Assert.Contains("- Code pull request: https://github.com/octo/livemap/pull/52", text, StringComparison.Ordinal);
+        Assert.Contains("- Compat run: https://github.com/octo/livemap/actions/runs/9002", text, StringComparison.Ordinal);
+        Assert.Contains("Detected: 2026-11-09 08:00 UTC", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Data pull request", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("shipped", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("needs a person", text, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(LivemapBuildState.Detected)]
     [InlineData(LivemapBuildState.Merged)]
     [InlineData(LivemapBuildState.Done)]
+    [InlineData(LivemapBuildState.Patching)]
     public void OnlyAnEndState_GetsANotice(LivemapBuildState state)
     {
         var build = Shipped();
