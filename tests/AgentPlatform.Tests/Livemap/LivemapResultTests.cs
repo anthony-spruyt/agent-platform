@@ -142,6 +142,7 @@ public class LivemapResultTests
     [InlineData("tests/test_scan.py")]
     [InlineData("tools/selftest.cpp")]
     [InlineData("data/extra.json")]
+    [InlineData("src/a-b_c.v1.cpp")]
     public void TryParse_AcceptsPathsInTheAllowlist(string path)
     {
         Assert.Null(Error(Payload(CodeData(path))));
@@ -165,6 +166,9 @@ public class LivemapResultTests
     [InlineData("CMakeLists.txt")]
     [InlineData("srcs/a.cpp")]
     [InlineData("src/a\nb.cpp")]
+    [InlineData("src/a@b.cpp")]
+    [InlineData("src/a+b.cpp")]
+    [InlineData("src/a~b.cpp")]
     [InlineData("")]
     public void TryParse_RejectsPathsOutsideTheAllowlist(string path)
     {

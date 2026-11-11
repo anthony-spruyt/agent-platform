@@ -93,7 +93,7 @@ Call `mcp__agentplatform__submit_result` once, with status `success` and these f
 - `summary`: 2 to 5 sentences on what you found and what you chose.
 - `data.status`: `data`, `code`, `partial` or `gave_up`.
 - `data.builds_json`: the full text of `data/builds.json`, for `data` and `code`.
-- `data.files`: for `code` only, at most 10 objects `{"path", "content"}` holding each whole file. Paths are under `src/`, `tests/` or `data/` (never `data/builds.json`), or exactly `tools/selftest.cpp`; never under `.github/`. A file is at most 32768 characters and all files together at most 40960.
+- `data.files`: for `code` only, at most 10 objects `{"path", "content"}` holding each whole file. Path segments use letters, digits, `.`, `_` and `-` only. Paths are under `src/`, `tests/` or `data/` (never `data/builds.json`), or exactly `tools/selftest.cpp`; never under `.github/`. A file is at most 32768 characters and all files together at most 40960.
 - `data.notes`: required for `partial`, at most 8000 characters: what you checked, what you found, what to try next.
 
 The worker checks the result and rejects one that breaks these rules; fix it and submit again.

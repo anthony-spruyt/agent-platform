@@ -203,7 +203,7 @@ public sealed record LivemapResult(LivemapResultStatus Status, string Summary, s
         if (!IsPlainPath(path) || !(_directories.Any(d => path.StartsWith(d, StringComparison.Ordinal)) || path == SelfTestPath))
         {
             var shown = path.Length > 200 ? path[..200] : path;
-            return $"The data.files path \"{shown}\" is not allowed: use plain segments under src/, tests/, data/ or exactly {SelfTestPath}.";
+            return $"The data.files path \"{shown}\" is not allowed: use segments of letters, digits, . _ and - under src/, tests/, data/ or exactly {SelfTestPath}.";
         }
 
         return string.Equals(path, LivemapMergeGate.BuildsPath, StringComparison.Ordinal)
@@ -233,5 +233,6 @@ public sealed record LivemapResult(LivemapResultStatus Status, string Summary, s
     private static bool IsPlainPath(string path) =>
         path.Length > 0 && path.Split('/').All(segment => segment.Length > 0 && segment is not ("." or "..") && segment.All(IsPathChar));
 
-    private static bool IsPathChar(char c) => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or '@' or '+' or '~';
+    // The commit step accepts only these characters, so a stored path may use no others.
+    private static bool IsPathChar(char c) => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.';
 }

@@ -127,6 +127,22 @@ public class LivemapPullRequestsTests
     }
 
     [Fact]
+    public async Task EveryPathACodeResultMayCarry_IsOneTheCommitAccepts()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"data":{"createCommitOnBranch":{"commit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}"""));
+
+        for (var c = '\0'; c < '\u0300'; c++)
+        {
+            var path = $"src/a{c}b.cpp";
+            if (LivemapResult.CheckFiles([new LivemapFile(path, "x")]) is null)
+            {
+                var oid = await client.CommitFilesAsync("livemap/build-400", Oid, "fix(builds): support server build 400", [new LivemapFile(path, "x")], Ct);
+                Assert.Equal(new string('b', 40), oid);
+            }
+        }
+    }
+
+    [Fact]
     public async Task TheCommit_GoesThroughGraphQlWithTheExpectedHead_AndCarriesTheFileAsItIs()
     {
         var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("""{"data":{"createCommitOnBranch":{"commit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}"""));

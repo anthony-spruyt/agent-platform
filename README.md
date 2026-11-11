@@ -507,7 +507,7 @@ The pod has four tools besides the fork:
 The agent ends with `submit_result`. Its `data.status` is one of:
 
 - `data`: `builds_json`, the full text of `data/builds.json`.
-- `code`: `builds_json` and `files`, a list of `{path, content}`. A path is plain segments under `src/`, `tests/` or `data/`, or exactly `tools/selftest.cpp`; nothing under `.github/`, and `data/builds.json` travels in `builds_json`.
+- `code`: `builds_json` and `files`, a list of `{path, content}`. A path is segments of letters, digits, `.`, `_` and `-` under `src/`, `tests/` or `data/`, or exactly `tools/selftest.cpp`; nothing under `.github/`, and `data/builds.json` travels in `builds_json`.
   At most 10 files, 32 KiB each and 40 KiB together; `builds_json` is at most 48 KiB.
 - `partial`: `notes` for the next run, at most 8000 characters.
 - `gave_up`: the build needs a person.
