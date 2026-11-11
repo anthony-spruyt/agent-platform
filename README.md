@@ -515,7 +515,9 @@ The summary is at most 4000 characters. A result the parser refuses goes back to
 The worker then judges the result against the fork's `data/builds.json` and schema on the `main` commit the agent read:
 
 - `data` and `code` alike: the file differs from the fork's only in its rows and `sigsets`, with the same top-level keys in the same order. It adds exactly one row after the existing rows, which stay as written.
-  It adds at most one signature set, which must be the last and the one the new row uses. The new row is labelled with the build id and lists that id alone, carries the executable's fingerprint from the report, and records the depot, manifest and checksum of the build in its Steam data. The whole file passes the schema.
+  It adds at most one signature set, which must be the last and the one the new row uses.
+  The file is at most 4 KiB longer than the fork's, counted in bytes, and each `bytes` pattern in the new row and the new set has at most 128 space-separated tokens.
+  The new row is labelled with the build id and lists that id alone, carries the executable's fingerprint from the report, and records the depot, manifest and checksum of the build in its Steam data. The whole file passes the schema.
 - `data` carries no files. `code` is held to the file limits above, and the schema it is checked against is its own `data/builds.schema.json` when it brings one.
 
 A result the worker refuses, a run that ends without a result and a `partial` result each add a line to `patch_notes`, newest first, and the next run reads those notes in its prompt as quoted data. Agent text never goes into an issue notice or a pull request body unquoted.

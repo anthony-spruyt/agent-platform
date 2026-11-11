@@ -82,7 +82,8 @@ Notes the earlier runs left:
    - the row's `label` is `{{build_id}}` and its `buildids` is `["{{build_id}}"]`;
    - `time_date_stamp`, `size_of_image` and the `steam` fields (depot, manifest, `exe_sha256`) come from the report;
    - existing rows, sigsets and keys stay byte for byte as they are, in the same order;
-   - the file stays valid against `data/builds.schema.json`.
+   - the file stays valid against `data/builds.schema.json`;
+   - the file is at most {{max_growth_bytes}} bytes longer than the `data/builds.json` at the `main` commit, and each `bytes` pattern in the new row and the new sigset has at most {{max_pattern_tokens}} space-separated tokens.
 
 ## Result
 

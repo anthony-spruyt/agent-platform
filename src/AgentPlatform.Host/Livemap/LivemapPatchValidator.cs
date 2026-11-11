@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace AgentPlatform.Host.Livemap;
@@ -9,6 +10,10 @@ public sealed record LivemapPatchBase(string BuildsJson, string SchemaJson, Comp
 public sealed class LivemapPatchValidator(ILivemapBuildsSchema schema)
 {
     public const string SchemaPath = "data/builds.schema.json";
+
+    public const int MaxGrowthBytes = 4096;
+
+    public const int MaxPatternTokens = 128;
 
     public string? Check(LivemapResult result, LivemapPatchBase baseline, long buildId, string manifestGid)
     {
@@ -42,6 +47,11 @@ public sealed class LivemapPatchValidator(ILivemapBuildsSchema schema)
 
     private static string? CheckBuilds(string proposedText, LivemapPatchBase baseline, long buildId, string manifestGid)
     {
+        if (Encoding.UTF8.GetByteCount(proposedText) - Encoding.UTF8.GetByteCount(baseline.BuildsJson) > MaxGrowthBytes)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"The builds file may grow by {MaxGrowthBytes} bytes at most.");
+        }
+
         if (CompatReport.ParseObject(proposedText) is not { } proposed || CompatReport.ParseObject(baseline.BuildsJson) is not { } current)
         {
             return "The proposed or the current builds file is missing or not a JSON object.";
@@ -68,8 +78,41 @@ public sealed class LivemapPatchValidator(ILivemapBuildsSchema schema)
             return "The existing rows must stay as they are.";
         }
 
-        return SigsetProblem(baseSets, sets, rows[^1]!.AsObject()) ?? RowProblem(rows[^1]!.AsObject(), baseRows, baseline.Report, buildId.ToString(CultureInfo.InvariantCulture), manifestGid);
+        var row = rows[^1]!.AsObject();
+        return SigsetProblem(baseSets, sets, row)
+            ?? RowProblem(row, baseRows, baseline.Report, buildId.ToString(CultureInfo.InvariantCulture), manifestGid)
+            ?? PatternProblem(row)
+            ?? (sets.Count > baseSets.Count ? PatternProblem(sets.Last().Value) : null);
     }
+
+    // Only what the patch adds is held to the limit: the rows and signature sets already in the file stay as they are.
+    private static string? PatternProblem(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject properties:
+                foreach (var (name, value) in properties)
+                {
+                    if (name == "bytes" && CompatReport.Text(value) is { } pattern && TokenCount(pattern) > MaxPatternTokens)
+                    {
+                        return string.Create(CultureInfo.InvariantCulture, $"A signature pattern may have {MaxPatternTokens} tokens at most.");
+                    }
+
+                    if (PatternProblem(value) is { } problem)
+                    {
+                        return problem;
+                    }
+                }
+
+                break;
+            case JsonArray items:
+                return items.Select(PatternProblem).FirstOrDefault(problem => problem is not null);
+        }
+
+        return null;
+    }
+
+    private static int TokenCount(string pattern) => pattern.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
 
     private static bool OnlyRowsAndSigsetsDiffer(JsonObject current, JsonObject proposed) =>
         current.Select(p => p.Key).SequenceEqual(proposed.Select(p => p.Key), StringComparer.Ordinal)
