@@ -122,15 +122,6 @@ public class LivemapHardPatchPromptTests
     }
 
     [Fact]
-    public void TheLimitsOnWhatAResultAdds_AreTheOnesTheValidatorEnforces()
-    {
-        var rendered = Render();
-
-        Assert.Contains($"at most {LivemapPatchValidator.MaxGrowthBytes} bytes longer", rendered, StringComparison.Ordinal);
-        Assert.Contains($"at most {LivemapPatchValidator.MaxPatternTokens} space-separated tokens", rendered, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void ThePins_FollowTheOptionsWhenTheyChange()
     {
         var other = new LivemapOptions

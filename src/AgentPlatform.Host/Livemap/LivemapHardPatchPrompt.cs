@@ -58,8 +58,6 @@ public static partial class LivemapHardPatchPrompt
             ["pip_trusted_host_arg"] = TrustedHostArgument(options.PythonIndexUrl),
             ["capstone_version"] = options.CapstoneVersion,
             ["capstone_sha256"] = options.CapstoneSha256,
-            ["max_growth_bytes"] = Number(LivemapPatchValidator.MaxGrowthBytes),
-            ["max_pattern_tokens"] = Number(LivemapPatchValidator.MaxPatternTokens),
             ["compat_url"] = $"https://github.com/{options.Repo}/releases/latest/download/{CompatAsset}",
             ["previous_row"] = Fenced(inputs.PreviousRow),
             ["report"] = Report(inputs.Report),
