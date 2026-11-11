@@ -50,4 +50,8 @@ public sealed class LivemapOptions
     public string DepotDownloaderSha256 { get; set; } = "a999dec66b4850fc961bd50366696d23c2d0fad7b18790e6a5647b2f19097a53";
 
     public string PythonIndexUrl { get; set; } = "http://nexus.nexus-system.svc.cluster.local:8081/repository/pypi-proxy/simple";
+
+    public string CapstoneVersion { get; set; } = "5.0.9";
+
+    public string CapstoneSha256 { get; set; } = "273fd8d747d2e35c88f91450be51a603ecfaafb00d96d9f315dcb8689c86193e";
 }

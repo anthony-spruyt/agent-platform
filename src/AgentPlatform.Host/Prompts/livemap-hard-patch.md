@@ -46,11 +46,12 @@ sha256sum --check --status livemap-compat-linux-x64.sha256 && chmod u+x livemap-
 
 Its arguments are in `tools/compat/README.md`. Run it with `--previous {{previous_exe}} --exe /workspace/work/exe/enshrouded_server.exe`. Its `check --builds FILE --exe EXE` mode tests a builds file you wrote against the exe, so run it on your proposed `builds.json` before you submit.
 
-capstone is for reading code:
+capstone is for reading code. It is pinned by version and hash, and pip installs nothing else:
 
 ```sh
 mkdir -p /workspace/work/pylib
-PIP_INDEX_URL="{{pip_index_url}}" PIP_TRUSTED_HOST="{{pip_trusted_host}}" python3 -m pip install --target /workspace/work/pylib capstone
+printf 'capstone=={{capstone_version}} --hash=sha256:{{capstone_sha256}}\n' > /workspace/work/requirements.txt
+PIP_INDEX_URL="{{pip_index_url}}" PIP_TRUSTED_HOST="{{pip_trusted_host}}" python3 -m pip install --require-hashes --only-binary :all: --no-deps --target /workspace/work/pylib -r /workspace/work/requirements.txt
 ```
 
 Run your Python with `python3 -I` and add `/workspace/work/pylib` to `sys.path` inside the script.

@@ -14,6 +14,8 @@ public class LivemapHardPatchPromptTests
         DepotDownloaderUrl = "https://example.com/dd/DepotDownloader-linux-x64.zip",
         DepotDownloaderSha256 = new string('d', 64),
         PythonIndexUrl = "http://nexus.example.svc:8081/repository/pypi-proxy/simple",
+        CapstoneVersion = "9.8.7",
+        CapstoneSha256 = new string('c', 64),
     };
 
     private static string Template => AgentPrompts.Load(AgentPrompts.LivemapHardPatch);
@@ -76,6 +78,17 @@ public class LivemapHardPatchPromptTests
     }
 
     [Fact]
+    public void Capstone_IsInstalledOnlyAtThePinnedVersion_FromAWheelWithThePinnedHash()
+    {
+        var rendered = Render();
+
+        Assert.Contains($"capstone==9.8.7 --hash=sha256:{new string('c', 64)}", rendered, StringComparison.Ordinal);
+        Assert.Contains("--require-hashes", rendered, StringComparison.Ordinal);
+        Assert.Contains("--only-binary :all:", rendered, StringComparison.Ordinal);
+        Assert.Contains("--no-deps", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheLimitsOnWhatAResultAdds_AreTheOnesTheValidatorEnforces()
     {
         var rendered = Render();
@@ -93,6 +106,8 @@ public class LivemapHardPatchPromptTests
             DepotDownloaderUrl = "https://example.org/other.zip",
             DepotDownloaderSha256 = new string('e', 64),
             PythonIndexUrl = "https://index.example.org/simple",
+            CapstoneVersion = "1.2.3",
+            CapstoneSha256 = new string('f', 64),
         };
 
         var rendered = Render(options: other);
@@ -104,6 +119,8 @@ public class LivemapHardPatchPromptTests
         Assert.Contains("https://github.com/someone/else/releases/latest/download/livemap-compat-linux-x64", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("owner/fork", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("example.com/dd", rendered, StringComparison.Ordinal);
+        Assert.Contains($"capstone==1.2.3 --hash=sha256:{new string('f', 64)}", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("9.8.7", rendered, StringComparison.Ordinal);
     }
 
     [Fact]

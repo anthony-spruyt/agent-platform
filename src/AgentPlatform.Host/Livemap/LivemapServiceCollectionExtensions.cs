@@ -159,7 +159,20 @@ public static class LivemapServiceCollectionExtensions
         {
             throw new InvalidOperationException("Livemap:PythonIndexUrl must be an http or https URL.");
         }
+
+        if (!IsVersion(options.CapstoneVersion))
+        {
+            throw new InvalidOperationException("Livemap:CapstoneVersion must be an exact version: digits separated by dots.");
+        }
+
+        if (!IsLowerSha256(options.CapstoneSha256))
+        {
+            throw new InvalidOperationException("Livemap:CapstoneSha256 must be 64 lower-case hex characters.");
+        }
     }
+
+    private static bool IsVersion(string? value) =>
+        !string.IsNullOrEmpty(value) && value.Split('.').All(part => part.Length > 0 && part.All(char.IsAsciiDigit));
 
     private static bool IsLowerSha256(string? value) =>
         value is { Length: 64 } && value.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f'));

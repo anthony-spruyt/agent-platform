@@ -56,6 +56,8 @@ public static partial class LivemapHardPatchPrompt
             ["depot_downloader_sha256"] = options.DepotDownloaderSha256,
             ["pip_index_url"] = options.PythonIndexUrl,
             ["pip_trusted_host"] = new Uri(options.PythonIndexUrl).Authority,
+            ["capstone_version"] = options.CapstoneVersion,
+            ["capstone_sha256"] = options.CapstoneSha256,
             ["max_growth_bytes"] = Number(LivemapPatchValidator.MaxGrowthBytes),
             ["max_pattern_tokens"] = Number(LivemapPatchValidator.MaxPatternTokens),
             ["compat_url"] = $"https://github.com/{options.Repo}/releases/latest/download/{CompatAsset}",

@@ -63,6 +63,8 @@ public class LivemapHardPathConfigurationTests
         Assert.True(options.AgentMaxBudgetUsd > 2m);
         Assert.StartsWith("https://", options.DepotDownloaderUrl, StringComparison.Ordinal);
         Assert.Matches("^[0-9a-f]{64}$", options.DepotDownloaderSha256);
+        Assert.Matches(@"^[0-9]+(\.[0-9]+)*$", options.CapstoneVersion);
+        Assert.Matches("^[0-9a-f]{64}$", options.CapstoneSha256);
         Assert.True(Uri.IsWellFormedUriString(options.PythonIndexUrl, UriKind.Absolute));
     }
 
@@ -80,6 +82,21 @@ public class LivemapHardPathConfigurationTests
     [InlineData("Livemap:DepotDownloaderUrl", "not a url")]
     [InlineData("Livemap:DepotDownloaderSha256", "ABC")]
     [InlineData("Livemap:DepotDownloaderSha256", "A999DEC66B4850FC961BD50366696D23C2D0FAD7B18790E6A5647B2F19097A53")]
+    [InlineData("Livemap:CapstoneVersion", "")]
+    [InlineData("Livemap:CapstoneVersion", " ")]
+    [InlineData("Livemap:CapstoneVersion", "latest")]
+    [InlineData("Livemap:CapstoneVersion", "5..9")]
+    [InlineData("Livemap:CapstoneVersion", "5.0.9.")]
+    [InlineData("Livemap:CapstoneVersion", ">=5.0.9")]
+    [InlineData("Livemap:CapstoneVersion", "5.0.9rc1")]
+    [InlineData("Livemap:CapstoneVersion", "5.0.9 --index-url http://example.test")]
+    [InlineData("Livemap:CapstoneVersion", "5.0.9\n")]
+    [InlineData("Livemap:CapstoneSha256", "")]
+    [InlineData("Livemap:CapstoneSha256", "ABC")]
+    [InlineData("Livemap:CapstoneSha256", "273FD8D747D2E35C88F91450BE51A603ECFAAFB00D96D9F315DCB8689C86193E")]
+    [InlineData("Livemap:CapstoneSha256", "273fd8d747d2e35c88f91450be51a603ecfaafb00d96d9f315dcb8689c86193")]
+    [InlineData("Livemap:CapstoneSha256", "273fd8d747d2e35c88f91450be51a603ecfaafb00d96d9f315dcb8689c86193e0")]
+    [InlineData("Livemap:CapstoneSha256", "273fd8d747d2e35c88f91450be51a603ecfaafb00d96d9f315dcb8689c86193e\n")]
     [InlineData("Livemap:PythonIndexUrl", "nexus/simple")]
     [InlineData("Livemap:PythonIndexUrl", "ftp://nexus/simple")]
     public void TheHardPath_WithAnInvalidAgentSetting_FailsAtStartup(string key, string value)
