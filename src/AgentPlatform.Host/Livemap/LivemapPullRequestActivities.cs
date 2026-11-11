@@ -11,12 +11,13 @@ public enum LivemapStep
     OpenPullRequest,
     Watch,
     Ship,
+    Patch,
 }
 
 // Outcome is what the workflow ends with when the step is Stop; the head is the commit a Watch waits on.
 public sealed record LivemapPlan(LivemapStep Step, LivemapBuildOutcome Outcome = LivemapBuildOutcome.Classified, string? HeadSha = null);
 
-public sealed class LivemapPullRequestActivities(
+public sealed partial class LivemapPullRequestActivities(
     IOptions<LivemapOptions> options,
     LivemapBuildStore builds,
     ILivemapPullRequests pullRequests,
@@ -52,6 +53,9 @@ public sealed class LivemapPullRequestActivities(
             LivemapBuildState.Done => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Shipped),
             LivemapBuildState.NeedsOwner when row.NotifiedAt is null => new LivemapPlan(LivemapStep.Ship),
             LivemapBuildState.NeedsOwner => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.NeedsOwner),
+            LivemapBuildState.Patching => new LivemapPlan(LivemapStep.Patch),
+            LivemapBuildState.OwnerReview when row.NotifiedAt is null => new LivemapPlan(LivemapStep.Ship),
+            LivemapBuildState.OwnerReview => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.OwnerReview),
             LivemapBuildState.Parked => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Parked),
             _ => new LivemapPlan(LivemapStep.Stop, LivemapBuildOutcome.Superseded),
         };
@@ -71,6 +75,12 @@ public sealed class LivemapPullRequestActivities(
         if (row.Classification is not { } classification || row.CompatRunId is not { } runId)
         {
             await StartOverAsync(buildId, "The build was classified without the compat run that decided it.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (classification == LivemapClassification.Hard)
+        {
+            await OpenPatchPullRequestAsync(row, runId, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -110,15 +120,26 @@ public sealed class LivemapPullRequestActivities(
             return;
         }
 
+        await OpenDataPullRequestAsync(buildId, classification, mainHead, proposed, Body(runId), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task OpenDataPullRequestAsync(long buildId, LivemapClassification classification, string mainHead, string proposed, string body, CancellationToken cancellationToken)
+    {
+        var branch = LivemapBuildBranch.For(buildId);
         var headline = Headline(classification, buildId);
         await pullRequests.CreateBranchAsync(branch, mainHead, cancellationToken).ConfigureAwait(false);
         var head = await pullRequests.CommitFileAsync(branch, mainHead, headline, LivemapMergeGate.BuildsPath, proposed, cancellationToken).ConfigureAwait(false);
-        var number = await pullRequests.OpenAsync(branch, headline, Body(runId), cancellationToken).ConfigureAwait(false);
+        var number = await pullRequests.OpenAsync(branch, headline, body, cancellationToken).ConfigureAwait(false);
         if (!await builds.OpenPullRequestAsync(buildId, number, head, waiting: !options.Value.AutoMerge, cancellationToken).ConfigureAwait(false))
         {
-            await pullRequests.ClosePullRequestAsync(number, cancellationToken).ConfigureAwait(false);
-            await pullRequests.DeleteBranchAsync(branch, cancellationToken).ConfigureAwait(false);
+            await DiscardAsync(number, branch, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task DiscardAsync(int number, string branch, CancellationToken cancellationToken)
+    {
+        await pullRequests.ClosePullRequestAsync(number, cancellationToken).ConfigureAwait(false);
+        await pullRequests.DeleteBranchAsync(branch, cancellationToken).ConfigureAwait(false);
     }
 
     // True while the checks are still running; any other answer means the build's state moved and the plan is read again.
@@ -284,7 +305,10 @@ public sealed class LivemapPullRequestActivities(
         $"fix(builds): {(classification == LivemapClassification.Known ? "add" : "support")} server build {buildId.ToString(CultureInfo.InvariantCulture)}";
 
     private string Body(long compatRunId) =>
-        $"Adds the build to `{LivemapMergeGate.BuildsPath}`.\n\nCompat run: https://github.com/{options.Value.Repo}/actions/runs/{compatRunId.ToString(CultureInfo.InvariantCulture)}\nTracking issue: #{options.Value.TrackingIssue.ToString(CultureInfo.InvariantCulture)}\n";
+        $"Adds the build to `{LivemapMergeGate.BuildsPath}`.\n\n{Links(compatRunId)}";
+
+    private string Links(long compatRunId) =>
+        $"Compat run: https://github.com/{options.Value.Repo}/actions/runs/{compatRunId.ToString(CultureInfo.InvariantCulture)}\nTracking issue: #{options.Value.TrackingIssue.ToString(CultureInfo.InvariantCulture)}\n";
 
     private async Task StartOverAsync(long buildId, string detail, CancellationToken cancellationToken) =>
         await builds.RestartAsync(buildId, detail, LivemapBuildActivities.MaxAttempts, cancellationToken).ConfigureAwait(false);

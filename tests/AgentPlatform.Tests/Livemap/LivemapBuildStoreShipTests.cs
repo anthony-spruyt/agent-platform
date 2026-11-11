@@ -55,7 +55,7 @@ public class LivemapBuildStoreShipTests
 
     public static TheoryData<LivemapBuildState> StatesThatMayNotRedoThePin => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.PinOpen or LivemapBuildState.PinWaiting)));
 
-    public static TheoryData<LivemapBuildState> StatesThatMayNotBeNotified => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner)));
+    public static TheoryData<LivemapBuildState> StatesThatMayNotBeNotified => new(Enum.GetValues<LivemapBuildState>().Where(s => s is not (LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner or LivemapBuildState.OwnerReview)));
 
     private static LivemapBuildStore Store(InMemoryRunData data, DateTimeOffset? at = null) => new(data.Factory, new FixedTimeProvider(at ?? Now));
 

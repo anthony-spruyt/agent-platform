@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using Temporalio.Activities;
 
 namespace AgentPlatform.Host.Livemap;
@@ -13,6 +14,7 @@ public enum LivemapBuildOutcome
     ReleaseWaiting,
     PinWaiting,
     Shipped,
+    OwnerReview,
 }
 
 public sealed record LivemapDispatchInput(LivemapWorkflowFile Workflow, long BuildId, string ManifestGid);
@@ -21,7 +23,7 @@ public sealed record LivemapClassifyInput(long BuildId, string ManifestGid, long
 
 public sealed record LivemapParkInput(long BuildId, string Detail);
 
-public sealed class LivemapBuildActivities(ILivemapGitHub github, LivemapBuildStore builds)
+public sealed class LivemapBuildActivities(IOptions<LivemapOptions> options, ILivemapGitHub github, LivemapBuildStore builds)
 {
     public const string InFlightName = "LivemapBuildInFlight";
     public const string DispatchName = "LivemapBuildDispatch";
@@ -80,6 +82,13 @@ public sealed class LivemapBuildActivities(ILivemapGitHub github, LivemapBuildSt
         {
             var classification = outcome.Kind == CompatOutcomeKind.Known ? LivemapClassification.Known : LivemapClassification.Easy;
             return await builds.ClassifyAsync(input.BuildId, classification, input.CompatRunId, cancellationToken).ConfigureAwait(false)
+                ? LivemapBuildOutcome.Classified
+                : LivemapBuildOutcome.Superseded;
+        }
+
+        if (outcome.Kind == CompatOutcomeKind.Hard && options.Value.HardPath)
+        {
+            return await builds.BeginPatchAsync(input.BuildId, input.CompatRunId, cancellationToken).ConfigureAwait(false)
                 ? LivemapBuildOutcome.Classified
                 : LivemapBuildOutcome.Superseded;
         }

@@ -73,13 +73,28 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
             cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<string> CommitFileAsync(string branch, string expectedHeadOid, string headline, string path, string content, CancellationToken cancellationToken)
+    public Task<string> CommitFileAsync(string branch, string expectedHeadOid, string headline, string path, string content, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return CommitFilesAsync(branch, expectedHeadOid, headline, [new LivemapFile(path, content)], cancellationToken);
+    }
+
+    public async Task<string> CommitFilesAsync(string branch, string expectedHeadOid, string headline, IReadOnlyList<LivemapFile> files, CancellationToken cancellationToken)
     {
         RequireBranch(branch);
         RequireSha(expectedHeadOid, nameof(expectedHeadOid));
         ArgumentException.ThrowIfNullOrWhiteSpace(headline);
-        ArgumentNullException.ThrowIfNull(content);
-        RequireFile(path);
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count == 0 || files.Select(f => f.Path).Distinct(StringComparer.Ordinal).Count() != files.Count)
+        {
+            throw new ArgumentException("A commit needs at least one file, and each path once.", nameof(files));
+        }
+
+        foreach (var file in files)
+        {
+            RequireFile(file.Path);
+            ArgumentNullException.ThrowIfNull(file.Content);
+        }
 
         var (owner, name) = Repo();
         var input = new JsonObject
@@ -88,7 +103,7 @@ public sealed partial class LivemapPullRequests(HttpClient http, IGitHubInstalla
             ["message"] = new JsonObject { ["headline"] = headline },
             ["fileChanges"] = new JsonObject
             {
-                ["additions"] = new JsonArray(new JsonObject { ["path"] = path, ["contents"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(content)) }),
+                ["additions"] = new JsonArray(files.Select(f => (JsonNode)new JsonObject { ["path"] = f.Path, ["contents"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(f.Content)) }).ToArray()),
             },
             ["expectedHeadOid"] = expectedHeadOid,
         };

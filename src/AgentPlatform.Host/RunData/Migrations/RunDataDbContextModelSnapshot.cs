@@ -152,6 +152,10 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("build_id");
 
+                    b.Property<int>("AgentRuns")
+                        .HasColumnType("integer")
+                        .HasColumnName("agent_runs");
+
                     b.Property<int>("Attempts")
                         .HasColumnType("integer")
                         .HasColumnName("attempts");
@@ -196,6 +200,19 @@ namespace AgentPlatform.Host.RunData.Migrations
                     b.Property<DateTimeOffset?>("NotifiedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("notified_at");
+
+                    b.Property<string>("PatchBaseSha")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("patch_base_sha");
+
+                    b.Property<string>("PatchNotes")
+                        .HasColumnType("text")
+                        .HasColumnName("patch_notes");
+
+                    b.Property<string>("PatchResult")
+                        .HasColumnType("text")
+                        .HasColumnName("patch_result");
 
                     b.Property<int>("PinAttempts")
                         .HasColumnType("integer")

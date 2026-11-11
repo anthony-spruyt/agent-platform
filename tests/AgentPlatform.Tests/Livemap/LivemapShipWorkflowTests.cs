@@ -18,7 +18,7 @@ public class LivemapShipWorkflowTests
             env.Client,
             new TemporalWorkerOptions(TaskQueues.AgentPlatform)
                 .AddWorkflow<LivemapBuildWorkflow>()
-                .AddAllActivities(new LivemapBuildActivities(rig.GitHub, rig.Store))
+                .AddAllActivities(new LivemapBuildActivities(Options.Create(rig.Config), rig.GitHub, rig.Store))
                 .AddAllActivities(new LivemapPullRequestActivities(Options.Create(rig.Config), rig.Store, rig.Fork, rig.GitHub, new FakeBuildsSchema(), time ?? rig.Time))
                 .AddAllActivities(rig.Activities(time)));
         return await worker.ExecuteAsync(body, Ct);

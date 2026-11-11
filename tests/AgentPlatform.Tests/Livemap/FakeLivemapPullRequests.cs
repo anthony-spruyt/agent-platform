@@ -40,6 +40,8 @@ internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
 
     public List<(string Branch, string ExpectedHeadOid, string Headline, string Path, string Content, string Oid)> Commits { get; } = [];
 
+    public List<(string Branch, string ExpectedHeadOid, string Headline, List<LivemapFile> Files, string Oid)> MultiCommits { get; } = [];
+
     public List<(int Number, string Branch, string Title, string Body)> Opened { get; } = [];
 
     public List<(int Number, string Sha, string Title)> Merges { get; } = [];
@@ -100,6 +102,21 @@ internal sealed class FakeLivemapPullRequests : ILivemapPinPullRequests
 
         var oid = $"{++_nextCommit:x40}";
         Commits.Add((branch, expectedHeadOid, headline, path, content, oid));
+        Branches[branch] = oid;
+        Parents[oid] = [expectedHeadOid];
+        return oid;
+    }
+
+    public async Task<string> CommitFilesAsync(string branch, string expectedHeadOid, string headline, IReadOnlyList<LivemapFile> files, CancellationToken cancellationToken)
+    {
+        await EnterAsync($"commit-files:{branch}");
+        if (Branches.GetValueOrDefault(branch) != expectedHeadOid)
+        {
+            throw new InvalidOperationException($"The branch {branch} is not at the expected head.");
+        }
+
+        var oid = $"{++_nextCommit:x40}";
+        MultiCommits.Add((branch, expectedHeadOid, headline, [.. files], oid));
         Branches[branch] = oid;
         Parents[oid] = [expectedHeadOid];
         return oid;

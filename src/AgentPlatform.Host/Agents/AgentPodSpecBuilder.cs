@@ -39,6 +39,8 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
     private const string McpConfigFile = "mcp.json";
     private const string PromptDirectory = "/run/ap/prompt";
     private const string GitCredentialsDirectory = "/run/ap/git";
+    private const string ImageDirectory = "/mnt/images";
+    private const string ImageVolumePrefix = "image-";
     private const int SecretFileMode = 0b100_100_000;
     private const long AgentUserId = 1000;
 
@@ -108,7 +110,7 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
                 },
                 InitContainers = repo is null ? null : [BuildCloneContainer(repo), BuildPluginsContainer()],
                 Containers = [BuildContainer(name, tier, repo, request.Overrides)],
-                Volumes = BuildVolumes(name, repo),
+                Volumes = BuildVolumes(name, repo, request.Overrides?.ImageVolumes),
             },
         };
     }
@@ -173,7 +175,9 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
         return repo;
     }
 
-    private static List<V1Volume> BuildVolumes(string podName, AgentRepoContext? repo)
+    public static string ImageVolumePath(string name) => $"{ImageDirectory}/{name}";
+
+    private static List<V1Volume> BuildVolumes(string podName, AgentRepoContext? repo, IReadOnlyList<AgentImageVolume>? images)
     {
         List<V1Volume> volumes =
         [
@@ -187,8 +191,15 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
             volumes.Add(SecretFile(GitCredentialsVolume, podName, GitCredentialKey, GitCredentialKey));
         }
 
+        volumes.AddRange((images ?? []).Select(image => new V1Volume
+        {
+            Name = ImageVolumeName(image),
+            Image = new V1ImageVolumeSource { Reference = image.Reference, PullPolicy = "IfNotPresent" },
+        }));
         return volumes;
     }
+
+    private static string ImageVolumeName(AgentImageVolume image) => $"{ImageVolumePrefix}{image.Name}";
 
     private static V1Volume SecretFile(string volume, string secret, string key, string path) => new()
     {
@@ -275,6 +286,7 @@ public sealed class AgentPodSpecBuilder(AgentPodsOptions options)
             new V1VolumeMount { Name = Workspace, MountPath = "/workspace" },
             new V1VolumeMount { Name = McpConfigVolume, MountPath = McpConfigDirectory, ReadOnlyProperty = true },
             new V1VolumeMount { Name = PromptVolume, MountPath = PromptDirectory, ReadOnlyProperty = true },
+            .. (overrides?.ImageVolumes ?? []).Select(image => new V1VolumeMount { Name = ImageVolumeName(image), MountPath = ImageVolumePath(image.Name), ReadOnlyProperty = true }),
         ],
     };
 

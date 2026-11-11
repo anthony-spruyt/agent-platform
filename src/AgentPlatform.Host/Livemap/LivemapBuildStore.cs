@@ -3,12 +3,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AgentPlatform.Host.Livemap;
 
-public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factory, TimeProvider time)
+public sealed partial class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factory, TimeProvider time)
 {
     public const int MaxDetailChars = 1000;
 
     // A parked build waits for its retry time and a waiting pull request for the switch to turn on; neither has a workflow.
-    private static readonly LivemapBuildState[] _inFlightStates = [LivemapBuildState.Detected, LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging];
+    private static readonly LivemapBuildState[] _inFlightStates = [LivemapBuildState.Detected, LivemapBuildState.Patching, LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging];
 
     private static readonly LivemapBuildState[] _pullRequestPhase = [LivemapBuildState.Classified, LivemapBuildState.PullRequestOpen, LivemapBuildState.Merging];
 
@@ -26,6 +26,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
     private static readonly LivemapBuildState[] _supersedable =
     [
         LivemapBuildState.Detected,
+        LivemapBuildState.Patching,
         LivemapBuildState.Parked,
         LivemapBuildState.Classified,
         LivemapBuildState.PullRequestOpen,
@@ -197,19 +198,19 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             },
             cancellationToken).ConfigureAwait(false);
 
-    // A notice goes out once: for a pinned build that finishes it, and for one that waits for the owner.
+    // A notice goes out once: for a pinned build that finishes it, and for one that waits for the owner, who keeps waiting after it.
     public async Task<bool> NotifiedAsync(long buildId, CancellationToken cancellationToken) =>
         await MoveAsync(
             buildId,
             (build, now) =>
             {
-                if (build.State is not (LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner) || build.NotifiedAt is not null)
+                if (build.State is not (LivemapBuildState.Pinned or LivemapBuildState.NeedsOwner or LivemapBuildState.OwnerReview) || build.NotifiedAt is not null)
                 {
                     return null;
                 }
 
                 build.NotifiedAt = now;
-                return build.State == LivemapBuildState.Pinned ? LivemapBuildState.Done : LivemapBuildState.NeedsOwner;
+                return build.State == LivemapBuildState.Pinned ? LivemapBuildState.Done : build.State;
             },
             cancellationToken).ConfigureAwait(false) is not null;
 
@@ -251,6 +252,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
                 build.CompatRunId = null;
                 build.PullRequestNumber = null;
                 build.HeadSha = null;
+                ClearPatch(build);
                 return LivemapBuildState.Detected;
             },
             cancellationToken).ConfigureAwait(false);
@@ -336,7 +338,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         return await db.LivemapBuilds.AsNoTracking()
-            .Where(b => b.State == LivemapBuildState.NeedsOwner && b.NotifiedAt == null)
+            .Where(b => (b.State == LivemapBuildState.NeedsOwner || b.State == LivemapBuildState.OwnerReview) && b.NotifiedAt == null)
             .OrderBy(b => b.BuildId)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -356,6 +358,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
                 build.HeadSha = null;
                 build.Classification = null;
                 build.CompatRunId = null;
+                ClearPatch(build);
                 return LivemapBuildState.Superseded;
             },
             cancellationToken).ConfigureAwait(false) is not null;
@@ -396,7 +399,7 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
             buildId,
             (build, now) =>
             {
-                if (build.State != LivemapBuildState.Detected && !_pullRequestPhase.Contains(build.State) && !_shipPhase.Contains(build.State))
+                if (build.State is not (LivemapBuildState.Detected or LivemapBuildState.Patching) && !_pullRequestPhase.Contains(build.State) && !_shipPhase.Contains(build.State))
                 {
                     return null;
                 }
@@ -431,6 +434,11 @@ public sealed class LivemapBuildStore(IDbContextFactory<RunDataDbContext> factor
                 if (build.PullRequestNumber is not null)
                 {
                     return LivemapBuildState.PullRequestOpen;
+                }
+
+                if (build is { Classification: LivemapClassification.Hard, PatchResult: null })
+                {
+                    return LivemapBuildState.Patching;
                 }
 
                 return build.Classification is not null ? LivemapBuildState.Classified : LivemapBuildState.Detected;

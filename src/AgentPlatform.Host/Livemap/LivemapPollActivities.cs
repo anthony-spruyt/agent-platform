@@ -47,7 +47,7 @@ public sealed partial class LivemapPollActivities(
 
         await builds.SupersedeOlderAsync(current.BuildId, cancellationToken).ConfigureAwait(false);
         var resumed = await ResumeAsync(row, cancellationToken).ConfigureAwait(false);
-        var startsCurrent = resumed || row.State is LivemapBuildState.Detected or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging;
+        var startsCurrent = resumed || row.State is LivemapBuildState.Detected or LivemapBuildState.Patching or LivemapBuildState.Classified or LivemapBuildState.PullRequestOpen or LivemapBuildState.Merging;
         if (startsCurrent)
         {
             await starter.StartAsync(row.BuildId, row.ManifestGid, cancellationToken).ConfigureAwait(false);

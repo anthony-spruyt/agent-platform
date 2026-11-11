@@ -1,14 +1,41 @@
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace AgentPlatform.Host.Agents;
 
 public sealed record AgentRepoContext(string Repo, int? PullRequest, string HeadSha);
 
+// An OCI image the node mounts read-only into the agent container; the reference is pulled with the node's own registry login, never a pull secret.
+public sealed partial record AgentImageVolume(string Name, string Reference)
+{
+    public const int MaxReferenceLength = 300;
+
+    internal void Validate()
+    {
+        if (!NamePattern().IsMatch(Name ?? string.Empty))
+        {
+            throw new AgentConfigurationException("An image volume name must be 1 to 20 lower-case letters, digits or dashes, starting and ending with a letter or digit.");
+        }
+
+        if (Reference is not { Length: <= MaxReferenceLength } || !ReferencePattern().IsMatch(Reference))
+        {
+            throw new AgentConfigurationException("An image volume reference must be a registry host and path with a tag or a sha256 digest.");
+        }
+    }
+
+    [GeneratedRegex(@"^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?\z")]
+    private static partial Regex NamePattern();
+
+    [GeneratedRegex(@"^[a-z0-9]+([.-][a-z0-9]+)*\.[a-z]{2,}(:[0-9]{1,5})?/[a-z0-9]+([._/-][a-z0-9]+)*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}|@sha256:[0-9a-f]{64})\z")]
+    private static partial Regex ReferencePattern();
+}
+
 public sealed record AgentRunOverrides(
     string? Model = null,
     int? MaxTurns = null,
     decimal? MaxBudgetUsd = null,
-    IReadOnlyDictionary<string, string>? TokenPermissions = null)
+    IReadOnlyDictionary<string, string>? TokenPermissions = null,
+    IReadOnlyList<AgentImageVolume>? ImageVolumes = null)
 {
     public void Validate()
     {
@@ -30,6 +57,29 @@ public sealed record AgentRunOverrides(
         if (TokenPermissions is not null)
         {
             ReadTokenPermissions.EnsureNarrowsDefault(TokenPermissions);
+        }
+
+        if (ImageVolumes is not null)
+        {
+            ValidateImageVolumes(ImageVolumes);
+        }
+    }
+
+    private static void ValidateImageVolumes(IReadOnlyList<AgentImageVolume> volumes)
+    {
+        if (volumes.Count == 0)
+        {
+            throw new AgentConfigurationException("The image volumes override must name at least one image.");
+        }
+
+        foreach (var volume in volumes)
+        {
+            (volume ?? throw new AgentConfigurationException("An image volume must not be null.")).Validate();
+        }
+
+        if (volumes.Select(v => v.Name).Distinct(StringComparer.Ordinal).Count() != volumes.Count)
+        {
+            throw new AgentConfigurationException("Image volume names must be unique.");
         }
     }
 }

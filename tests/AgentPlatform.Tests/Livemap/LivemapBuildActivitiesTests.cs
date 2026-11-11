@@ -135,6 +135,53 @@ public class LivemapBuildActivitiesTests
     }
 
     [Fact]
+    public async Task AHardResult_WithTheHardPathOn_StartsPatchingTheBuild()
+    {
+        var rig = new LivemapBuildRig();
+        rig.Config.HardPath = true;
+        await rig.SeedAsync();
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Finished(FakeLivemapGitHub.CompatRunId));
+        rig.GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = HardArtifact();
+
+        var outcome = await rig.ClassifyAsync();
+
+        Assert.Equal(LivemapBuildOutcome.Classified, outcome);
+        var row = await rig.RowAsync();
+        Assert.Equal((LivemapBuildState.Patching, LivemapClassification.Hard, FakeLivemapGitHub.CompatRunId), (row.State, row.Classification, row.CompatRunId));
+        Assert.Equal(0, row.AgentRuns);
+    }
+
+    [Fact]
+    public async Task AHardResult_WithTheHardPathOn_ForABuildThatNoLongerNeedsIt_ChangesNothing()
+    {
+        var rig = new LivemapBuildRig();
+        rig.Config.HardPath = true;
+        await rig.SeedAsync(LivemapBuildState.Superseded);
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Finished(FakeLivemapGitHub.CompatRunId));
+        rig.GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = HardArtifact();
+
+        var outcome = await rig.ClassifyAsync();
+
+        Assert.Equal(LivemapBuildOutcome.Superseded, outcome);
+        Assert.Equal(LivemapBuildState.Superseded, (await rig.RowAsync()).State);
+    }
+
+    [Fact]
+    public async Task AResultThatDoesNotCheckOut_EvenWithTheHardPathOn_SendsTheBuildToTheOwner()
+    {
+        var rig = new LivemapBuildRig();
+        rig.Config.HardPath = true;
+        await rig.SeedAsync();
+        rig.GitHub.ScriptRun(FakeLivemapGitHub.CompatRunId, Finished(FakeLivemapGitHub.CompatRunId));
+        rig.GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = new CompatArtifact(ReportJson("known", ExeSha, 2000, "0x2000", "300"), ForkBuilds);
+
+        var outcome = await rig.ClassifyAsync();
+
+        Assert.Equal(LivemapBuildOutcome.NeedsOwner, outcome);
+        Assert.Equal(LivemapBuildState.NeedsOwner, (await rig.RowAsync()).State);
+    }
+
+    [Fact]
     public async Task AResultThatDoesNotCheckOut_SendsTheBuildToTheOwner()
     {
         var rig = new LivemapBuildRig();

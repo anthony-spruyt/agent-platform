@@ -94,7 +94,7 @@ internal sealed class LivemapBuildRig
     {
         Data = InMemoryRunData.Create();
         Store = new LivemapBuildStore(Data.Factory, new FixedTimeProvider(Now));
-        Activities = new LivemapBuildActivities(GitHub, Store);
+        Activities = new LivemapBuildActivities(Options.Create(Config), GitHub, Store);
         GitHub.ForkBuilds = ForkBuilds;
         GitHub.SuiteRunsBySuite[CiSuiteId] = [CiRun()];
     }
@@ -133,6 +133,27 @@ internal sealed class LivemapBuildRig
 
     public LivemapPullRequestActivities PullRequestActivities(TimeProvider? time = null) =>
         new(Options.Create(Config), Store, PullRequests, GitHub, BuildsSchema, time ?? Time);
+
+    public LivemapPatchActivities PatchActivities() =>
+        new(Options.Create(Config), Store, PullRequests, GitHub, new LivemapPatchValidator(BuildsSchema));
+
+    public async Task SeedPatchingAsync()
+    {
+        await SeedAsync();
+        GitHub.Artifacts[FakeLivemapGitHub.CompatRunId] = HardArtifact();
+        Assert.True(await Store.BeginPatchAsync(BuildId, FakeLivemapGitHub.CompatRunId, Ct));
+    }
+
+    public async Task SeedPatchedAsync(LivemapResult result, string? baseSha = null, int runs = 0)
+    {
+        await SeedPatchingAsync();
+        for (var run = 1; run <= runs; run++)
+        {
+            Assert.True(await Store.BeginAgentRunAsync(BuildId, run, Ct));
+        }
+
+        Assert.True(await Store.StorePatchAsync(BuildId, LivemapStoredPatch.Write(result), baseSha ?? FakeLivemapPullRequests.StartMain, Ct));
+    }
 
     // The switch is off for the ship steps, so a run ends where the merge of the data pull request hands the build over.
     public LivemapShipActivities HeldShipActivities(TimeProvider? time = null)

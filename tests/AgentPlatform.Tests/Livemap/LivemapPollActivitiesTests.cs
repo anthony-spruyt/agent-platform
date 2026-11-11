@@ -272,6 +272,18 @@ public class LivemapPollActivitiesTests
     }
 
     [Fact]
+    public async Task ABuildBeingPatched_IsStartedAgainByTheNextPoll()
+    {
+        var rig = new Rig();
+        await rig.Store.RecordAsync(26430253, Gid, SteamUpdated, LivemapBuildState.Patching, Ct);
+
+        await rig.PollAsync();
+
+        Assert.Equal((26430253L, Gid), Assert.Single(rig.Starter.Started));
+        Assert.Equal(LivemapBuildState.Patching, (await rig.Store.FindAsync(26430253, Ct))!.State);
+    }
+
+    [Fact]
     public async Task ABuildWaitingOnItsPullRequest_IsResumedAndStarted_OnceAutoMergeIsOn()
     {
         var rig = new Rig();
