@@ -522,9 +522,8 @@ The worker then judges the result against the fork's `data/builds.json` and sche
   The new row is labelled with the build id and lists that id alone, carries the executable's fingerprint from the report, and records the depot, manifest and checksum of the build in its Steam data. The whole file passes the schema.
 - `data` carries no files. `code` is held to the file limits above, and the schema it is checked against is its own `data/builds.schema.json` when it brings one.
 
-A result the worker refuses, a run that ends without a result, a `partial` result and a `gave_up` result each add a line to `patch_notes`, newest first, and the next run reads those notes in its prompt as quoted data.
-Agent text never goes into an issue notice, a pull request title or body, or a commit message: the notices and bodies are fixed text, and the agent's summary and notes stay in the run data.
-A `gave_up` result flags the build for the owner at once, with a fixed notice. When `Livemap:AgentRunsPerBuild` runs have passed without a patch, the notice says the build needs a person and the workflow ends.
+A result the worker refuses, a run that ends without a result and a `partial` result each add a line to `patch_notes`, newest first, and the next run reads those notes in its prompt as quoted data. Agent text never goes into an issue notice or a pull request body unquoted.
+A `gave_up` result flags the build for the owner at once, with the summary quoted in the notice. When `Livemap:AgentRunsPerBuild` runs have passed without a patch, the notice says the build needs a person and the workflow ends.
 A usage limit gives the run back, sets the global cooldown to the reset time and parks the build until then; the poll puts it back afterwards. A pod activity that fails after its retries parks the build like any other step, and the run stays counted.
 
 A result that passes is stored in `patch_result` with the `main` commit in `patch_base_sha`, and the row becomes `Classified` with the classification `Hard`. The pull request step then goes by the status:

@@ -4,6 +4,8 @@ namespace AgentPlatform.Host.Livemap;
 
 public sealed partial class LivemapPullRequestActivities
 {
+    private const int MaxSummaryChars = 2000;
+
     // A data patch goes the way of any data pull request, checked again against main as it is now; a code patch is branched off the commit the agent read and left to the owner.
     private async Task OpenPatchPullRequestAsync(LivemapBuild row, long runId, CancellationToken cancellationToken)
     {
@@ -91,5 +93,5 @@ public sealed partial class LivemapPullRequestActivities
     private string CodeBody(long runId, LivemapResult patch, string baseSha) =>
         string.Create(
             CultureInfo.InvariantCulture,
-            $"The hard-patch agent changed {patch.Files.Count + 1} files for this build, `{LivemapMergeGate.BuildsPath}` among them. This pull request waits for the owner: the worker does not merge it.\n\nBased on main at {baseSha}.\n\n{Links(runId)}");
+            $"The hard-patch agent changed {patch.Files.Count + 1} files for this build, `{LivemapMergeGate.BuildsPath}` among them. This pull request waits for the owner: the worker does not merge it.\n\nBased on main at {baseSha}.\n\nThe agent's summary:\n\n{LivemapQuote.Block(patch.Summary, MaxSummaryChars)}\n\n{Links(runId)}");
 }

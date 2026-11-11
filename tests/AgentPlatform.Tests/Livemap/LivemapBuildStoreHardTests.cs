@@ -296,51 +296,6 @@ public class LivemapBuildStoreHardTests
     }
 
     [Fact]
-    public async Task APatchingBuild_HandedToAPersonWithNotes_KeepsThemForALaterRun()
-    {
-        var data = await SeedPatchingAsync(build => build.PatchNotes = "Run 1: older.");
-
-        var changed = await Store(data).NeedsPersonAsync(Build, "It needs a person.", "Run 2: gave up.\n\nRun 1: older.", Ct);
-
-        Assert.True(changed);
-        var build = await Store(data).FindAsync(Build, Ct);
-        Assert.Equal(LivemapBuildState.NeedsOwner, build!.State);
-        Assert.Equal("It needs a person.", build.Detail);
-        Assert.Equal("Run 2: gave up.\n\nRun 1: older.", build.PatchNotes);
-    }
-
-    [Fact]
-    public async Task APatchingBuild_HandedToAPersonWithoutNotes_KeepsTheNotesItHad()
-    {
-        var data = await SeedPatchingAsync(build => build.PatchNotes = "Run 1: older.");
-
-        await Store(data).NeedsPersonAsync(Build, "It needs a person.", Ct);
-
-        Assert.Equal("Run 1: older.", (await Store(data).FindAsync(Build, Ct))!.PatchNotes);
-    }
-
-    [Fact]
-    public async Task TheNotesHandedToAPerson_AreCappedToTheLengthTheParserAllows()
-    {
-        var data = await SeedPatchingAsync();
-
-        await Store(data).NeedsPersonAsync(Build, "It needs a person.", new string('n', LivemapResult.MaxNotesLength * 2), Ct);
-
-        Assert.Equal(LivemapResult.MaxNotesLength, (await Store(data).FindAsync(Build, Ct))!.PatchNotes!.Length);
-    }
-
-    [Theory]
-    [MemberData(nameof(StatesOtherThanPatching))]
-    public async Task ABuildThatIsNotPatching_KeepsNoNotesHandedToAPerson(LivemapBuildState state)
-    {
-        var data = await SeedAsync(state);
-
-        Assert.False(await Store(data).NeedsPersonAsync(Build, "late", "late notes", Ct));
-
-        Assert.Null((await Store(data).FindAsync(Build, Ct))!.PatchNotes);
-    }
-
-    [Fact]
     public async Task APatchingBuild_ThatTimesOutInTheQueue_IsParkedAsAnyOtherBuildIs()
     {
         var data = await SeedPatchingAsync();
@@ -561,7 +516,6 @@ public class LivemapBuildStoreHardTests
             () => store.StorePatchAsync(Build, Stored, BaseSha, Ct),
             () => store.ParkUntilAsync(Build, "late", Now.AddHours(1), refundRun: false, Ct),
             () => store.NeedsPersonAsync(Build, "late", Ct),
-            () => store.NeedsPersonAsync(Build, "late", "late notes", Ct),
         })
         {
             data.FailNextSaveWith(new DbUpdateConcurrencyException("moved"));

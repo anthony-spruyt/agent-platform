@@ -58,6 +58,8 @@ public sealed class LivemapPatchActivities(
 
     public const string ExeImageRepository = "ghcr.io/anthony-spruyt/enshrouded-server-exe";
 
+    private const int MaxExcerptChars = 600;
+
     private sealed record Baseline(LivemapPatchBase Base, string ReportJson);
 
     [Activity(PrepareName)]
@@ -143,7 +145,7 @@ public sealed class LivemapPatchActivities(
         switch (result.Status)
         {
             case LivemapResultStatus.GaveUp:
-                return await GiveUpAsync(row, input.Run, result.Summary, cancellationToken).ConfigureAwait(false);
+                return await SendToPersonAsync(row.BuildId, GaveUpDetail(result.Summary), cancellationToken).ConfigureAwait(false);
             case LivemapResultStatus.Partial:
                 return await RetryAsync(row, input.Run, $"partial result: {result.Notes}", cancellationToken).ConfigureAwait(false);
         }
@@ -181,6 +183,9 @@ public sealed class LivemapPatchActivities(
             ? LivemapBuildOutcome.NeedsOwner
             : LivemapBuildOutcome.Superseded;
     }
+
+    private static string GaveUpDetail(string summary) =>
+        $"The agent gave up on the build. Its summary:\n\n{LivemapQuote.Block(summary, MaxExcerptChars)}";
 
     private static (long Id, string? Row, string? Problem) FindPreviousRow(Baseline baseline)
     {
@@ -232,22 +237,14 @@ public sealed class LivemapPatchActivities(
     }
 
     // Newest first, so the cap on the notes cuts the oldest.
-    private static string Noted(LivemapBuild row, int run, string note)
+    private async Task<LivemapPatchVerdict> RetryAsync(LivemapBuild row, int run, string note, CancellationToken cancellationToken)
     {
         var line = string.Create(CultureInfo.InvariantCulture, $"Run {run}: {note}");
-        return string.IsNullOrEmpty(row.PatchNotes) ? line : $"{line}\n\n{row.PatchNotes}";
-    }
-
-    private async Task<LivemapPatchVerdict> RetryAsync(LivemapBuild row, int run, string note, CancellationToken cancellationToken) =>
-        await builds.SavePartialAsync(row.BuildId, Noted(row, run, note), cancellationToken).ConfigureAwait(false)
+        var notes = string.IsNullOrEmpty(row.PatchNotes) ? line : $"{line}\n\n{row.PatchNotes}";
+        return await builds.SavePartialAsync(row.BuildId, notes, cancellationToken).ConfigureAwait(false)
             ? LivemapPatchVerdict.Retry
             : LivemapPatchVerdict.Superseded;
-
-    // The notice is fixed text; what the agent said stays in the notes for a later run.
-    private async Task<LivemapPatchVerdict> GiveUpAsync(LivemapBuild row, int run, string summary, CancellationToken cancellationToken) =>
-        await builds.NeedsPersonAsync(row.BuildId, "The agent gave up on the build; it needs a person.", Noted(row, run, $"the agent gave up: {summary}"), cancellationToken).ConfigureAwait(false)
-            ? LivemapPatchVerdict.NeedsPerson
-            : LivemapPatchVerdict.Superseded;
+    }
 
     private async Task<LivemapPatchVerdict> SendToPersonAsync(long buildId, string detail, CancellationToken cancellationToken) =>
         await builds.NeedsPersonAsync(buildId, detail, cancellationToken).ConfigureAwait(false)
