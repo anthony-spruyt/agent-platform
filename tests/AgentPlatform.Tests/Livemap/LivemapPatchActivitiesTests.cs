@@ -26,6 +26,7 @@ public class LivemapPatchActivitiesTests
     private static async Task<LivemapBuildRig> PatchingRigAsync()
     {
         var rig = new LivemapBuildRig();
+        rig.Config.HardPath = true;
         await rig.SeedPatchingAsync();
         return rig;
     }
@@ -125,6 +126,21 @@ public class LivemapPatchActivitiesTests
         Assert.Equal(LivemapBuildState.NeedsOwner, row.State);
         Assert.Contains("needs a person", row.Detail, StringComparison.Ordinal);
         Assert.Contains("2 runs", row.Detail, StringComparison.Ordinal);
+        Assert.Null(rig.GitHub.BuildsReadAt);
+    }
+
+    [Fact]
+    public async Task Prepare_WithTheHardPathOff_SendsThePatchingBuildToAPerson_WithoutReadingTheFork()
+    {
+        var rig = await PatchingRigAsync();
+        rig.Config.HardPath = false;
+
+        var start = await PrepareAsync(rig);
+
+        Assert.Equal((LivemapPatchStartKind.Stop, LivemapBuildOutcome.NeedsOwner), (start.Kind, start.Outcome));
+        var row = await rig.RowAsync();
+        Assert.Equal((LivemapBuildState.NeedsOwner, 0), (row.State, row.AgentRuns));
+        Assert.Contains("hard path is off", row.Detail, StringComparison.Ordinal);
         Assert.Null(rig.GitHub.BuildsReadAt);
     }
 

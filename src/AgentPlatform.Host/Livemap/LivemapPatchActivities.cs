@@ -74,6 +74,11 @@ public sealed class LivemapPatchActivities(
             return LivemapPatchStart.Stopped(LivemapBuildOutcome.Superseded);
         }
 
+        if (!config.HardPath)
+        {
+            return await StopForPersonAsync(row.BuildId, "The hard path is off, so the agent makes no more runs for this build; it needs a person.", cancellationToken).ConfigureAwait(false);
+        }
+
         if (row.AgentRuns >= config.AgentRunsPerBuild)
         {
             var detail = string.Create(CultureInfo.InvariantCulture, $"The agent made {row.AgentRuns} runs without a patch; the build needs a person.");

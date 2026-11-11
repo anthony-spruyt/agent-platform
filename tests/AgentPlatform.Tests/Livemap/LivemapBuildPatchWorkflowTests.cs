@@ -345,6 +345,23 @@ public class LivemapBuildPatchWorkflowTests
     }
 
     [Fact]
+    public async Task APatchingBuild_WhenTheHardPathIsTurnedOff_EndsWithThePerson_WithoutABudgetOrAPod()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var world = await PatchingAsync();
+        world.Rig.Config.HardPath = false;
+
+        var outcome = await RunAsync(env, world);
+
+        Assert.Equal(LivemapBuildOutcome.NeedsOwner, outcome);
+        Assert.Empty(world.Pods.Inputs);
+        Assert.Empty(world.Budget.Calls);
+        var row = await world.Rig.RowAsync();
+        Assert.Equal((LivemapBuildState.NeedsOwner, 0), (row.State, row.AgentRuns));
+        Assert.Equal(BuildId, Assert.Single(world.Rig.Notices.Posts).BuildId);
+    }
+
+    [Fact]
     public async Task ABuildThatChangesBeforeTheRunBegins_GivesTheReservationBack_AndRunsNoPod()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();

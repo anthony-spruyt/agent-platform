@@ -483,7 +483,7 @@ Each call to the fork mints an installation token for the fork alone with only t
 ### Hard path
 
 While `Livemap:HardPath` is on, a build classified `Hard` becomes `Patching` instead of being flagged for the owner, and the build workflow runs the hard-patch agent for it. The poll starts the workflow again for a `Patching` row, so a restart loses nothing.
-The step sits behind the Temporal patch `livemap-hard-path`, so builds already running replay as before. While the switch is off a hard build ends as `NeedsOwner` with a notice.
+The step sits behind the Temporal patch `livemap-hard-path`, so builds already running replay as before. While the switch is off a hard build ends as `NeedsOwner` with a notice, and so does a build that is already `Patching` or parked on its way back to it: the check runs before each run is prepared.
 
 Each turn of the workflow makes one agent run, and the row is the truth: `agent_runs` counts the runs and `Livemap:AgentRunsPerBuild` caps them, checked before a run starts. A run goes like this:
 
