@@ -244,7 +244,7 @@ public class LivemapBuildPatchWorkflowTests
     }
 
     [Fact]
-    public async Task AnAgentThatGivesUp_SendsTheBuildToThePerson_AfterOneRun()
+    public async Task AnAgentThatGivesUp_SendsTheBuildToThePerson_AfterOneRun_WithANoticeThatHoldsNoWordOfIt()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var world = await PatchingAsync();
@@ -256,8 +256,11 @@ public class LivemapBuildPatchWorkflowTests
         Assert.Single(world.Pods.Inputs);
         var row = await world.Rig.RowAsync();
         Assert.Equal(LivemapBuildState.NeedsOwner, row.State);
-        Assert.Contains("The movement hook is gone from this build.", row.Detail, StringComparison.Ordinal);
-        Assert.Equal(BuildId, Assert.Single(world.Rig.Notices.Posts).BuildId);
+        Assert.Contains("movement hook is gone", row.PatchNotes, StringComparison.Ordinal);
+        var post = Assert.Single(world.Rig.Notices.Posts);
+        Assert.Equal(BuildId, post.BuildId);
+        Assert.Contains("gave up", post.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("movement hook", post.Body, StringComparison.Ordinal);
     }
 
     [Fact]
