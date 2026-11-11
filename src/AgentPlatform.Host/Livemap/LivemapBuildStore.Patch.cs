@@ -88,7 +88,10 @@ public sealed partial class LivemapBuildStore
             },
             cancellationToken).ConfigureAwait(false) is not null;
 
-    public async Task<bool> NeedsPersonAsync(long buildId, string detail, CancellationToken cancellationToken) =>
+    public Task<bool> NeedsPersonAsync(long buildId, string detail, CancellationToken cancellationToken) =>
+        NeedsPersonAsync(buildId, detail, null, cancellationToken);
+
+    public async Task<bool> NeedsPersonAsync(long buildId, string detail, string? notes, CancellationToken cancellationToken) =>
         await MoveAsync(
             buildId,
             (build, _) =>
@@ -99,6 +102,11 @@ public sealed partial class LivemapBuildStore
                 }
 
                 build.Detail = Truncate(detail);
+                if (notes is not null)
+                {
+                    build.PatchNotes = CutOnCharacter(notes, LivemapResult.MaxNotesLength);
+                }
+
                 return LivemapBuildState.NeedsOwner;
             },
             cancellationToken).ConfigureAwait(false) is not null;

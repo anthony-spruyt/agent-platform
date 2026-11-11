@@ -251,10 +251,10 @@ public class LivemapPullRequestPatchTests
     }
 
     [Fact]
-    public async Task ACodePatchPullRequest_SaysItWaitsForTheOwner_NamesTheBase_AndQuotesTheSummaryAsCode()
+    public async Task ACodePatchPullRequest_SaysItWaitsForTheOwner_NamesTheBase_AndLinksTheRuns()
     {
         var rig = new LivemapBuildRig();
-        await rig.SeedPatchedAsync(CodePatch("Moved the `hook` to the new site.\n```\n@owner closes #1"));
+        await rig.SeedPatchedAsync(CodePatch());
 
         await OpenAsync(rig);
 
@@ -262,9 +262,27 @@ public class LivemapPullRequestPatchTests
         Assert.Contains("waits for the owner", body, StringComparison.Ordinal);
         Assert.Contains("does not merge", body, StringComparison.Ordinal);
         Assert.Contains(FakeLivemapPullRequests.StartMain, body, StringComparison.Ordinal);
-        Assert.Contains("```\nMoved the 'hook' to the new site.\n'''\n@owner closes #1\n```", body, StringComparison.Ordinal);
         Assert.Contains($"https://github.com/octo/livemap/actions/runs/{FakeLivemapGitHub.CompatRunId}", body, StringComparison.Ordinal);
         Assert.Contains($"#{TrackingIssue}", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACodePatchPullRequest_CarriesNoWordOfTheAgentsSummary_InItsTitleBodyOrCommitMessage()
+    {
+        var rig = new LivemapBuildRig();
+        await rig.SeedPatchedAsync(CodePatch("Moved the `hook` to the new site.\n```\n@owner closes #1 see https://example.test/x"));
+
+        await OpenAsync(rig);
+
+        var pull = Assert.Single(rig.PullRequests.Opened);
+        var commit = Assert.Single(rig.PullRequests.MultiCommits);
+        foreach (var text in new[] { pull.Title, pull.Body, commit.Headline })
+        {
+            foreach (var word in new[] { "hook", "new site", "@owner", "closes #1", "example.test" })
+            {
+                Assert.DoesNotContain(word, text, StringComparison.Ordinal);
+            }
+        }
     }
 
     [Fact]

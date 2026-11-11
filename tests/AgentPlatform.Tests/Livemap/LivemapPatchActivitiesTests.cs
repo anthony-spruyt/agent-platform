@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using AgentPlatform.Host.Agents;
 using AgentPlatform.Host.Livemap;
 using Temporalio.Testing;
@@ -16,6 +15,9 @@ public class LivemapPatchActivitiesTests
 
     private static LivemapResult CodePatch() =>
         new(LivemapResultStatus.Code, "Moved the hook.", EasyArtifact().BuildsJson, [new LivemapFile("src/movement.cpp", "// hook\n")], null);
+
+    private static LivemapResult GaveUp(string summary) =>
+        new(LivemapResultStatus.GaveUp, summary, null, [], null);
 
     private static Task<LivemapPatchStart> PrepareAsync(LivemapBuildRig rig) =>
         new ActivityEnvironment().RunAsync(() => rig.PatchActivities().PrepareAsync(new LivemapPatchPrepareInput(BuildId, _template)));
@@ -325,31 +327,47 @@ public class LivemapPatchActivitiesTests
     }
 
     [Fact]
-    public async Task Accept_GavingUp_SendsTheBuildToAPerson_WithTheSummaryAsPlainText()
+    public async Task Accept_GavingUp_SendsTheBuildToAPerson_WithNoWordOfTheAgentInTheNotice()
     {
         var rig = await PatchingRigAsync();
         var summary = "The hook is gone. See ```the end``` and ping @someone.\nAlso https://example.test/x";
 
-        var verdict = await AcceptAsync(rig, new LivemapResult(LivemapResultStatus.GaveUp, summary, null, [], null));
+        var verdict = await AcceptAsync(rig, GaveUp(summary));
 
         Assert.Equal(LivemapPatchVerdict.NeedsPerson, verdict);
         var row = await rig.RowAsync();
         Assert.Equal(LivemapBuildState.NeedsOwner, row.State);
-        Assert.Contains("@someone", row.Detail, StringComparison.Ordinal);
-        Assert.Equal(2, Regex.Count(row.Detail!, "```"));
-        Assert.EndsWith("```", row.Detail, StringComparison.Ordinal);
+        Assert.Contains("gave up", row.Detail, StringComparison.Ordinal);
+        foreach (var word in new[] { "hook", "@someone", "example.test", "```" })
+        {
+            Assert.DoesNotContain(word, row.Detail, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
-    public async Task Accept_GavingUp_KeepsTheDetailWithinItsLimit_AndTheFenceClosed()
+    public async Task Accept_GavingUp_PostsTheSameNotice_WhateverTheAgentSays()
+    {
+        var first = await PatchingRigAsync();
+        var second = await PatchingRigAsync();
+
+        await AcceptAsync(first, GaveUp("short"));
+        await AcceptAsync(second, GaveUp(new string('x', LivemapResult.MaxSummaryLength)));
+
+        Assert.Equal((await first.RowAsync()).Detail, (await second.RowAsync()).Detail);
+    }
+
+    [Fact]
+    public async Task Accept_GavingUp_KeepsTheSummaryInTheRunData_NewestFirst()
     {
         var rig = await PatchingRigAsync();
+        await rig.Store.SavePartialAsync(BuildId, "Run 1: the first finding.", Ct);
 
-        await AcceptAsync(rig, new LivemapResult(LivemapResultStatus.GaveUp, new string('x', LivemapResult.MaxSummaryLength), null, [], null));
+        await AcceptAsync(rig, GaveUp("The hook is gone."), run: 2);
 
-        var detail = (await rig.RowAsync()).Detail!;
-        Assert.True(detail.Length <= LivemapBuildStore.MaxDetailChars);
-        Assert.EndsWith("```", detail, StringComparison.Ordinal);
+        var notes = (await rig.RowAsync()).PatchNotes!;
+        Assert.StartsWith("Run 2:", notes, StringComparison.Ordinal);
+        Assert.Contains("The hook is gone.", notes, StringComparison.Ordinal);
+        Assert.True(notes.IndexOf("Run 2", StringComparison.Ordinal) < notes.IndexOf("Run 1", StringComparison.Ordinal));
     }
 
     [Fact]
