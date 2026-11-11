@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.26.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.25.0...v1.26.0) (2026-11-11)
+
+
+### Features
+
+* **livemap:** patch a hard build with an agent ([#299](https://github.com/anthony-spruyt/agent-platform/issues/299)) ([13f7c39](https://github.com/anthony-spruyt/agent-platform/commit/13f7c3988500e44aa0cb1bda725a63b83c4f0c92))
+
+
+### Bug Fixes
+
+* **deps:** update dependency modelcontextprotocol.aspnetcore to 2.3.1 ([#296](https://github.com/anthony-spruyt/agent-platform/issues/296)) ([3fb8c6f](https://github.com/anthony-spruyt/agent-platform/commit/3fb8c6f0cf6b476a97f755f70c51d0344dd885b9))
+
 ## [1.25.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.24.0...v1.25.0) (2026-11-09)
 
 
