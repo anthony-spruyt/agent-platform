@@ -994,7 +994,7 @@ public partial class RenovateTriageWorkflowTests
         await InWorkerAsync(env, rig, async () =>
         {
             var handle = await StartAsync(env, Signal(suite: 1));
-            await WaitForAsync(() => rig.CheckRuns.Reports.Count > 0);
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
             rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: ShaB);
             rig.Github.Checks.Clear();
             rig.Github.Checks.Add(new GitHubCheckRun(3, "test", "completed", "success", "github-actions"));
@@ -1650,7 +1650,7 @@ public partial class RenovateTriageWorkflowTests
         var result = await InWorkerAsync(env, rig, options, async () =>
         {
             var handle = await StartAsync(env, Signal(suite: 1));
-            await WaitForAsync(() => rig.CheckRuns.Reports.Count > 0);
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
             options.Mode = TriageMode.Shadow;
             rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
             await SignalAsync(env, Signal(suite: 2));
