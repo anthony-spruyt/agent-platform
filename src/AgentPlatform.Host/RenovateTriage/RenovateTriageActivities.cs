@@ -270,7 +270,7 @@ public sealed partial class RenovateTriageActivities(
                 return new WithdrawResult(WithdrawOutcome.Aborted, ApprovalGoneReason);
             }
 
-            // The label marks a withdrawal in progress, so a retry finishes it with Assess's decision whatever CI reads.
+            // The label marks a withdrawal in progress: a retry finishes it, falling back to Assess's decision when no check fails.
             var failed = await FailedChecksAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
             var decision = failed is not null
                 ? TriageRules.ApprovalWithdrawnDecision(input.Repo, input.HeadSha, failed)
