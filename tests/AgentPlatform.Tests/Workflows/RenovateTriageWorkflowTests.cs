@@ -299,6 +299,45 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
+    public async Task GreenChecksWithoutTheSummaryCheck_WaitForIt_ThenJudge()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.SummaryCheck = null;
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForStepAsync(rig, "assess", "Pending");
+            Assert.Empty(await VerdictsAsync(rig));
+            Assert.Empty(rig.Jev.Bodies);
+
+            rig.Github.SummaryCheck = new GitHubCheckRun(99, TriageRules.RequiredCheck, "completed", "success", "github-actions");
+            return await RunToResultAsync(handle, "renovate-triage-summary-check-then-approve");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), result);
+        Assert.Single(await VerdictsAsync(rig));
+    }
+
+    [Fact]
+    public async Task GreenChecksThatNeverGetTheSummaryCheck_AreNeedsReviewAfterTwoHours()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.SummaryCheck = null;
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle, "renovate-triage-summary-check-timeout");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.CiTimeout, TriageVerdict.NeedsReview), result);
+        Assert.Empty(rig.Jev.Bodies);
+    }
+
+    [Fact]
     public async Task ChecksThatFinishWithoutASignal_AreJudgedOnTheNextPoll_NotWhenTheTwoHoursEnd()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();

@@ -44,6 +44,8 @@ public static partial class TriageRules
 
     public const string AllowedOwner = "anthony-spruyt";
 
+    public const string RequiredCheck = "summary / Check Results";
+
     public const string StickyMarker = "<!-- agent-platform:renovate-triage -->";
     public const string NeedsReviewLabel = "agent/needs-human-review";
     public const string NeedsTriageLabel = "agent/needs-triage";
@@ -222,7 +224,12 @@ public static partial class TriageRules
             return CiState.Pending;
         }
 
-        return considered.Any(IsFailing) ? CiState.Failed : CiState.Passed;
+        if (considered.Any(IsFailing))
+        {
+            return CiState.Failed;
+        }
+
+        return considered.Any(IsRequiredCheckPassed) ? CiState.Passed : CiState.Pending;
     }
 
     public static CiSummary SummariseChecks(IReadOnlyList<GitHubCheckRun> checks, IReadOnlyList<GitHubCheckSuite> suites)
@@ -457,6 +464,12 @@ public static partial class TriageRules
         && sameCheck.Any(other => other.Id > run.Id && other.CheckSuiteId is { } otherSuite && otherSuite != suite);
 
     private static bool IsFailing(GitHubCheckRun check) => !StartsWithAny(check.Name, _notFailingCheckPrefixes) && !PassingConclusion(check.Conclusion);
+
+    private static bool IsRequiredCheckPassed(GitHubCheckRun check) =>
+        string.Equals(check.Name, RequiredCheck, StringComparison.Ordinal)
+        && string.Equals(check.AppSlug, GitHubActionsApp, StringComparison.Ordinal)
+        && IsCompleted(check.Status)
+        && string.Equals(check.Conclusion, "success", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCompleted(string status) => string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase);
 

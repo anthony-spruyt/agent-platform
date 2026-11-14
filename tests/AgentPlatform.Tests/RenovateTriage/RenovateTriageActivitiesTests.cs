@@ -430,9 +430,24 @@ public class RenovateTriageActivitiesTests
         {
             var rig = Create();
             rig.Github.Checks.Clear();
+            rig.Github.SummaryCheck = null;
             rig.Github.Suites.Clear();
 
             Assert.Equal(AssessStatus.Pending, (await Assess(rig)).Status);
+        }
+
+        [Fact]
+        public async Task FastChecksThatAreGreen_HoldTheJudgementUntilTheSummaryCheckSucceeds()
+        {
+            var rig = Create();
+            rig.Github.SummaryCheck = null;
+
+            Assert.Equal(new AssessResult(AssessStatus.Pending, Sha), await Assess(rig));
+            Assert.Empty(rig.Jev.Bodies);
+
+            rig.Github.SummaryCheck = new GitHubCheckRun(99, TriageRules.RequiredCheck, "completed", "success", "github-actions");
+
+            Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
         }
 
         [Fact]
@@ -2418,15 +2433,121 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task Approve_AlsoRunsTheFullGateSet_ButNotTheSafeOnlyChecks()
+        public async Task Approve_OnARedHead_BecomesFixableAndIsNeverApproved()
         {
             var rig = Live();
+            await Record(rig, _approve);
             rig.Github.Checks[0] = rig.Github.Checks[0] with { Conclusion = "failure" };
 
             var result = await Apply(rig, _approve);
 
+            Assert.Equal(ApplyOutcome.Applied, result.Outcome);
+            Assert.Equal(TriageVerdict.Fixable, result.Effective?.Verdict);
+            Assert.Equal(TriageRules.CiFailed, result.Effective?.Reason);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Equal([TriageRules.FixableLabel], rig.Github.AddedLabels);
+            var comment = Assert.Single(rig.Github.Comments).Body;
+            Assert.Equal(Sticky(result.Effective!.Comment!), comment);
+            Assert.DoesNotContain("Auto-approved", comment, StringComparison.Ordinal);
+            Assert.Contains(rig.Github.Checks[0].Name, comment, StringComparison.Ordinal);
+            await AssertStoredAsync(rig, TriageVerdict.Fixable, TriageRules.CiFailed, result.Effective.Comment);
+        }
+
+        [Fact]
+        public async Task Approve_OnARedHead_DismissesTheAppsEarlierApproval()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+            rig.Github.Reviews.Add(new GitHubReview(9, TriageRules.TriageBotLogin, "CONTRIBUTOR", "APPROVED", Sha, null));
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Conclusion = "failure" };
+
+            await Apply(rig, _approve);
+
+            Assert.Equal([9L], rig.Github.Dismissed);
+            Assert.Empty(rig.Github.Approvals);
+        }
+
+        [Fact]
+        public async Task Approve_WhileTheSummaryCheckIsMissing_WaitsForCiWithNothingWritten()
+        {
+            var rig = Live();
+            Labelled(rig, TriageRules.NeedsTriageLabel);
+            await Record(rig, _approve);
+            rig.Github.SummaryCheck = null;
+
+            var result = await Apply(rig, _approve);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason), result);
+            Assert.Empty(rig.Github.Writes);
+            Assert.Empty(rig.Github.Approvals);
+            Assert.Empty(rig.Scanner.Scanned);
+            Assert.NotNull(await rig.Data.Verdicts.FindUnappliedAsync(Repo, 7, Sha, Ct));
+        }
+
+        [Fact]
+        public async Task Approve_WhileCiIsPending_WaitsForCiWithNothingWritten()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Status = "in_progress", Conclusion = null };
+
+            var result = await Apply(rig, _approve);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason), result);
+            Assert.Empty(rig.Github.Writes);
+        }
+
+        [Fact]
+        public async Task Approve_WhileTheSummaryCheckIsStillMissingAfterTheWaitIsOver_GoesToTheOwnerAsCiTimeout()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+            rig.Github.SummaryCheck = null;
+
+            var result = await Apply(rig, _approve, ciWaitOver: true);
+
+            await AssertHandedToTheOwnerAsync(rig, result, TriageRules.CiTimeout, "CI");
+            Assert.Equal(TriageRules.CiTimeoutComment, result.Effective?.Comment);
+            Assert.Empty(rig.Github.Approvals);
+        }
+
+        [Fact]
+        public async Task Approve_WhenCiPassedWhileTheWaitRanOut_StillApproves()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+
+            var result = await Apply(rig, _approve, ciWaitOver: true);
+
             Assert.Equal(new ApplyResult(ApplyOutcome.Applied), result);
             Assert.Single(rig.Github.Approvals);
+        }
+
+        [Fact]
+        public async Task Approve_OnARedHeadAfterTheWaitIsOver_StillBecomesFixable()
+        {
+            var rig = Live();
+            await Record(rig, _approve);
+            rig.Github.Checks[0] = rig.Github.Checks[0] with { Conclusion = "failure" };
+
+            var result = await Apply(rig, _approve, ciWaitOver: true);
+
+            Assert.Equal(TriageVerdict.Fixable, result.Effective?.Verdict);
+            Assert.Empty(rig.Github.Approvals);
+        }
+
+        [Fact]
+        public async Task Safe_WhileTheSummaryCheckIsMissing_WaitsForCiWithNothingWritten()
+        {
+            var rig = Live();
+            await Record(rig, _safe);
+            rig.Github.SummaryCheck = null;
+
+            var result = await Apply(rig, _safe);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Aborted, RenovateTriageActivities.CiPendingReason), result);
+            Assert.Empty(rig.Github.Writes);
+            Assert.Empty(rig.Scanner.Scanned);
         }
 
         [Fact]

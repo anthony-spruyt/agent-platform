@@ -18,6 +18,8 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
 
     public List<GitHubCheckRun> Checks { get; } = [new(1, "build", "completed", "success", "github-actions")];
 
+    public GitHubCheckRun? SummaryCheck { get; set; } = new(99, TriageRules.RequiredCheck, "completed", "success", "github-actions");
+
     public List<GitHubCheckSuite> Suites { get; } = [new(1, "completed", "success", "github-actions", 1)];
 
     public List<GitHubCommit> Commits { get; } = [RenovateCommit()];
@@ -77,7 +79,7 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
             await hook().ConfigureAwait(false);
         }
 
-        return await Result<IReadOnlyList<GitHubCheckRun>>([.. Checks]).ConfigureAwait(false);
+        return await Result<IReadOnlyList<GitHubCheckRun>>([.. Checks, .. SummaryCheck is { } summary ? new[] { summary } : []]).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<GitHubCheckSuite>> ListCheckSuitesAsync(string repo, string sha, CancellationToken cancellationToken)

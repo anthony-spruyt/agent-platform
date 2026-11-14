@@ -265,7 +265,7 @@ public sealed partial class RenovateTriageActivities(
             return new Gate(TriageRules.NonRenovateCommitDecision());
         }
 
-        if (input.Decision.Verdict == TriageVerdict.Safe && !input.CiWaitOver)
+        if (!input.CiWaitOver)
         {
             var (checks, action) = await AssessSafeAsync(input, pr, cancellationToken).ConfigureAwait(false);
             if (action == SafeAction.WaitForCi)
@@ -285,12 +285,10 @@ public sealed partial class RenovateTriageActivities(
             return new Gate(TriageRules.PrecheckDecision(precheck.Verdict));
         }
 
-        return input.Decision.Verdict == TriageVerdict.Safe
-            ? await GateSafeAsync(input, pr, cancellationToken).ConfigureAwait(false)
-            : new Gate(input.Decision);
+        return await GateCiAsync(input, pr, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<Gate> GateSafeAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
+    private async Task<Gate> GateCiAsync(ApplyInput input, GitHubPullRequest pr, CancellationToken cancellationToken)
     {
         var (checks, action) = await AssessSafeAsync(input, pr, cancellationToken).ConfigureAwait(false);
         return action switch
