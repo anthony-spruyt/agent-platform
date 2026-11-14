@@ -258,7 +258,7 @@ public sealed partial class RenovateTriageActivities(
                 : null;
             if (stop is not null)
             {
-                LogNotApplied(logger, input.Repo, input.PrNumber, stop);
+                LogNotWithdrawn(logger, input.Repo, input.PrNumber, stop);
                 return new WithdrawResult(WithdrawOutcome.Aborted, stop);
             }
 
@@ -266,17 +266,21 @@ public sealed partial class RenovateTriageActivities(
             var alreadyFlagged = pr.Labels.Contains(TriageRules.NeedsReviewLabel, StringComparer.Ordinal);
             if (!alreadyFlagged && !TriageRules.HasTriageApproval(reviews, input.HeadSha))
             {
-                LogNotApplied(logger, input.Repo, input.PrNumber, ApprovalGoneReason);
+                LogNotWithdrawn(logger, input.Repo, input.PrNumber, ApprovalGoneReason);
                 return new WithdrawResult(WithdrawOutcome.Aborted, ApprovalGoneReason);
             }
 
-            if (await FailedChecksAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false) is not { } failed)
+            // The label marks a withdrawal in progress, so a retry finishes it with Assess's decision whatever CI reads.
+            var failed = await FailedChecksAsync(input.Repo, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            var decision = failed is not null
+                ? TriageRules.ApprovalWithdrawnDecision(input.Repo, input.HeadSha, failed)
+                : alreadyFlagged ? input.Decision : null;
+            if (decision is null)
             {
-                LogNotApplied(logger, input.Repo, input.PrNumber, CiNotFailedReason);
+                LogNotWithdrawn(logger, input.Repo, input.PrNumber, CiNotFailedReason);
                 return new WithdrawResult(WithdrawOutcome.Aborted, CiNotFailedReason);
             }
 
-            var decision = TriageRules.ApprovalWithdrawnDecision(input.Repo, input.HeadSha, failed);
             await github.SetExclusiveLabelAsync(input.Repo, input.PrNumber, TriageRules.VerdictLabels, TriageRules.NeedsReviewLabel, cancellationToken).ConfigureAwait(false);
 
             var dismissed = true;
@@ -481,6 +485,9 @@ public sealed partial class RenovateTriageActivities(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Not applying the verdict for {Repo}#{Number}: {Reason}.")]
     private static partial void LogNotApplied(ILogger logger, string repo, int number, string? reason);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Not withdrawing the approval for {Repo}#{Number}: {Reason}.")]
+    private static partial void LogNotWithdrawn(ILogger logger, string repo, int number, string? reason);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub refused to dismiss review {ReviewId} on {Repo}#{Number}; carrying on.")]
     private static partial void LogDismissRefused(ILogger logger, long reviewId, string repo, int number);

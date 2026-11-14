@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
@@ -22,6 +23,13 @@ public partial class RenovateTriageWorkflowTests
         await rig.Data.Verdicts.RecordAsync(Repo, 7, ShaA, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, "**Auto-approved:** digest bump."), TriageMode.Live, null, Ct);
         await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, ShaA, TriageVerdict.Approve, VerdictAction.Approve, Ct);
         return rig;
+    }
+
+    private static async Task<List<string?>> TriggersAsync(Rig rig)
+    {
+        await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+        var runs = await db.Runs.OrderBy(r => r.StartedAt).ToListAsync(Ct);
+        return [.. runs.Select(r => JsonDocument.Parse(r.InputEvent).RootElement.GetProperty("trigger").GetString())];
     }
 
     [Fact]
@@ -79,6 +87,29 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
+    public async Task LiveMode_AWithdrawalThatFailsAfterTheLabelIsSet_FinishesOnRetryWhenCiPassesAgain()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = await ApprovedByTheAppAsync();
+        var attempts = 0;
+        rig.Github.OnDismiss = () =>
+        {
+            if (attempts++ == 0)
+            {
+                rig.Github.Checks.Remove(_failedTest);
+                throw new GitHubApiException("bad gateway", System.Net.HttpStatusCode.BadGateway);
+            }
+        };
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ApprovalWithdrawn, TriageVerdict.NeedsReview), result);
+        Assert.Equal([1L], rig.Github.Dismissed);
+        Assert.Contains("`test`", Assert.Single(rig.Github.Comments).Body, StringComparison.Ordinal);
+        Assert.Equal(TriageVerdict.NeedsReview, Assert.Single(await VerdictsAsync(rig)).Verdict);
+    }
+
+    [Fact]
     public async Task LiveMode_AHeadThatMovedBeforeTheWithdraw_IsLeftAsItIs_AndTheCheckClosesAsNeutral()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
@@ -129,5 +160,42 @@ public partial class RenovateTriageWorkflowTests
         var fresh = Assert.Single(runs[1].Steps);
         Assert.Equal(("assess", "Skipped"), (fresh.Name, fresh.StopReason));
         Assert.Equal([1L], rig.Github.Dismissed);
+        Assert.Equal(["signal", "signal"], await TriggersAsync(rig));
+    }
+
+    [Fact]
+    public async Task ARunContinuedByALateSignal_RecordsTheSignal_AndTheNewHeadRunAfterItRecordsNewHead()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        var renovate = rig.Github.PullRequest;
+        rig.Github.PullRequest = renovate with { AuthorId = 5 };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "in_progress", null, "github-actions"));
+        var reads = 0;
+        rig.Github.OnPullRequestRead = () =>
+        {
+            if (++reads == 1)
+            {
+                SignalAsync(env, Signal(suite: 2)).GetAwaiter().GetResult();
+            }
+            else if (reads == 2)
+            {
+                rig.Github.PullRequest = renovate;
+            }
+        };
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForStepAsync(rig, "assess", "Pending");
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: ShaB);
+            rig.Github.Checks.Clear();
+            rig.Github.Checks.Add(new GitHubCheckRun(3, "test", "completed", "success", "github-actions"));
+            await SignalAsync(env, Signal(ShaB, suite: 3));
+            return await RunToResultAsync(handle);
+        });
+
+        Assert.Equal(ShaB, result.HeadSha);
+        Assert.Equal(["signal", "signal", "new-head"], await TriggersAsync(rig));
     }
 }

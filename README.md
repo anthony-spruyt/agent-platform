@@ -171,7 +171,7 @@ The outcome is `Clean`, `Flagged` or `Unchecked`: a busy (503) or unreachable sc
 
 ## Renovate triage
 
-`RenovateTriageWorkflow` judges one Renovate pull request per workflow ID, for repositories owned by `anthony-spruyt` only (intake drops any other owner, and `Assess` and `Apply` refuse it). Each pass runs these activities on the `agent-platform` queue:
+`RenovateTriageWorkflow` judges one Renovate pull request per workflow ID, for repositories owned by `anthony-spruyt` only (intake drops any other owner, and `Assess`, `Apply` and `Withdraw` refuse it). Each pass runs these activities on the `agent-platform` queue:
 
 - `Assess` reads the pull request from GitHub and applies the rules below. It returns a skip, an earlier verdict for the head sha, a decision, `Pending` (CI still running), a request to ask Jev or `ApprovalWithdrawn`. Every result carries the mode `Assess` ran in.
   `ApprovalWithdrawn` is returned only in `Live` mode, for a run started after the `renovate-triage-ci-recheck-v1` patch, when the triage App has approved the head and CI has failed since.
@@ -352,7 +352,8 @@ What each verdict writes, after the gates:
   Agent text sits in a quoted `**Agent output (unverified)**` block below the header `**Agent verdict: SAFE|FIXABLE|BLOCKED|NEEDS REVIEW**`, capped at 8,000 characters, with HTML, backslashes, brackets, mentions, references and links defused, and a footer with the short head sha, the model and the run.
 - When the writes are done the verdict row gets `applied_at`, and its verdict, reason and comment are replaced by the ones written, so a downgrade or hand-off is stored as what was written, not as what the agent said.
 - Withdraw: for the head `Assess` reported, in `Live` mode, it checks the repository owner, that the pull request is still open and not merged and that the head is unchanged, then reads the reviews and CI again.
-  It writes nothing unless the App's approval is still on the head (or `agent/needs-human-review` is already set, so a retry completes) and CI has failed (`not-live`, `not-open`, `head-moved`, `approval-gone`, `ci-not-failed`).
+  It writes nothing unless the App's approval is still on the head and CI has failed (`not-live`, `not-open`, `head-moved`, `approval-gone`, `ci-not-failed`).
+  When `agent/needs-human-review` is already set, the withdrawal is under way: the approval check is skipped, and the activity finishes it with the decision `Assess` returned whatever CI reads, so a retry completes.
   The writes go in this order: the label `agent/needs-human-review` (replacing `agent/auto-approved`, `agent/safe` or `agent/fixable`), a dismissal of every approval by the App with the message `CI failed after the approval.`, the sticky comment naming the failed checks, and the verdict row, overwritten in place with `applied_at` kept.
   An approval by an owner, member or collaborator is not dismissed. GitHub refusing a dismissal (`422`) leaves the pull request flagged and ends the `Agent triage` check as `failure`.
   Any other dismissal error fails the activity, which is retried with the options of `Apply`. It never reruns jobs and never starts the agent.
@@ -665,6 +666,7 @@ The workflow tests run against Temporal's time-skipping test server, which the S
 
 The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histories in `Replay/Histories` against the current workflow code and fail on non-determinism. After an intentional workflow change, re-record them with `RECORD_HISTORIES=1 dotnet test --project tests/AgentPlatform.Tests` and commit the diff; normal runs never rewrite them. The histories are synthetic, recorded by the
 time-skipping tests. The `renovate-triage-v141-*` histories were captured from release 1.4.1 while a run waited for CI or for Jev; no test records them, so they stay as committed and prove that runs started by 1.4.1 replay on the current code.
+The `renovate-triage-v1260-*` history was captured from release 1.26.0 while a signal arrived after the last `Assess`; no test records it, so it stays as committed and proves that runs without the `renovate-triage-ci-recheck-v1` patch replay on the current code.
 The `renovate-triage-v150-*` and `renovate-triage-v19x-*` histories were exported read-only from the cluster's Temporal namespace (worker identities and pod names scrubbed) and prove that runs started before the code rungs (v150) and before the Claude rung (v19x) replay on the current code.
 The other `renovate-triage-live-*` histories (`live-approve`, `live-needs-review`) are synthetic, like the rest.
 Every workflow change must sit behind `Workflow.Patched` (`renovate-triage-jev-retry-v1`, `renovate-triage-live-v1`, `renovate-triage-step2-v1`, `renovate-triage-claude-v1`, `renovate-triage-head-v1`, `renovate-triage-fresh-check-v1`, `renovate-triage-ci-race-v1`, `renovate-triage-status-poll-v1`, `renovate-triage-ci-poll-v1`, `renovate-triage-ci-recheck-v1`).

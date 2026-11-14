@@ -109,12 +109,14 @@ public partial class RenovateTriageWorkflow
     [WorkflowRun]
     public async Task<RenovateTriageResult> RunAsync(RenovateTriageInput? input)
     {
-        var trigger = input is null ? "signal" : "new-head";
+        var trigger = input is null || input.LateSignal ? "signal" : "new-head";
         if (input is null)
         {
             await Workflow.WaitConditionAsync(() => _first is not null);
             input = new RenovateTriageInput(_first!.Repo, _first.PrNumber);
         }
+
+        input = input with { LateSignal = false };
 
         var started = Workflow.UtcNow;
         var run = await RunRecorder.BeginAsync(new BeginRunInput(
@@ -129,7 +131,8 @@ public partial class RenovateTriageWorkflow
             var result = await JudgeAsync(input, run);
             if (_ciRecheck && _signalCount > _assessSignals)
             {
-                throw Workflow.CreateContinueAsNewException((RenovateTriageWorkflow wf) => wf.RunAsync(input));
+                var lateSignal = input with { LateSignal = true };
+                throw Workflow.CreateContinueAsNewException((RenovateTriageWorkflow wf) => wf.RunAsync(lateSignal));
             }
 
             return result;
@@ -350,7 +353,7 @@ public partial class RenovateTriageWorkflow
         await ProgressAsync(input, assess.HeadSha, "Withdrawing the approval.");
         var stepStarted = Workflow.UtcNow;
         var withdrawn = await Workflow.ExecuteActivityAsync(
-            (RenovateTriageActivities activities) => activities.WithdrawAsync(new WithdrawInput(input.Repo, input.PrNumber, assess.HeadSha, assess.Mode)),
+            (RenovateTriageActivities activities) => activities.WithdrawAsync(new WithdrawInput(input.Repo, input.PrNumber, assess.HeadSha, assess.Mode, assess.Decision)),
             _applyOptions);
         await RecordStepAsync(run, seq, "withdraw", LadderRung.Rule, withdrawn.Outcome.ToString(), stepStarted, withdrawn);
         var (conclusion, summary) = withdrawn.Outcome switch

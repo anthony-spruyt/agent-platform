@@ -1099,7 +1099,7 @@ public class RenovateTriageActivitiesTests
         }
 
         [Fact]
-        public async Task WithoutTheRecheck_AnApprovedHeadEndsAsBeforeWithoutReadingCi()
+        public async Task WithoutTheRecheck_AnApprovedHeadIsSkippedWithoutReadingCi()
         {
             var rig = AppApproved();
             rig.Github.Checks.Add(_red);
@@ -1140,8 +1140,8 @@ public class RenovateTriageActivitiesTests
             return rig;
         }
 
-        private static Task<WithdrawResult> Withdraw(Rig rig, string sha = Sha, TriageMode mode = TriageMode.Live) =>
-            Run(() => rig.Activities.WithdrawAsync(new WithdrawInput(Repo, 7, sha, mode)));
+        private static Task<WithdrawResult> Withdraw(Rig rig, string sha = Sha, TriageMode mode = TriageMode.Live, TriageDecision? decision = null) =>
+            Run(() => rig.Activities.WithdrawAsync(new WithdrawInput(Repo, 7, sha, mode, decision)));
 
         private static async Task<RenovateTriageVerdict> RowAsync(Rig rig)
         {
@@ -1324,6 +1324,58 @@ public class RenovateTriageActivitiesTests
             Assert.Equal(WithdrawOutcome.Withdrawn, result.Outcome);
             Assert.Single(rig.Github.Comments);
             Assert.Equal(TriageVerdict.NeedsReview, (await RowAsync(rig)).Verdict);
+        }
+
+        [Fact]
+        public async Task ARetryAfterTheLabelWasSet_WhenCiPassesAgain_FinishesWithTheDecisionFromAssess()
+        {
+            var rig = await ApprovedAsync();
+            var decision = TriageRules.ApprovalWithdrawnDecision(Repo, Sha, [_red]);
+            var attempts = 0;
+            rig.Github.OnDismiss = () =>
+            {
+                if (attempts++ == 0)
+                {
+                    throw Down(HttpStatusCode.BadGateway);
+                }
+            };
+
+            await Assert.ThrowsAsync<GitHubApiException>(() => Withdraw(rig, decision: decision));
+            rig.Github.Checks.Remove(_red);
+            var result = await Withdraw(rig, decision: decision);
+
+            Assert.Equal(new WithdrawResult(WithdrawOutcome.Withdrawn, Decision: decision), result);
+            Assert.Equal([1L], rig.Github.Dismissed);
+            Assert.Contains(decision.Comment!, Assert.Single(rig.Github.Comments).Body, StringComparison.Ordinal);
+            var row = await RowAsync(rig);
+            Assert.Equal(TriageVerdict.NeedsReview, row.Verdict);
+            Assert.NotNull(row.AppliedAt);
+        }
+
+        [Fact]
+        public async Task ARetryAfterTheLabelWasSet_WhenCiPassesAgain_AbortsWithoutTheDecisionFromAssess()
+        {
+            var rig = await ApprovedAsync();
+            rig.Github.PullRequest = rig.Github.PullRequest with { Labels = [TriageRules.NeedsReviewLabel] };
+            rig.Github.Checks.Remove(_red);
+
+            var result = await Withdraw(rig);
+
+            Assert.Equal(new WithdrawResult(WithdrawOutcome.Aborted, RenovateTriageActivities.CiNotFailedReason), result);
+            Assert.Empty(rig.Github.Dismissed);
+            Assert.Empty(rig.Github.Comments);
+        }
+
+        [Fact]
+        public async Task CiThatPassesAgain_IsLeftAlone_WhenTheLabelIsNotSet_EvenWithTheDecisionFromAssess()
+        {
+            var rig = await ApprovedAsync();
+            rig.Github.Checks.Remove(_red);
+
+            var result = await Withdraw(rig, decision: TriageRules.ApprovalWithdrawnDecision(Repo, Sha, [_red]));
+
+            Assert.Equal(new WithdrawResult(WithdrawOutcome.Aborted, RenovateTriageActivities.CiNotFailedReason), result);
+            await AssertNoWritesAsync(rig);
         }
 
         [Fact]

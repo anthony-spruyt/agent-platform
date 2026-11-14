@@ -371,6 +371,12 @@ public class TriageRulesTests
         }
 
         [Fact]
+        public void AnEmptyHead_NeverMatchesATriageApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR", commit: string.Empty)], string.Empty));
+        }
+
+        [Fact]
         public void TheOwnersApprovalBesideTheTriageBotsDismissedOne_IsNoTriageApproval()
         {
             Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "DISMISSED", "CONTRIBUTOR"), Review("alice", "APPROVED")], Head));

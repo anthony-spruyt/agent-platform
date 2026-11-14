@@ -34,7 +34,7 @@ public enum RenovateTriageOutcome
     Parked,
 }
 
-public sealed record RenovateTriageInput(string Repo, int PrNumber);
+public sealed record RenovateTriageInput(string Repo, int PrNumber, bool LateSignal = false);
 
 public sealed record AssessInput(string Repo, int PrNumber, bool Step2 = false, string? PrecheckedSha = null, bool Claude = false, bool CiRecheck = false);
 
@@ -80,7 +80,7 @@ public enum ApplyOutcome
 
 public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null, TriageDecision? Effective = null, bool StatusPending = false);
 
-public sealed record WithdrawInput(string Repo, int PrNumber, string HeadSha, TriageMode Mode);
+public sealed record WithdrawInput(string Repo, int PrNumber, string HeadSha, TriageMode Mode, TriageDecision? Decision = null);
 
 [JsonConverter(typeof(JsonStringEnumConverter<WithdrawOutcome>))]
 public enum WithdrawOutcome
