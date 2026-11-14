@@ -20,6 +20,7 @@ public partial class RenovateTriageWorkflow
     private const string CiRacePatch = "renovate-triage-ci-race-v1";
     private const string StatusPollPatch = "renovate-triage-status-poll-v1";
     private const string CiPollPatch = "renovate-triage-ci-poll-v1";
+    private const string CiRecheckPatch = "renovate-triage-ci-recheck-v1";
 
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
@@ -89,6 +90,8 @@ public partial class RenovateTriageWorkflow
     private bool _ciRaceStatusPending;
     private bool _ciWaitOver;
     private int _applySignals;
+    private bool _ciRecheck;
+    private int _assessSignals;
 
     public static string WorkflowId(string repo, int prNumber) => $"renovate-triage/{repo}/{prNumber}";
 
@@ -106,12 +109,14 @@ public partial class RenovateTriageWorkflow
     [WorkflowRun]
     public async Task<RenovateTriageResult> RunAsync(RenovateTriageInput? input)
     {
-        var trigger = input is null ? "signal" : "new-head";
+        var trigger = input is null || input.LateSignal ? "signal" : "new-head";
         if (input is null)
         {
             await Workflow.WaitConditionAsync(() => _first is not null);
             input = new RenovateTriageInput(_first!.Repo, _first.PrNumber);
         }
+
+        input = input with { LateSignal = false };
 
         var started = Workflow.UtcNow;
         var run = await RunRecorder.BeginAsync(new BeginRunInput(
@@ -120,9 +125,17 @@ public partial class RenovateTriageWorkflow
             started));
         _step2 = Workflow.Patched(Step2Patch);
         _claude = Workflow.Patched(ClaudePatch);
+        _ciRecheck = Workflow.Patched(CiRecheckPatch);
         try
         {
-            return await JudgeAsync(input, run);
+            var result = await JudgeAsync(input, run);
+            if (_ciRecheck && _signalCount > _assessSignals)
+            {
+                var lateSignal = input with { LateSignal = true };
+                throw Workflow.CreateContinueAsNewException((RenovateTriageWorkflow wf) => wf.RunAsync(lateSignal));
+            }
+
+            return result;
         }
         catch (Exception ex) when (ex is ActivityFailureException or OperationCanceledException)
         {
@@ -151,9 +164,10 @@ public partial class RenovateTriageWorkflow
         while (true)
         {
             var seen = _signalCount;
+            _assessSignals = seen;
             var stepStarted = Workflow.UtcNow;
             var assess = await Workflow.ExecuteActivityAsync(
-                (RenovateTriageActivities activities) => activities.AssessAsync(new AssessInput(input.Repo, input.PrNumber, _step2, precheckedSha, _claude)),
+                (RenovateTriageActivities activities) => activities.AssessAsync(new AssessInput(input.Repo, input.PrNumber, _step2, precheckedSha, _claude, _ciRecheck)),
                 _activityOptions);
             await RecordStepAsync(run, ++seq, "assess", LadderRung.Rule, assess.Status.ToString(), stepStarted, assess);
             _mode = assess.Mode;
@@ -181,6 +195,8 @@ public partial class RenovateTriageWorkflow
                     await FinishCheckAsync(input, assess.HeadSha, CheckRunConclusion.Skipped, "Skipped: this commit already has a verdict.");
                     await CompleteAsync(run);
                     return new RenovateTriageResult(RenovateTriageOutcome.AlreadyJudged, assess.HeadSha, null, null);
+                case AssessStatus.ApprovalWithdrawn:
+                    return await WithdrawApprovalAsync(input, run, ++seq, assess);
                 case AssessStatus.NeedsPrecheck:
                     await ProgressAsync(input, assess.HeadSha, "Checking the diff and the PR text.");
                     var precheck = await PrecheckAsync(input, run, ++seq, assess.HeadSha, "precheck");
@@ -330,6 +346,27 @@ public partial class RenovateTriageWorkflow
 
             (ciWait, seq) = await WaitOutCiRaceAsync(ciWait, seq);
         }
+    }
+
+    private async Task<RenovateTriageResult> WithdrawApprovalAsync(RenovateTriageInput input, BeginRunResult? run, int seq, AssessResult assess)
+    {
+        await ProgressAsync(input, assess.HeadSha, "Withdrawing the approval.");
+        var stepStarted = Workflow.UtcNow;
+        var withdrawn = await Workflow.ExecuteActivityAsync(
+            (RenovateTriageActivities activities) => activities.WithdrawAsync(new WithdrawInput(input.Repo, input.PrNumber, assess.HeadSha, assess.Mode, assess.Decision)),
+            _applyOptions);
+        await RecordStepAsync(run, seq, "withdraw", LadderRung.Rule, withdrawn.Outcome.ToString(), stepStarted, withdrawn);
+        var (conclusion, summary) = withdrawn.Outcome switch
+        {
+            WithdrawOutcome.Withdrawn => (CheckRunConclusion.Success, $"Approval withdrawn: {TriageRules.ApprovalWithdrawn}."),
+            WithdrawOutcome.DismissRefused => (CheckRunConclusion.Failure, "The PR is flagged for review, but GitHub refused to dismiss the approval."),
+            _ => (CheckRunConclusion.Neutral, $"The approval was left as it is: {withdrawn.Reason}."),
+        };
+        await FinishCheckAsync(input, assess.HeadSha, conclusion, summary);
+        await CompleteAsync(run);
+        return withdrawn.Outcome is WithdrawOutcome.Withdrawn or WithdrawOutcome.DismissRefused
+            ? new RenovateTriageResult(RenovateTriageOutcome.Judged, assess.HeadSha, TriageRules.ApprovalWithdrawn, TriageVerdict.NeedsReview)
+            : new RenovateTriageResult(RenovateTriageOutcome.Skipped, assess.HeadSha, withdrawn.Reason, null);
     }
 
     // The apply step that sent the run back to waiting took the number after the verdict's, so the next step skips it.

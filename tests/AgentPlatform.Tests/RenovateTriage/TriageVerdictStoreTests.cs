@@ -227,6 +227,94 @@ public class TriageVerdictStoreTests
         Assert.Equal(TriageVerdict.Approve, (await after.TriageVerdicts.SingleAsync(Ct)).Verdict);
     }
 
+    private static TriageDecision Withdrawn() => TriageRules.ApprovalWithdrawnDecision("anthony-spruyt/widgets", Sha, []);
+
+    [Fact]
+    public async Task Withdraw_OverwritesTheAppliedRowInPlaceAndKeepsItApplied()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Safe, "agent", "agent text"), TriageMode.Live, LadderRung.Claude, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Safe, VerdictAction.Approve, Ct);
+        var withdrawn = Withdrawn();
+
+        await data.Verdicts.WithdrawAsync("anthony-spruyt/widgets", 7, Sha, withdrawn, Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageVerdict.NeedsReview, row.Verdict);
+        Assert.Equal([TriageRules.ApprovalWithdrawn], JsonSerializer.Deserialize<string[]>(row.Reasons)!);
+        Assert.Equal(withdrawn.Comment, row.Comment);
+        Assert.Equal(VerdictAction.Comment, row.Action);
+        Assert.Equal(LadderRung.Rule, row.Rung);
+        Assert.NotNull(row.AppliedAt);
+        Assert.True(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
+        Assert.Null(await data.Verdicts.FindUnappliedAsync("anthony-spruyt/widgets", 7, Sha, Ct));
+    }
+
+    [Fact]
+    public async Task Withdraw_KeepsTheTimeTheApprovalWasApplied()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Live, null, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Approve, VerdictAction.Approve, Ct);
+        await using var before = await data.Factory.CreateDbContextAsync(Ct);
+        var appliedAt = (await before.TriageVerdicts.SingleAsync(Ct)).AppliedAt;
+
+        await data.Verdicts.WithdrawAsync("anthony-spruyt/widgets", 7, Sha, Withdrawn(), Ct);
+
+        await using var after = await data.Factory.CreateDbContextAsync(Ct);
+        Assert.Equal(appliedAt, (await after.TriageVerdicts.SingleAsync(Ct)).AppliedAt);
+    }
+
+    [Fact]
+    public async Task Withdraw_AnUnappliedRow_BecomesTheAppliedWithdrawal()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Live, null, Ct);
+
+        await data.Verdicts.WithdrawAsync("anthony-spruyt/widgets", 7, Sha, Withdrawn(), Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageVerdict.NeedsReview, row.Verdict);
+        Assert.NotNull(row.AppliedAt);
+    }
+
+    [Fact]
+    public async Task Withdraw_WithoutARow_StoresTheAppliedWithdrawal()
+    {
+        var data = InMemoryRunData.Create();
+
+        await data.Verdicts.WithdrawAsync("anthony-spruyt/widgets", 7, Sha, Withdrawn(), Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageMode.Live, row.Mode);
+        Assert.Equal(TriageVerdict.NeedsReview, row.Verdict);
+        Assert.Equal(VerdictAction.Comment, row.Action);
+        Assert.NotNull(row.AppliedAt);
+        Assert.True(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
+    }
+
+    [Fact]
+    public async Task Withdraw_TwiceOrBesideAShadowRowOrAnotherCommit_LeavesOneRowEach()
+    {
+        var data = InMemoryRunData.Create();
+        var other = new string('a', 40);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, NeedsReview(), TriageMode.Shadow, null, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, other, new TriageDecision(TriageVerdict.Approve, TriageRules.Digest, null), TriageMode.Live, null, Ct);
+
+        await data.Verdicts.WithdrawAsync("anthony-spruyt/widgets", 7, Sha, Withdrawn(), Ct);
+        await data.Verdicts.WithdrawAsync("anthony-spruyt/widgets", 7, Sha, Withdrawn(), Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var rows = await db.TriageVerdicts.ToListAsync(Ct);
+        Assert.Equal(3, rows.Count);
+        Assert.Equal([TriageRules.CiFailed], JsonSerializer.Deserialize<string[]>(Assert.Single(rows, r => r.Mode == TriageMode.Shadow).Reasons)!);
+        Assert.Null(Assert.Single(rows, r => r.HeadSha == other).AppliedAt);
+        Assert.Equal([TriageRules.ApprovalWithdrawn], JsonSerializer.Deserialize<string[]>(Assert.Single(rows, r => r.Mode == TriageMode.Live && r.HeadSha == Sha).Reasons)!);
+    }
+
     [Fact]
     public async Task Record_RetriesOnceWhenTheWriteFailsTransiently()
     {

@@ -69,6 +69,33 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
         await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // The row must stay applied: Live counts only applied rows as judged.
+    public async Task WithdrawAsync(string repo, int prNumber, string headSha, TriageDecision decision, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(repo);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(prNumber);
+        ArgumentException.ThrowIfNullOrWhiteSpace(headSha);
+        ArgumentNullException.ThrowIfNull(decision);
+
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.TriageVerdicts
+            .SingleOrDefaultAsync(v => v.Repo == repo && v.PrNumber == prNumber && v.HeadSha == headSha && v.Mode == TriageMode.Live, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null)
+        {
+            row = new RenovateTriageVerdict { Id = Guid.NewGuid(), Repo = repo, PrNumber = prNumber, HeadSha = headSha, Reasons = string.Empty, Mode = TriageMode.Live };
+            db.TriageVerdicts.Add(row);
+        }
+
+        row.Verdict = decision.Verdict;
+        row.Reasons = JsonSerializer.Serialize(new[] { decision.Reason });
+        row.Comment = decision.Comment;
+        row.Rung = LadderRung.Rule;
+        row.Action = VerdictAction.Comment;
+        row.AppliedAt ??= DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     // The first verdict for a commit stands; a concurrent writer can win the unique key, so retry once on a fresh context.
     public async Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, LadderRung? rung, CancellationToken cancellationToken)
     {

@@ -321,6 +321,68 @@ public class TriageRulesTests
         }
     }
 
+    public class TriageApproval
+    {
+        [Fact]
+        public void TheTriageBotsLatestReview_IsAnApprovalOfTheHead()
+        {
+            Assert.True(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void NoReviews_AreNoApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([], Head));
+        }
+
+        [Theory]
+        [InlineData("alice")]
+        [InlineData("skynet-rw")]
+        [InlineData("Skynet-RW[bot]")]
+        public void AnotherReviewersApproval_IsNotTheTriageBots(string login)
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(login, "APPROVED")], Head));
+        }
+
+        [Theory]
+        [InlineData("DISMISSED")]
+        [InlineData("CHANGES_REQUESTED")]
+        public void ADismissedOrOverriddenApproval_IsNoApproval(string later)
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR"), Review(TriageRules.TriageBotLogin, later, "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void ADismissedReview_IsNoApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "DISMISSED", "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void ACommentAfterTheApproval_LeavesTheApprovalStanding()
+        {
+            Assert.True(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR"), Review(TriageRules.TriageBotLogin, "COMMENTED", "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void AnApprovalOfAnEarlierCommit_IsNoApprovalOfTheHead()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR", commit: "fedcba9876543210fedcba9876543210fedcba98")], Head));
+        }
+
+        [Fact]
+        public void AnEmptyHead_NeverMatchesATriageApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR", commit: string.Empty)], string.Empty));
+        }
+
+        [Fact]
+        public void TheOwnersApprovalBesideTheTriageBotsDismissedOne_IsNoTriageApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "DISMISSED", "CONTRIBUTOR"), Review("alice", "APPROVED")], Head));
+        }
+    }
+
     public class CommitGate
     {
         private static GitHubCommit Commit(
@@ -394,6 +456,8 @@ public class TriageRulesTests
 
     public class ChecksAssessment
     {
+        private static readonly GitHubCheckRun _summary = Run(TriageRules.RequiredCheck);
+
         private static CiState Assess(GitHubCheckRun[] runs, params GitHubCheckSuite[] suites) =>
             TriageRules.AssessChecks(runs, suites);
 
@@ -415,7 +479,7 @@ public class TriageRulesTests
         [InlineData("skipped")]
         public void CompletedChecksWithAPassingConclusion_Pass(string conclusion)
         {
-            Assert.Equal(CiState.Passed, Assess([Run("build", conclusion: conclusion), Run("test")]));
+            Assert.Equal(CiState.Passed, Assess([Run("build", conclusion: conclusion), Run("test"), _summary]));
         }
 
         [Theory]
@@ -454,15 +518,15 @@ public class TriageRulesTests
         [InlineData("Mergify")]
         public void ChecksIgnoredEverywhere_NeverBlockOrFail(string name)
         {
-            Assert.Equal(CiState.Passed, Assess([Run("test"), Run(name, "in_progress", null)]));
-            Assert.Equal(CiState.Passed, Assess([Run("test"), Run(name, conclusion: "failure")]));
+            Assert.Equal(CiState.Passed, Assess([Run("test"), _summary, Run(name, "in_progress", null)]));
+            Assert.Equal(CiState.Passed, Assess([Run("test"), _summary, Run(name, conclusion: "failure")]));
         }
 
         [Fact]
         public void EveryCheckOfTheMergifyApp_NeverBlocksOrFails()
         {
-            Assert.Equal(CiState.Passed, Assess([Run("test"), Run("Summary", "in_progress", null, "mergify")]));
-            Assert.Equal(CiState.Passed, Assess([Run("test"), Run("Summary", conclusion: "failure", app: "mergify")]));
+            Assert.Equal(CiState.Passed, Assess([Run("test"), _summary, Run("Summary", "in_progress", null, "mergify")]));
+            Assert.Equal(CiState.Passed, Assess([Run("test"), _summary, Run("Summary", conclusion: "failure", app: "mergify")]));
         }
 
         [Fact]
@@ -472,6 +536,7 @@ public class TriageRulesTests
             [
                 new(116880220225, "Guard Linter Removals", "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 105344778159),
                 new(116880225845, "Guard Linter Removals", "completed", "success", "github-actions", 15368, CheckSuiteId: 105344780965),
+                _summary,
             ];
 
             Assert.Equal(CiState.Passed, Assess(runs));
@@ -611,7 +676,7 @@ public class TriageRulesTests
         [Fact]
         public void SkynetChecks_DoNotFailButStillHoldTheJudgementWhilePending()
         {
-            Assert.Equal(CiState.Passed, Assess([Run("test"), Run("skynet/triage", conclusion: "failure")]));
+            Assert.Equal(CiState.Passed, Assess([Run("test"), _summary, Run("skynet/triage", conclusion: "failure")]));
             Assert.Equal(CiState.Pending, Assess([Run("test"), Run("skynet/triage", "in_progress", null)]));
         }
 
@@ -634,13 +699,13 @@ public class TriageRulesTests
         public void AnotherAppsSuiteThatHasNotCompleted_IsPendingOnlyWhenItHasRuns()
         {
             Assert.Equal(CiState.Pending, Assess([Run("build")], Suite("sonarqubecloud", "in_progress", 1)));
-            Assert.Equal(CiState.Passed, Assess([Run("build")], Suite("renovate", "queued", 0), Suite("claude", "queued", 0)));
+            Assert.Equal(CiState.Passed, Assess([Run("build"), _summary], Suite("renovate", "queued", 0), Suite("claude", "queued", 0)));
         }
 
         [Fact]
         public void AMergifySuiteThatHasNotCompleted_IsIgnored()
         {
-            Assert.Equal(CiState.Passed, Assess([Run("build")], Suite("mergify", "in_progress", 3)));
+            Assert.Equal(CiState.Passed, Assess([Run("build"), _summary], Suite("mergify", "in_progress", 3)));
         }
 
         [Fact]
@@ -648,13 +713,152 @@ public class TriageRulesTests
         {
             var failedSuite = new GitHubCheckSuite(1, "completed", "failure", "github-actions", 1);
 
-            Assert.Equal(CiState.Passed, Assess([Run("build")], failedSuite));
+            Assert.Equal(CiState.Passed, Assess([Run("build"), _summary], failedSuite));
         }
 
         [Fact]
         public void ASuiteAloneWithNoRuns_IsPending()
         {
             Assert.Equal(CiState.Pending, Assess([], Suite()));
+        }
+    }
+
+    public class SummaryCheckAssessment
+    {
+        private static readonly GitHubCheckRun[] _fast = [Run("build"), Run("lint")];
+
+        private static CiState Assess(GitHubCheckRun[] runs, params GitHubCheckSuite[] suites) =>
+            TriageRules.AssessChecks(runs, suites);
+
+        private static GitHubCheckRun Summary(string status = "completed", string? conclusion = "success", string app = "github-actions", string name = TriageRules.RequiredCheck) =>
+            Run(name, status, conclusion, app);
+
+        [Fact]
+        public void FastChecksThatAreGreen_WaitForTheSummaryCheck()
+        {
+            Assert.Equal(CiState.Pending, Assess(_fast, Suite()));
+        }
+
+        [Fact]
+        public void TheSummaryCheckGreenWithEverythingElse_Passes()
+        {
+            Assert.Equal(CiState.Passed, Assess([.. _fast, Summary()], Suite()));
+        }
+
+        [Theory]
+        [InlineData("queued")]
+        [InlineData("in_progress")]
+        public void ASummaryCheckThatHasNotCompleted_IsPending(string status)
+        {
+            Assert.Equal(CiState.Pending, Assess([.. _fast, Summary(status, null)], Suite()));
+        }
+
+        [Theory]
+        [InlineData("failure")]
+        [InlineData("cancelled")]
+        [InlineData("timed_out")]
+        public void AFailedSummaryCheck_Fails(string conclusion)
+        {
+            GitHubCheckRun[] runs = [.. _fast, Summary(conclusion: conclusion)];
+
+            Assert.Equal(CiState.Failed, Assess(runs, Suite()));
+            Assert.Equal([TriageRules.RequiredCheck], TriageRules.FailedChecks(runs).Select(c => c.Name));
+        }
+
+        [Fact]
+        public void TheSummaryCheckGreenWhileAnotherRunIsPending_IsPending()
+        {
+            Assert.Equal(CiState.Pending, Assess([.. _fast, Summary(), Run("deploy", "in_progress", null)], Suite()));
+        }
+
+        [Fact]
+        public void TheSummaryCheckGreenWhileASuiteIsPending_IsPending()
+        {
+            Assert.Equal(CiState.Pending, Assess([.. _fast, Summary()], Suite(status: "in_progress", runs: 0)));
+        }
+
+        [Fact]
+        public void AnotherFailedCheck_FailsBeforeTheSummaryCheckExists()
+        {
+            GitHubCheckRun[] runs = [.. _fast, Run("test", conclusion: "failure")];
+
+            Assert.Equal(CiState.Failed, Assess(runs, Suite()));
+            Assert.Equal(["test"], TriageRules.FailedChecks(runs).Select(c => c.Name));
+        }
+
+        [Fact]
+        public void AnotherFailedCheck_FailsAfterTheSummaryCheckIsGreen()
+        {
+            Assert.Equal(CiState.Failed, Assess([.. _fast, Summary(), Run("test", conclusion: "failure")], Suite()));
+        }
+
+        [Theory]
+        [InlineData("Summary", "mergify")]
+        [InlineData("Summary", "github-actions")]
+        [InlineData("summary", "github-actions")]
+        [InlineData("summary / check results", "github-actions")]
+        [InlineData("summary / Check Results ", "github-actions")]
+        [InlineData("CI / summary / Check Results", "github-actions")]
+        [InlineData(TriageRules.RequiredCheck, "other-app")]
+        [InlineData(TriageRules.RequiredCheck, "mergify")]
+        [InlineData(TriageRules.RequiredCheck, null)]
+        public void ARunWithAnotherNameOrFromAnotherApp_DoesNotSatisfyTheSummaryCheck(string name, string? app)
+        {
+            Assert.Equal(CiState.Pending, Assess([.. _fast, new GitHubCheckRun(9, name, "completed", "success", app)], Suite()));
+        }
+
+        [Theory]
+        [InlineData("skipped")]
+        [InlineData("neutral")]
+        public void ASkippedOrNeutralSummaryRun_NeitherSatisfiesNorFailsTheSummaryCheck(string conclusion)
+        {
+            GitHubCheckRun[] runs = [.. _fast, Summary(conclusion: conclusion)];
+
+            Assert.Equal(CiState.Pending, Assess(runs, Suite()));
+            Assert.Empty(TriageRules.FailedChecks(runs));
+            Assert.Equal(CiState.Passed, Assess([.. runs, new GitHubCheckRun(2, TriageRules.RequiredCheck, "completed", "success", "github-actions")], Suite()));
+        }
+
+        [Fact]
+        public void TwoSummaryRunsThatDisagree_Fail()
+        {
+            GitHubCheckRun[] runs =
+            [
+                .. _fast,
+                new(1, TriageRules.RequiredCheck, "completed", "success", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, TriageRules.RequiredCheck, "completed", "failure", "github-actions", 15368, CheckSuiteId: 10),
+            ];
+
+            Assert.Equal(CiState.Failed, Assess(runs, Suite()));
+            Assert.Equal([2L], TriageRules.FailedChecks(runs).Select(c => c.Id));
+        }
+
+        [Fact]
+        public void ASummaryRunThatWasCancelledAndThenSucceededInANewerSuite_Passes()
+        {
+            GitHubCheckRun[] runs =
+            [
+                .. _fast,
+                new(1, TriageRules.RequiredCheck, "completed", "cancelled", "github-actions", 15368, CheckSuiteId: 10),
+                new(2, TriageRules.RequiredCheck, "completed", "success", "github-actions", 15368, CheckSuiteId: 20),
+            ];
+
+            Assert.Equal(CiState.Passed, Assess(runs, Suite()));
+        }
+
+        [Fact]
+        public void AFailedCommitStatus_FailsWhileTheSummaryCheckIsMissing()
+        {
+            GitHubCheckRun[] runs = [.. _fast, new(0, "Terraform Cloud/repo", "completed", "failure", null)];
+
+            Assert.Equal(CiState.Failed, Assess(runs, Suite()));
+        }
+
+        [Fact]
+        public void AMissingSummaryCheck_IsPendingWithNothingToCount()
+        {
+            Assert.Equal(new CiSummary(CiState.Pending, 0), TriageRules.SummariseChecks(_fast, [Suite()]));
+            Assert.Equal(new CiSummary(CiState.Passed, 0), TriageRules.SummariseChecks([.. _fast, Summary()], [Suite()]));
         }
     }
 
@@ -666,7 +870,7 @@ public class TriageRulesTests
         [Fact]
         public void PassingChecks_AreGreenWithNoCount()
         {
-            Assert.Equal(new CiSummary(CiState.Passed, 0), Summarise([Run("build"), Run("test")], Suite()));
+            Assert.Equal(new CiSummary(CiState.Passed, 0), Summarise([Run("build"), Run("test"), Run(TriageRules.RequiredCheck)], Suite()));
         }
 
         [Fact]
@@ -705,6 +909,7 @@ public class TriageRulesTests
             var runs = new[]
             {
                 Run("build"),
+                Run(TriageRules.RequiredCheck),
                 Run("Mergify Merge Protections", conclusion: "failure"),
                 Run("Summary", "in_progress", null, "mergify"),
                 Run("renovate/stability-days", "in_progress", null),
@@ -1227,6 +1432,30 @@ public class TriageRulesTests
         }
 
         [Fact]
+        public void ApprovalWithdrawn_IsANeedsReviewThatNamesTheShaAndLinksEachFailedCheck()
+        {
+            var decision = TriageRules.ApprovalWithdrawnDecision(Repo, Head, [new GitHubCheckRun(11, "build", "completed", "failure", "github-actions"), new GitHubCheckRun(GitHubApiClient.CommitStatusId, "deploy/preview", "completed", "failure", null)]);
+
+            Assert.Equal(TriageVerdict.NeedsReview, decision.Verdict);
+            Assert.Equal(TriageRules.ApprovalWithdrawn, decision.Reason);
+            Assert.Equal(
+                "**Needs review:** CI failed on `0123456` after the approval. The approval was withdrawn. Failed: [`build`](https://github.com/anthony-spruyt/widgets/runs/11), `deploy/preview`.",
+                decision.Comment);
+        }
+
+        [Fact]
+        public void ApprovalWithdrawn_ListsAtMostTenChecksAndDefusesTheirNames()
+        {
+            var failed = Enumerable.Range(1, 11).Select(i => new GitHubCheckRun(i, i == 1 ? "a](https://evil.test) `x`" : $"job-{i}", "completed", "failure", "github-actions")).ToList();
+
+            var comment = TriageRules.ApprovalWithdrawnDecision(Repo, Head, failed).Comment!;
+
+            Assert.Contains("[`a)(https://evil.test) 'x'`](https://github.com/anthony-spruyt/widgets/runs/1)", comment, StringComparison.Ordinal);
+            Assert.DoesNotContain("job-11", comment, StringComparison.Ordinal);
+            Assert.EndsWith(" and 1 more.", comment, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void FailedChecks_AreTheCompletedConsideredNonPassingOnes()
         {
             var failed = TriageRules.FailedChecks(
@@ -1338,6 +1567,7 @@ public class TriageRulesTests
         [Theory]
         [InlineData(TriageRules.NonRenovateCommit)]
         [InlineData(MigrationDetector.Reason)]
+        [InlineData(TriageRules.ApprovalWithdrawn)]
         public void TheNeverClimbReasons_DoNotClimb(string reason)
         {
             Assert.False(TriageRules.Climbs(new TriageDecision(TriageVerdict.NeedsReview, reason, "c")));
