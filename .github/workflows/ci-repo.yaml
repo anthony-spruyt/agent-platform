@@ -16,7 +16,7 @@ jobs:
       DOTNET_NOLOGO: "1"
     steps:
       - name: "Harden Runner"
-        uses: "anthony-spruyt/repo-operator/.github/actions/harden-runner@e8ed24ff146cd57e061419cf31822b8d05feb9e4" # main
+        uses: "anthony-spruyt/repo-operator/.github/actions/harden-runner@bfbab2b0ea7b66d0d3e9eac9136222bd1fa9d35c" # main
         with:
           allowed-endpoints: >-
             aka.ms:443
@@ -75,7 +75,7 @@ jobs:
       DOTNET_NOLOGO: "1"
     steps:
       - name: "Harden Runner"
-        uses: "anthony-spruyt/repo-operator/.github/actions/harden-runner@e8ed24ff146cd57e061419cf31822b8d05feb9e4" # main
+        uses: "anthony-spruyt/repo-operator/.github/actions/harden-runner@bfbab2b0ea7b66d0d3e9eac9136222bd1fa9d35c" # main
         with:
           allowed-endpoints: >-
             aka.ms:443
