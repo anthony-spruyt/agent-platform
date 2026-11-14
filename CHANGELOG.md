@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.26.0...v1.27.0) (2026-11-14)
+
+
+### Features
+
+* **triage:** wait for the CI summary check and follow CI after an approval ([#306](https://github.com/anthony-spruyt/agent-platform/issues/306)) ([6b3bad3](https://github.com/anthony-spruyt/agent-platform/commit/6b3bad3a228528429174d4cca5cb21e0de49d5f2))
+
+
+### Bug Fixes
+
+* **deps:** update aspire monorepo to 13.6.5 ([#307](https://github.com/anthony-spruyt/agent-platform/issues/307)) ([1c6f97c](https://github.com/anthony-spruyt/agent-platform/commit/1c6f97cc7054eb5aaba3a354632b54689b102662))
+
 ## [1.26.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.25.0...v1.26.0) (2026-11-11)
 
 
