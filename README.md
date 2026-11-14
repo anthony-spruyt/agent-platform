@@ -173,18 +173,21 @@ The outcome is `Clean`, `Flagged` or `Unchecked`: a busy (503) or unreachable sc
 
 `RenovateTriageWorkflow` judges one Renovate pull request per workflow ID, for repositories owned by `anthony-spruyt` only (intake drops any other owner, and `Assess` and `Apply` refuse it). Each pass runs these activities on the `agent-platform` queue:
 
-- `Assess` reads the pull request from GitHub and applies the rules below. It returns a skip, an earlier verdict for the head sha, a decision, `Pending` (CI still running) or a request to ask Jev. Every result carries the mode `Assess` ran in.
+- `Assess` reads the pull request from GitHub and applies the rules below. It returns a skip, an earlier verdict for the head sha, a decision, `Pending` (CI still running), a request to ask Jev or `ApprovalWithdrawn`. Every result carries the mode `Assess` ran in.
+  `ApprovalWithdrawn` is returned only in `Live` mode, for a run started after the `renovate-triage-ci-recheck-v1` patch, when the triage App has approved the head and CI has failed since.
 - `Judge` reads the pull request files and sends the pull request body and the file diff to Jev in one call (`LiteLlm:JevPath`, by default LiteLLM's native `v1/systemone`, each capped at 32 KiB; lock files come last in the diff, and files without a patch are listed by name) and applies the answers and the bump-type guard.
   It re-reads the pull request first, so a moved head returns without a verdict.
   It has its own retry options: three tries over about 15 minutes. When Jev still fails, the workflow records `needs review` with reason `jev-error`.
 - `RecordVerdict` stores the verdict in `renovate_triage_verdicts`, once per pull request, head sha and mode.
 - `Apply` writes the verdict to GitHub. It runs only in `Live` mode, after `RecordVerdict`.
+- `Withdraw` takes back an approval whose head has failed CI since (see Writes). It runs only in `Live` mode and only after `Assess` returned `ApprovalWithdrawn`.
 - The code rungs (`Precheck`, `FetchChangelog`, `DetectMigration`, `ClassifyCi`, `RerunFailedJobs` and `BuildContext`, on `RenovateTriageCodeActivities`) and the check-run activity `RenovateTriageReportCheck` run on the same queue; see Code rungs below.
 
 The workflow waits for all CI, which includes the `summary / Check Results` check (see rule 6 below): while `Assess` returns `Pending` it waits for the next `CheckSuiteCompleted` signal, for at most two hours, and wakes every five minutes to run `Assess` again, so a lost `check_suite` webhook delays the verdict by five minutes at most.
 A run that reached a CI wait before the `renovate-triage-ci-poll-v1` patch was deployed keeps the older rule for all its later waits too (rerun, stale and CI race), because `Workflow.Patched` gives one answer for the whole run:
 it wakes every five minutes only while a commit status is among the pending items (nothing signals a status completing) and the `renovate-triage-status-poll-v1` patch applies, and otherwise ends on the signal alone. When the two hours end it runs `Assess` once more and records `ci-timeout` only if CI is still pending.
 A head sha that differs from the one judged starts a new run with the same input.
+A run started after the `renovate-triage-ci-recheck-v1` patch that is about to end, and received a signal after its last `Assess`, starts a new run with the same input instead, so the latest CI result is always read once more.
 
 ### Code rungs
 
@@ -212,7 +215,7 @@ A run started after the `renovate-triage-step2-v1` patch also does the following
 
 The pull request body, the changelog sections and the log tails in the triage context travel as `ScannedText`, and the activities refuse one whose hash does not match.
 
-The workflow reports a check run named `Agent triage` on the head sha, only in `Live` mode: in progress while it works, then one of `success` (verdict applied), `neutral` (verdict not applied or only recorded, head moved on, or cancelled), `skipped` or `failure` (the run stopped on an error).
+The workflow reports a check run named `Agent triage` on the head sha, only in `Live` mode: in progress while it works, then one of `success` (verdict applied, or an approval withdrawn), `neutral` (verdict not applied or only recorded, head moved on, or cancelled), `skipped` or `failure` (the run stopped on an error, or GitHub refused to dismiss an approval that was being withdrawn).
 The check run is written in a `finally`, so it never stays open, and a failure to write it is logged without stopping the triage. Its `external_id` is `renovate-triage/{repo}/{pr}@{sha}`.
 For a run started after the `renovate-triage-fresh-check-v1` patch, the first report a run makes for a head, once it is past the skip and already-judged gates, sets `StartNew`, so a re-triage of a head whose check was completed (for example `Skipped: blocking-label`, after the owner removed the label) shows a new run going in progress and then its result.
 A skipped, already-judged or duplicate run leaves a completed check as it is. The sweeper works on the newest run.
@@ -220,7 +223,7 @@ A skipped, already-judged or duplicate run leaves a completed check as it is. Th
 ### Claude rung
 
 A run started after the `renovate-triage-claude-v1` patch climbs to Claude in `Live` mode when a pull request would be handed to the owner for a reason the code cannot settle by itself.
-These reasons never climb: `non-renovate-commit`, the precheck reasons and `hands-on-migration`. Each of them is handed to the owner as before. `ci-failed`, `ci-timeout` and `breaking` do climb.
+These reasons never climb: `non-renovate-commit`, the precheck reasons, `hands-on-migration` and `approval-withdrawn`. Each of them is handed to the owner as before. `ci-failed`, `ci-timeout` and `breaking` do climb.
 A verdict already stored for the head is never climbed again. `Shadow` mode never climbs.
 
 1. `QueueAsync` writes a pending row in `renovate_triage_pending`, adds the `agent/needs-triage` label and a sticky "Queued" comment, and no verdict row. A head that moved meanwhile reassesses.
@@ -270,6 +273,8 @@ In order; the first that applies decides:
 2. The author is not Renovate, or the pull request has an `agent/needs-human-review`, `agent/needs-triage`, `agent/revert` or `blocked` label: skipped. The `agent/needs-triage` label parks a pull request for the agent, so a hand-added one never starts a run.
   In `Shadow` mode, and in `Live` while the head has an unapplied verdict, the `agent/needs-human-review`, `agent/needs-triage` and `agent/auto-approved` labels are ignored; an unapplied approving verdict still honours `agent/needs-human-review`.
 3. An owner, member or collaborator, or the triage App, has approved the current head sha and none of them requests changes: skipped as already approved. In `Shadow` mode reviews by the triage App are ignored.
+   In `Live` mode, when that approval is the triage App's on the current head, the checks of the head are read as well: failed checks end the run as `approval-withdrawn` (see Writes), while pending or green checks change nothing. An approval by an owner, member or collaborator is never withdrawn.
+   The `agent/needs-human-review` label of rule 2 ends later runs before the reviews are read.
 4. A verdict already exists for the head sha and mode: nothing to do. In `Live` only a verdict that `Apply` has written counts; an unapplied one is applied again on the next signal, without asking Jev again (see Writes).
 5. Every commit must be authored by Renovate and verified, with GitHub as committer, or be a commit that only merges the base branch in (see Merge-from-base commits). The listed commits must match the pull request's commit count, and a count of 250 or more (the most GitHub lists) fails the gate. Otherwise: needs review, `non-renovate-commit`.
    The Mergify gate is separate: its `gate-files` rule requires the owner's approval, or Renovate-only authors, for a pull request that touches gate files.
@@ -346,6 +351,11 @@ What each verdict writes, after the gates:
 - One sticky comment per pull request, found by the hidden marker `<!-- agent-platform:renovate-triage -->` on a comment by the App. It is created once and edited for each new head sha, never duplicated.
   Agent text sits in a quoted `**Agent output (unverified)**` block below the header `**Agent verdict: SAFE|FIXABLE|BLOCKED|NEEDS REVIEW**`, capped at 8,000 characters, with HTML, backslashes, brackets, mentions, references and links defused, and a footer with the short head sha, the model and the run.
 - When the writes are done the verdict row gets `applied_at`, and its verdict, reason and comment are replaced by the ones written, so a downgrade or hand-off is stored as what was written, not as what the agent said.
+- Withdraw: for the head `Assess` reported, in `Live` mode, it checks the repository owner, that the pull request is still open and not merged and that the head is unchanged, then reads the reviews and CI again.
+  It writes nothing unless the App's approval is still on the head (or `agent/needs-human-review` is already set, so a retry completes) and CI has failed (`not-live`, `not-open`, `head-moved`, `approval-gone`, `ci-not-failed`).
+  The writes go in this order: the label `agent/needs-human-review` (replacing `agent/auto-approved`, `agent/safe` or `agent/fixable`), a dismissal of every approval by the App with the message `CI failed after the approval.`, the sticky comment naming the failed checks, and the verdict row, overwritten in place with `applied_at` kept.
+  An approval by an owner, member or collaborator is not dismissed. GitHub refusing a dismissal (`422`) leaves the pull request flagged and ends the `Agent triage` check as `failure`.
+  Any other dismissal error fails the activity, which is retried with the options of `Apply`. It never reruns jobs and never starts the agent.
 - An unapplied verdict is applied again with the App's own approval and the `agent/auto-approved` label ignored, and `agent/needs-human-review` ignored when the verdict is needs review. `blocked`, `agent/revert` and human approvals still skip it, and so does `agent/needs-human-review` when the verdict is approve.
 
 The comments:
@@ -365,6 +375,7 @@ The comments:
 | `digest-mismatch`     | **Needs review:** marked as a digest bump, but more than a digest changed.                                                      |
 | `non-renovate-commit` | **Needs review:** this PR has commits that Renovate didn't make.                                                                |
 | `ci-timeout`          | **Needs review:** CI didn't finish within 2 hours.                                                                              |
+| `approval-withdrawn`  | **Needs review:** CI failed on `<short sha>` after the approval. The approval was withdrawn. Failed: `<check names, linked>`.   |
 | `digest`              | Review body: **Auto-approved:** digest bump.                                                                                    |
 | `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes in the PR body.                                      |
 | `changelog-present`   | Review body: **Auto-approved:** `<patch or minor>` bump with release notes from `<release or CHANGELOG.md links>`.              |
@@ -372,6 +383,7 @@ The comments:
 | `allowlisted`         | Review body: **Auto-approved:** allowlisted.                                                                                    |
 | Sticky edit           | **Auto-approved:** new commit `<short sha>`, `<reason>`. The reason is the review body's text with its first letter lowercased. |
 | Dismissal message     | A newer commit needs review.                                                                                                    |
+| Withdraw dismissal    | CI failed after the approval.                                                                                                   |
 
 ## Livemap
 
@@ -655,7 +667,7 @@ The replay tests (`tests/AgentPlatform.Tests/Replay`) replay the committed histo
 time-skipping tests. The `renovate-triage-v141-*` histories were captured from release 1.4.1 while a run waited for CI or for Jev; no test records them, so they stay as committed and prove that runs started by 1.4.1 replay on the current code.
 The `renovate-triage-v150-*` and `renovate-triage-v19x-*` histories were exported read-only from the cluster's Temporal namespace (worker identities and pod names scrubbed) and prove that runs started before the code rungs (v150) and before the Claude rung (v19x) replay on the current code.
 The other `renovate-triage-live-*` histories (`live-approve`, `live-needs-review`) are synthetic, like the rest.
-Every workflow change must sit behind `Workflow.Patched` (`renovate-triage-jev-retry-v1`, `renovate-triage-live-v1`, `renovate-triage-step2-v1`, `renovate-triage-claude-v1`, `renovate-triage-head-v1`, `renovate-triage-fresh-check-v1`, `renovate-triage-ci-race-v1`, `renovate-triage-status-poll-v1`, `renovate-triage-ci-poll-v1`).
+Every workflow change must sit behind `Workflow.Patched` (`renovate-triage-jev-retry-v1`, `renovate-triage-live-v1`, `renovate-triage-step2-v1`, `renovate-triage-claude-v1`, `renovate-triage-head-v1`, `renovate-triage-fresh-check-v1`, `renovate-triage-ci-race-v1`, `renovate-triage-status-poll-v1`, `renovate-triage-ci-poll-v1`, `renovate-triage-ci-recheck-v1`).
 Re-recording rewrites every history a test names: restore the older ones with `git checkout` so they keep proving the older flow.
 
 The integration tests share one AppHost (Temporal dev server, PostgreSQL, Migrate and both Host roles) through `Aspire.Hosting.Testing`. They run `PingWorkflow` end to end, check its `runs` row, check that the Migrate role finished with exit code 0 and post a signed `check_suite` delivery to the Web role to see the triage workflow schedule its `Assess` activity on the Worker. They need a container

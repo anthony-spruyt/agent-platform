@@ -321,6 +321,62 @@ public class TriageRulesTests
         }
     }
 
+    public class TriageApproval
+    {
+        [Fact]
+        public void TheTriageBotsLatestReview_IsAnApprovalOfTheHead()
+        {
+            Assert.True(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void NoReviews_AreNoApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([], Head));
+        }
+
+        [Theory]
+        [InlineData("alice")]
+        [InlineData("skynet-rw")]
+        [InlineData("Skynet-RW[bot]")]
+        public void AnotherReviewersApproval_IsNotTheTriageBots(string login)
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(login, "APPROVED")], Head));
+        }
+
+        [Theory]
+        [InlineData("DISMISSED")]
+        [InlineData("CHANGES_REQUESTED")]
+        public void ADismissedOrOverriddenApproval_IsNoApproval(string later)
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR"), Review(TriageRules.TriageBotLogin, later, "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void ADismissedReview_IsNoApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "DISMISSED", "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void ACommentAfterTheApproval_LeavesTheApprovalStanding()
+        {
+            Assert.True(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR"), Review(TriageRules.TriageBotLogin, "COMMENTED", "CONTRIBUTOR")], Head));
+        }
+
+        [Fact]
+        public void AnApprovalOfAnEarlierCommit_IsNoApprovalOfTheHead()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "APPROVED", "CONTRIBUTOR", commit: "fedcba9876543210fedcba9876543210fedcba98")], Head));
+        }
+
+        [Fact]
+        public void TheOwnersApprovalBesideTheTriageBotsDismissedOne_IsNoTriageApproval()
+        {
+            Assert.False(TriageRules.HasTriageApproval([Review(TriageRules.TriageBotLogin, "DISMISSED", "CONTRIBUTOR"), Review("alice", "APPROVED")], Head));
+        }
+    }
+
     public class CommitGate
     {
         private static GitHubCommit Commit(
@@ -1370,6 +1426,30 @@ public class TriageRulesTests
         }
 
         [Fact]
+        public void ApprovalWithdrawn_IsANeedsReviewThatNamesTheShaAndLinksEachFailedCheck()
+        {
+            var decision = TriageRules.ApprovalWithdrawnDecision(Repo, Head, [new GitHubCheckRun(11, "build", "completed", "failure", "github-actions"), new GitHubCheckRun(GitHubApiClient.CommitStatusId, "deploy/preview", "completed", "failure", null)]);
+
+            Assert.Equal(TriageVerdict.NeedsReview, decision.Verdict);
+            Assert.Equal(TriageRules.ApprovalWithdrawn, decision.Reason);
+            Assert.Equal(
+                "**Needs review:** CI failed on `0123456` after the approval. The approval was withdrawn. Failed: [`build`](https://github.com/anthony-spruyt/widgets/runs/11), `deploy/preview`.",
+                decision.Comment);
+        }
+
+        [Fact]
+        public void ApprovalWithdrawn_ListsAtMostTenChecksAndDefusesTheirNames()
+        {
+            var failed = Enumerable.Range(1, 11).Select(i => new GitHubCheckRun(i, i == 1 ? "a](https://evil.test) `x`" : $"job-{i}", "completed", "failure", "github-actions")).ToList();
+
+            var comment = TriageRules.ApprovalWithdrawnDecision(Repo, Head, failed).Comment!;
+
+            Assert.Contains("[`a)(https://evil.test) 'x'`](https://github.com/anthony-spruyt/widgets/runs/1)", comment, StringComparison.Ordinal);
+            Assert.DoesNotContain("job-11", comment, StringComparison.Ordinal);
+            Assert.EndsWith(" and 1 more.", comment, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void FailedChecks_AreTheCompletedConsideredNonPassingOnes()
         {
             var failed = TriageRules.FailedChecks(
@@ -1481,6 +1561,7 @@ public class TriageRulesTests
         [Theory]
         [InlineData(TriageRules.NonRenovateCommit)]
         [InlineData(MigrationDetector.Reason)]
+        [InlineData(TriageRules.ApprovalWithdrawn)]
         public void TheNeverClimbReasons_DoNotClimb(string reason)
         {
             Assert.False(TriageRules.Climbs(new TriageDecision(TriageVerdict.NeedsReview, reason, "c")));

@@ -530,7 +530,8 @@ public partial class RenovateTriageWorkflowTests
             return await RunToResultAsync(handle);
         });
 
-        Assert.Equal("claude-safe", result.Reason);
+        Assert.Equal(TriageRules.AlreadyApproved, result.Reason);
+        Assert.Equal([ShaA], rig.Github.Approvals.Select(a => a.CommitId));
         Assert.Single(rig.Pods.Inputs);
         Assert.Equal(["reserve", "pod-created", "finish:Succeeded"], rig.Budget.Calls);
     }
