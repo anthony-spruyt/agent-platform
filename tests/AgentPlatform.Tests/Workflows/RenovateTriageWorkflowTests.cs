@@ -299,6 +299,45 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
+    public async Task GreenChecksWithoutTheSummaryCheck_WaitForIt_ThenJudge()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.SummaryCheck = null;
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            await WaitForStepAsync(rig, "assess", "Pending");
+            Assert.Empty(await VerdictsAsync(rig));
+            Assert.Empty(rig.Jev.Bodies);
+
+            rig.Github.SummaryCheck = new GitHubCheckRun(99, TriageRules.RequiredCheck, "completed", "success", "github-actions");
+            return await RunToResultAsync(handle, "renovate-triage-summary-check-then-approve");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), result);
+        Assert.Single(await VerdictsAsync(rig));
+    }
+
+    [Fact]
+    public async Task GreenChecksThatNeverGetTheSummaryCheck_AreNeedsReviewAfterTwoHours()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig();
+        rig.Github.SummaryCheck = null;
+
+        var result = await InWorkerAsync(env, rig, async () =>
+        {
+            var handle = await StartAsync(env, Signal());
+            return await RunToResultAsync(handle, "renovate-triage-summary-check-timeout");
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.CiTimeout, TriageVerdict.NeedsReview), result);
+        Assert.Empty(rig.Jev.Bodies);
+    }
+
+    [Fact]
     public async Task ChecksThatFinishWithoutASignal_AreJudgedOnTheNextPoll_NotWhenTheTwoHoursEnd()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
@@ -955,7 +994,7 @@ public partial class RenovateTriageWorkflowTests
         await InWorkerAsync(env, rig, async () =>
         {
             var handle = await StartAsync(env, Signal(suite: 1));
-            await WaitForAsync(() => rig.CheckRuns.Reports.Count > 0);
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
             rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: ShaB);
             rig.Github.Checks.Clear();
             rig.Github.Checks.Add(new GitHubCheckRun(3, "test", "completed", "success", "github-actions"));
@@ -1611,7 +1650,7 @@ public partial class RenovateTriageWorkflowTests
         var result = await InWorkerAsync(env, rig, options, async () =>
         {
             var handle = await StartAsync(env, Signal(suite: 1));
-            await WaitForAsync(() => rig.CheckRuns.Reports.Count > 0);
+            await WaitForAsync(() => rig.CheckRuns.Reports.Any(r => r.Summary == "Waiting for CI."));
             options.Mode = TriageMode.Shadow;
             rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
             await SignalAsync(env, Signal(suite: 2));

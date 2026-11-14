@@ -40,6 +40,9 @@ public class GitHubCheckRunTests
     private static object Run(long id, string name, long appId, string? externalId, string status = "completed", string? conclusion = "success", long suiteId = 500) =>
         new { id, name, status, conclusion, external_id = externalId, app = new { id = appId, slug = "skynet-rw" }, check_suite = new { id = suiteId } };
 
+    private static object Summary() =>
+        new { id = 9, name = TriageRules.RequiredCheck, status = "completed", conclusion = "success", external_id = (string?)null, app = new { id = 15368, slug = "github-actions" }, check_suite = new { id = 500 } };
+
     private static GitHubCheckRunWrite Write(string status = "in_progress", string? conclusion = null) =>
         new("Agent triage", Sha, TriageId, status, conclusion, "Agent triage", "Waiting for CI");
 
@@ -94,6 +97,7 @@ public class GitHubCheckRunTests
     {
         var (client, _, _) = Create(r => RunsAndSuites(r, Runs(
             Run(1, "build", 15368, null),
+            Summary(),
             Run(2, "Agent triage", OwnAppId, TriageId, "in_progress", null))));
 
         var runs = await client.ListCheckRunsAsync("octo/widgets", Sha, Ct);
@@ -107,6 +111,7 @@ public class GitHubCheckRunTests
     {
         var (client, _, _) = Create(r => RunsAndSuites(r, Runs(
             Run(1, "build", 15368, null),
+            Summary(),
             Run(2, "Agent triage", OwnAppId, TriageId, "in_progress", null))));
 
         var summary = TriageRules.SummariseChecks(
@@ -193,7 +198,7 @@ public class GitHubCheckRunTests
     [InlineData("error")]
     public async Task TheStabilityDaysCommitStatus_IsIgnoredWhateverItsState(string state)
     {
-        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null)), Status(2, "renovate/stability-days", state), Status(3, TerraformPlan, "success")));
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null), Summary()), Status(2, "renovate/stability-days", state), Status(3, TerraformPlan, "success")));
 
         var (runs, suites) = await ChecksOf(client);
 
@@ -204,7 +209,7 @@ public class GitHubCheckRunTests
     [Fact]
     public async Task ASuccessfulCommitStatusAlone_IsGreen()
     {
-        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(), Status(2, TerraformPlan, "success")));
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Summary()), Status(2, TerraformPlan, "success")));
 
         var (runs, suites) = await ChecksOf(client);
 
@@ -214,11 +219,11 @@ public class GitHubCheckRunTests
     [Fact]
     public async Task NoCommitStatuses_LeaveTheChecksAsTheyAre_WhateverTheCombinedStateSays()
     {
-        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null))));
+        var (client, _, _) = Create(r => ChecksAndStatuses(r, Runs(Run(1, "build", 15368, null), Summary())));
 
         var (runs, suites) = await ChecksOf(client);
 
-        Assert.Equal([1L], runs.Select(c => c.Id));
+        Assert.Equal([1L, 9L], runs.Select(c => c.Id));
         Assert.Equal(CiState.Passed, TriageRules.AssessChecks(runs, suites));
     }
 

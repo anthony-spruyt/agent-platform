@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using AgentPlatform.Host.GitHub;
@@ -44,6 +43,8 @@ public static partial class TriageRules
 
     public const string AllowedOwner = "anthony-spruyt";
 
+    public const string RequiredCheck = "summary / Check Results";
+
     public const string StickyMarker = "<!-- agent-platform:renovate-triage -->";
     public const string NeedsReviewLabel = "agent/needs-human-review";
     public const string NeedsTriageLabel = "agent/needs-triage";
@@ -64,6 +65,7 @@ public static partial class TriageRules
     public const string AlreadyApproved = "already-approved";
     public const string NonRenovateCommit = "non-renovate-commit";
     public const string CiFailed = "ci-failed";
+    public const string ApprovalWithdrawn = "approval-withdrawn";
     public const string CiTimeout = "ci-timeout";
     public const string HighRisk = "high-risk";
     public const string JevError = "jev-error";
@@ -111,7 +113,7 @@ public static partial class TriageRules
 
     private static readonly string[] _blockingLabels = [NeedsReviewLabel, NeedsTriageLabel, RevertLabel, BlockedLabel];
 
-    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason];
+    private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason, ApprovalWithdrawn];
 
     private static readonly string[] _livePathLabels = [NeedsReviewLabel, NeedsTriageLabel, AutoApprovedLabel];
 
@@ -203,6 +205,17 @@ public static partial class TriageRules
             && latest.Values.Any(r => string.Equals(r.State, "APPROVED", StringComparison.OrdinalIgnoreCase) && string.Equals(r.CommitId, headSha, StringComparison.Ordinal));
     }
 
+    public static bool HasTriageApproval(IReadOnlyList<GitHubReview> reviews, string headSha)
+    {
+        ArgumentNullException.ThrowIfNull(reviews);
+        ArgumentNullException.ThrowIfNull(headSha);
+        var latest = reviews.LastOrDefault(r => IsTriageBot(r) && !string.Equals(r.State, "COMMENTED", StringComparison.OrdinalIgnoreCase));
+        return latest is not null
+            && headSha.Length > 0
+            && string.Equals(latest.State, "APPROVED", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(latest.CommitId, headSha, StringComparison.Ordinal);
+    }
+
     public static bool IsAllowedOwner(string repo)
     {
         ArgumentNullException.ThrowIfNull(repo);
@@ -222,7 +235,12 @@ public static partial class TriageRules
             return CiState.Pending;
         }
 
-        return considered.Any(IsFailing) ? CiState.Failed : CiState.Passed;
+        if (considered.Any(IsFailing))
+        {
+            return CiState.Failed;
+        }
+
+        return considered.Any(IsRequiredCheckPassed) ? CiState.Passed : CiState.Pending;
     }
 
     public static CiSummary SummariseChecks(IReadOnlyList<GitHubCheckRun> checks, IReadOnlyList<GitHubCheckSuite> suites)
@@ -329,17 +347,29 @@ public static partial class TriageRules
         ArgumentNullException.ThrowIfNull(repo);
         ArgumentNullException.ThrowIfNull(headSha);
         ArgumentNullException.ThrowIfNull(failed);
-        var comment = new StringBuilder($"{NeedsReviewPrefix} CI failed on `{ShortSha(headSha)}`.");
-        if (failed.Count > 0)
+        return new TriageDecision(TriageVerdict.NeedsReview, CiFailed, $"{NeedsReviewPrefix} CI failed on `{ShortSha(headSha)}`.{FailedList(repo, failed)}");
+    }
+
+    public static TriageDecision ApprovalWithdrawnDecision(string repo, string headSha, IReadOnlyList<GitHubCheckRun> failed)
+    {
+        ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(headSha);
+        ArgumentNullException.ThrowIfNull(failed);
+        return new TriageDecision(TriageVerdict.NeedsReview, ApprovalWithdrawn, $"{NeedsReviewPrefix} CI failed on `{ShortSha(headSha)}` after the approval. The approval was withdrawn.{FailedList(repo, failed)}");
+    }
+
+    private static string FailedList(string repo, IReadOnlyList<GitHubCheckRun> failed)
+    {
+        if (failed.Count == 0)
         {
-            var links = failed.Take(MaxListedFailedChecks).Select(c => c.Id == GitHubApiClient.CommitStatusId
-                ? LinkText(c.Name)
-                : $"[{LinkText(c.Name)}](https://github.com/{repo}/runs/{c.Id.ToString(CultureInfo.InvariantCulture)})");
-            comment.Append(" Failed: ").Append(string.Join(", ", links));
-            comment.Append(failed.Count > MaxListedFailedChecks ? $" and {failed.Count - MaxListedFailedChecks} more." : ".");
+            return string.Empty;
         }
 
-        return new TriageDecision(TriageVerdict.NeedsReview, CiFailed, comment.ToString());
+        var links = failed.Take(MaxListedFailedChecks).Select(c => c.Id == GitHubApiClient.CommitStatusId
+            ? LinkText(c.Name)
+            : $"[{LinkText(c.Name)}](https://github.com/{repo}/runs/{c.Id.ToString(CultureInfo.InvariantCulture)})");
+        var more = failed.Count > MaxListedFailedChecks ? $" and {failed.Count - MaxListedFailedChecks} more." : ".";
+        return $" Failed: {string.Join(", ", links)}{more}";
     }
 
     public static TriageDecision SafeOnRedHeadDecision(string repo, string headSha, IReadOnlyList<GitHubCheckRun> failed)
@@ -457,6 +487,12 @@ public static partial class TriageRules
         && sameCheck.Any(other => other.Id > run.Id && other.CheckSuiteId is { } otherSuite && otherSuite != suite);
 
     private static bool IsFailing(GitHubCheckRun check) => !StartsWithAny(check.Name, _notFailingCheckPrefixes) && !PassingConclusion(check.Conclusion);
+
+    private static bool IsRequiredCheckPassed(GitHubCheckRun check) =>
+        string.Equals(check.Name, RequiredCheck, StringComparison.Ordinal)
+        && string.Equals(check.AppSlug, GitHubActionsApp, StringComparison.Ordinal)
+        && IsCompleted(check.Status)
+        && string.Equals(check.Conclusion, "success", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCompleted(string status) => string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase);
 

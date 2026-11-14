@@ -22,6 +22,7 @@ public enum AssessStatus
     NeedsPrecheck,
     CiFailed,
     Climb,
+    ApprovalWithdrawn,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<RenovateTriageOutcome>))]
@@ -33,9 +34,9 @@ public enum RenovateTriageOutcome
     Parked,
 }
 
-public sealed record RenovateTriageInput(string Repo, int PrNumber);
+public sealed record RenovateTriageInput(string Repo, int PrNumber, bool LateSignal = false);
 
-public sealed record AssessInput(string Repo, int PrNumber, bool Step2 = false, string? PrecheckedSha = null, bool Claude = false);
+public sealed record AssessInput(string Repo, int PrNumber, bool Step2 = false, string? PrecheckedSha = null, bool Claude = false, bool CiRecheck = false);
 
 public sealed record AssessResult(AssessStatus Status, string HeadSha, string? Reason = null, TriageDecision? Decision = null, TriageMode Mode = TriageMode.Shadow, bool Stored = false, bool StatusPending = false);
 
@@ -78,6 +79,19 @@ public enum ApplyOutcome
 }
 
 public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null, TriageDecision? Effective = null, bool StatusPending = false);
+
+public sealed record WithdrawInput(string Repo, int PrNumber, string HeadSha, TriageMode Mode, TriageDecision? Decision = null);
+
+[JsonConverter(typeof(JsonStringEnumConverter<WithdrawOutcome>))]
+public enum WithdrawOutcome
+{
+    Withdrawn,
+    DismissRefused,
+    Aborted,
+    Refused,
+}
+
+public sealed record WithdrawResult(WithdrawOutcome Outcome, string? Reason = null, TriageDecision? Decision = null);
 
 public sealed record RenovateTriageResult(RenovateTriageOutcome Outcome, string HeadSha, string? Reason, TriageVerdict? Verdict);
 
