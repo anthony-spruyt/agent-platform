@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.27.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.0...v1.27.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** update dependency modelcontextprotocol.aspnetcore to 2.4.0 ([#309](https://github.com/anthony-spruyt/agent-platform/issues/309)) ([98c677d](https://github.com/anthony-spruyt/agent-platform/commit/98c677d68ef8dea37e0caab0808b06d1c0201a0a))
+* **deps:** update dotnet monorepo ([#302](https://github.com/anthony-spruyt/agent-platform/issues/302)) ([f2bfba6](https://github.com/anthony-spruyt/agent-platform/commit/f2bfba6c5d215249cd70d7b55fb343c707a40fda))
+* **deps:** update opentelemetry-dotnet-contrib monorepo to 1.20.2 ([#301](https://github.com/anthony-spruyt/agent-platform/issues/301)) ([0b58997](https://github.com/anthony-spruyt/agent-platform/commit/0b58997aaec9fe87fb24f3322587568a3620468c))
+
 ## [1.27.0](https://github.com/anthony-spruyt/agent-platform/compare/v1.26.0...v1.27.0) (2026-11-14)
 
 
