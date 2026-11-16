@@ -99,10 +99,11 @@ public class UntrustedTextScannerClientTests
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.RequestEntityTooLarge)]
     [InlineData(HttpStatusCode.UnprocessableEntity)]
-    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.RequestTimeout)]
     public async Task AnyOtherFailureStatus_IsUncheckedWithoutARetry(HttpStatusCode status)
     {
-        var client = Create(_ => StubHttpHandler.Json("""{"detail":"x"}""", status), out var handler);
+        var client = Create(_ => StubHttpHandler.Json("""{"detail":"x"}""", status), out var handler, o => o.RetryBudget = TimeSpan.FromSeconds(1));
 
         Assert.Equal(ScanOutcome.Unchecked, (await client.ScanAsync(GoldenText, Ct)).Outcome);
         Assert.Single(handler.Requests);
@@ -113,6 +114,21 @@ public class UntrustedTextScannerClientTests
     {
         var calls = 0;
         var client = Create(_ => Interlocked.Increment(ref calls) < 3 ? StubHttpHandler.Json("{}", HttpStatusCode.ServiceUnavailable) : Flagged(GoldenHash), out var handler);
+
+        var scan = await client.ScanAsync(GoldenText, Ct);
+
+        Assert.Equal(ScanOutcome.Flagged, scan.Outcome);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task A5xxThenAnAnswer_RetriesAndUsesTheAnswer(HttpStatusCode status)
+    {
+        var calls = 0;
+        var client = Create(_ => Interlocked.Increment(ref calls) < 3 ? StubHttpHandler.Json("{}", status) : Flagged(GoldenHash), out var handler);
 
         var scan = await client.ScanAsync(GoldenText, Ct);
 
@@ -137,6 +153,21 @@ public class UntrustedTextScannerClientTests
     {
         var client = Create(
             _ => StubHttpHandler.Json("{}", HttpStatusCode.ServiceUnavailable),
+            out var handler,
+            o => o.RetryBudget = TimeSpan.FromSeconds(60),
+            new SteppingTime());
+
+        var scan = await client.ScanAsync(GoldenText, Ct);
+
+        Assert.Equal(ScanOutcome.Unchecked, scan.Outcome);
+        Assert.True(handler.Requests.Count > 1);
+    }
+
+    [Fact]
+    public async Task A500ThatOutlastsTheRetryBudget_IsUnchecked()
+    {
+        var client = Create(
+            _ => StubHttpHandler.Json("{}", HttpStatusCode.InternalServerError),
             out var handler,
             o => o.RetryBudget = TimeSpan.FromSeconds(60),
             new SteppingTime());

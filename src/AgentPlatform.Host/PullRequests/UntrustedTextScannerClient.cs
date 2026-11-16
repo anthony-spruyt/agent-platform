@@ -51,7 +51,7 @@ public sealed class UntrustedTextScannerClient(IHttpClientFactory httpClients, I
         }
     }
 
-    // Null means the scanner was busy or unreachable, which the caller retries
+    // Null means the scanner answered 5xx or was unreachable, which the caller retries
     private async Task<ScanOutcome?> AttemptAsync(ScannedText item, UntrustedTextScannerOptions settings, CancellationToken cancellationToken)
     {
         using var timeout = new CancellationTokenSource(settings.RequestTimeout, time);
@@ -65,7 +65,7 @@ public sealed class UntrustedTextScannerClient(IHttpClientFactory httpClients, I
         try
         {
             using var response = await http.SendAsync(request, linked.Token).ConfigureAwait(false);
-            if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+            if (response.StatusCode >= HttpStatusCode.InternalServerError)
             {
                 return null;
             }
