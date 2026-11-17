@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.1...v1.27.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **triage:** retry scanner 5xx responses within the retry budget ([#325](https://github.com/anthony-spruyt/agent-platform/issues/325)) ([a013065](https://github.com/anthony-spruyt/agent-platform/commit/a01306599627620050f59de12801c8cf9bdbc525))
+
 ## [1.27.1](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.0...v1.27.1) (2026-11-14)
 
 
