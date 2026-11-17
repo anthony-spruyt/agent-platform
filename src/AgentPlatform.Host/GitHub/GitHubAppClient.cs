@@ -8,6 +8,8 @@ namespace AgentPlatform.Host.GitHub;
 
 public sealed record HookDeliveryPage(IReadOnlyList<HookDelivery> Deliveries, string? NextCursor);
 
+public sealed record InstallationRepository(string FullName, bool Archived);
+
 public interface IGitHubAppClient
 {
     Task<HookDeliveryPage> ListHookDeliveriesAsync(string? cursor, CancellationToken cancellationToken);
@@ -15,7 +17,7 @@ public interface IGitHubAppClient
     // False when GitHub refuses the attempt (422): the delivery is no longer redeliverable, so there is nothing left to do.
     Task<bool> RedeliverAsync(long deliveryId, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<string>> ListInstallationRepositoriesAsync(string owner, CancellationToken cancellationToken);
+    Task<IReadOnlyList<InstallationRepository>> ListInstallationRepositoriesAsync(string owner, CancellationToken cancellationToken);
 }
 
 // Authenticates as the App itself (JWT): the hook delivery and installation endpoints reject installation tokens.
@@ -35,7 +37,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
 
     private sealed record RepositoriesDto(List<RepositoryDto>? Repositories);
 
-    private sealed record RepositoryDto(string? FullName, bool? HasPullRequests);
+    private sealed record RepositoryDto(string? FullName, bool? HasPullRequests, bool? Archived);
 
     public async Task<HookDeliveryPage> ListHookDeliveriesAsync(string? cursor, CancellationToken cancellationToken)
     {
@@ -68,7 +70,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
         return true;
     }
 
-    public async Task<IReadOnlyList<string>> ListInstallationRepositoriesAsync(string owner, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<InstallationRepository>> ListInstallationRepositoriesAsync(string owner, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(owner);
 
@@ -97,7 +99,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
             throw new GitHubApiException("GitHub installation token response lacked a token.");
         }
 
-        var repos = new List<string>();
+        var repos = new List<InstallationRepository>();
         for (var page = 1; page <= GitHubApiClient.MaxPages; page++)
         {
             var batch = (await GitHubHttp.SendAsync<RepositoriesDto>(
@@ -105,7 +107,7 @@ public sealed partial class GitHubAppClient(HttpClient http, IGitHubAppJwtSource
                 GitHubHttp.Request(HttpMethod.Get, string.Create(CultureInfo.InvariantCulture, $"installation/repositories?per_page={PageSize}&page={page}"), token.Token),
                 "installation repositories list",
                 cancellationToken).ConfigureAwait(false)).Repositories ?? [];
-            repos.AddRange(batch.Where(r => r.HasPullRequests != false).Select(r => r.FullName).OfType<string>());
+            repos.AddRange(batch.Where(r => r.HasPullRequests != false && r.FullName is not null).Select(r => new InstallationRepository(r.FullName!, r.Archived == true)));
             if (batch.Count < PageSize)
             {
                 return repos;

@@ -866,6 +866,24 @@ public class SweeperActivitiesTests
     }
 
     [Fact]
+    public async Task AnAgedWaitTheAppItselfApproved_IsStillHandedOff()
+    {
+        var rig = ReconcileRig();
+        rig.OpenPullRequest(7, "dependencies");
+        rig.OpenCheck(7, "neutral", "completed");
+        rig.Github.ReviewsByNumber[7] = [new GitHubReview(1, TriageRules.TriageBotLogin, "NONE", "APPROVED", Sha, rig.Now.AddMinutes(1))];
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(4));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(1, result.HandedOff);
+        Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+        Assert.Equal($"{TriageRules.StickyMarker}\n{TriageRules.CiTimeoutHandOffComment}", Assert.Single(rig.Github.Comments).Body);
+        var check = Assert.Single(rig.Github.StoredCheckRuns).Run;
+        Assert.Equal(("completed", "neutral", TriageRules.CiTimeoutHandOffComment), (check.Status, check.Conclusion, check.Summary));
+    }
+
+    [Fact]
     public async Task AWaitFirstWrittenLongAgo_IsHandedOff_HoweverRecentlyItWasRewritten()
     {
         var rig = ReconcileRig();
@@ -911,6 +929,7 @@ public class SweeperActivitiesTests
     [InlineData("merged")]
     [InlineData("head-moved")]
     [InlineData("repo-removed")]
+    [InlineData("repo-archived")]
     [InlineData("not-found")]
     [InlineData("owner-approved")]
     [InlineData("owner-handled")]
@@ -918,6 +937,11 @@ public class SweeperActivitiesTests
     {
         var rig = new Rig();
         rig.App.Repositories.Add(why == "repo-removed" ? "anthony-spruyt/gadgets" : Repo);
+        if (why == "repo-archived")
+        {
+            rig.App.Archived.Add(Repo);
+        }
+
         rig.OpenPullRequest(7, "dependencies");
         rig.OpenCheck(7, "neutral", "completed");
         var pr = rig.Github.PullRequestsByNumber[7];

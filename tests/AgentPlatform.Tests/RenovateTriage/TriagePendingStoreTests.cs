@@ -43,7 +43,7 @@ public class TriagePendingStoreTests
     }
 
     [Fact]
-    public async Task OpenedAt_MovesWithTheHeadOrAReopen_AndNotWithAnyOtherWrite()
+    public async Task OpenedAt_MovesWithTheHead_AndNotWithAnyOtherWrite()
     {
         var (store, data, time) = Create();
         var opened = time.Now;

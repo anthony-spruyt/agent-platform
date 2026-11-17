@@ -16,6 +16,8 @@ internal sealed class FakeGitHubAppClient : IGitHubAppClient
 
     public List<string> Repositories { get; } = [];
 
+    public HashSet<string> Archived { get; } = [];
+
     public Exception? Failure { get; set; }
 
     public Task<HookDeliveryPage> ListHookDeliveriesAsync(string? cursor, CancellationToken cancellationToken)
@@ -37,8 +39,8 @@ internal sealed class FakeGitHubAppClient : IGitHubAppClient
         return Task.FromResult(!Refused.Contains(deliveryId));
     }
 
-    public Task<IReadOnlyList<string>> ListInstallationRepositoriesAsync(string owner, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<string>>([.. Repositories]);
+    public Task<IReadOnlyList<InstallationRepository>> ListInstallationRepositoriesAsync(string owner, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<InstallationRepository>>([.. Repositories.Select(r => new InstallationRepository(r, Archived.Contains(r)))]);
 }
 
 internal sealed class RecordingSignaler : IRenovateTriageSignaler

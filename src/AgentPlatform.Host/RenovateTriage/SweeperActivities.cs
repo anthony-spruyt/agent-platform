@@ -148,7 +148,7 @@ public sealed partial class SweeperActivities(
         var since = time.GetUtcNow() - Lookback;
         var repos = await app.ListInstallationRepositoriesAsync(TriageRules.AllowedOwner, cancellationToken).ConfigureAwait(false);
         int signalled = 0, failed = 0, errors = 0;
-        foreach (var repo in repos.Where(TriageRules.IsAllowedOwner))
+        foreach (var repo in repos.Select(r => r.FullName).Where(TriageRules.IsAllowedOwner))
         {
             try
             {
@@ -272,7 +272,7 @@ public sealed partial class SweeperActivities(
     }
 
     // Reads the store, not the PR listing: a PR waiting longer than the max age has usually dropped out of the Lookback listing.
-    private async Task<(int HandedOff, int Errors)> HandOffAgedWaitsAsync(IReadOnlyList<string> repos, CancellationToken cancellationToken)
+    private async Task<(int HandedOff, int Errors)> HandOffAgedWaitsAsync(IReadOnlyList<InstallationRepository> repos, CancellationToken cancellationToken)
     {
         var waits = await verdicts.ListWaitsAsync(time.GetUtcNow() - options.Value.TransientMaxAge, cancellationToken).ConfigureAwait(false);
         int handedOff = 0, errors = 0;
@@ -295,9 +295,9 @@ public sealed partial class SweeperActivities(
         return (handedOff, errors);
     }
 
-    private async Task<bool> HandOffAsync(TriageWait wait, IReadOnlyList<string> repos, CancellationToken cancellationToken)
+    private async Task<bool> HandOffAsync(TriageWait wait, IReadOnlyList<InstallationRepository> repos, CancellationToken cancellationToken)
     {
-        var pr = repos.Contains(wait.Repo, StringComparer.OrdinalIgnoreCase)
+        var pr = repos.Any(r => !r.Archived && string.Equals(r.FullName, wait.Repo, StringComparison.OrdinalIgnoreCase))
             ? await FindPullRequestAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false)
             : null;
         if (pr is null

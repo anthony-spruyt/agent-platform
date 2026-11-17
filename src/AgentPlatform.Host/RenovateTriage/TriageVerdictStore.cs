@@ -48,7 +48,7 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
     public Task<bool> MarkTransientAsync(string repo, int prNumber, string headSha, TriageDecision decision, CancellationToken cancellationToken) =>
         OverwriteAsync(repo, prNumber, headSha, decision, row => row.AppliedAt is null || TriageRules.IsTransient(ReasonOf(row)), cancellationToken);
 
-    // The max age counts from CreatedAt, the head's first wait: a re-triage that waits again moves only AppliedAt.
+    // The max age counts from CreatedAt, the head's first verdict row: a re-triage that waits again moves only AppliedAt.
     public async Task<IReadOnlyList<TriageWait>> ListWaitsAsync(DateTimeOffset createdBy, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
