@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.3](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.2...v1.27.3) (2026-11-17)
+
+
+### Bug Fixes
+
+* **triage:** stop transient hand-offs from parking pull requests ([#332](https://github.com/anthony-spruyt/agent-platform/issues/332)) ([ce04785](https://github.com/anthony-spruyt/agent-platform/commit/ce04785c25b2f7d8675d7b08fd3244c1f128b591))
+
 ## [1.27.2](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.1...v1.27.2) (2026-11-17)
 
 
