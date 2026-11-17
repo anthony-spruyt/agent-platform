@@ -85,14 +85,16 @@ public static partial class TriageRules
     public const string PrecheckUnchecked = "precheck-unchecked";
 
     public const string NonRenovateCommitComment = "**Needs review:** this PR has commits that Renovate didn't make.";
-    public const string CiTimeoutComment = "**Needs review:** CI didn't finish within 2 hours.";
+    public const string CiTimeoutComment = "**Waiting:** CI didn't finish within 2 hours. Triage runs again when a check suite completes.";
+    public const string CiTimeoutHandOffComment = "**Needs review:** CI didn't finish within 2 hours.";
     public const string OtherBumpComment = "**Needs review:** couldn't tell the bump type, or the PR bumps several packages in different ways.";
     public const string NoChangelogComment = "**Needs review:** no changelog found for this bump.";
     public const string JevErrorComment = "**Needs review:** the triage check couldn't run (Jev error).";
     public const string DigestMismatchComment = "**Needs review:** marked as a digest bump, but more than a digest changed.";
     public const string PrecheckDiffComment = "**Needs review:** this PR changes more than version and digest updates.";
     public const string PrecheckFlaggedComment = "**Needs review:** some of this PR's content is held for a human look.";
-    public const string PrecheckUncheckedComment = "**Needs review:** some of this PR's content could not be checked.";
+    public const string PrecheckUncheckedComment = "**Waiting:** some of this PR's content could not be checked. Triage runs again when a check suite completes.";
+    public const string PrecheckUncheckedHandOffComment = "**Needs review:** some of this PR's content could not be checked.";
     public const string SafeApprovalComment = "**Auto-approved:** the agent judged this PR safe.";
     public const string DigestApprovalComment = "**Auto-approved:** digest bump.";
     public const string AllowlistedApprovalComment = "**Auto-approved:** allowlisted.";
@@ -100,6 +102,7 @@ public static partial class TriageRules
     private const int MaxListedFailedChecks = 10;
 
     public const string NeedsReviewPrefix = "**Needs review:**";
+    public const string WaitingPrefix = "**Waiting:**";
     private const string FixablePrefix = "**Fixable:**";
     private const string AutoApprovedPrefix = "**Auto-approved:**";
 
@@ -114,6 +117,8 @@ public static partial class TriageRules
     private static readonly string[] _blockingLabels = [NeedsReviewLabel, NeedsTriageLabel, RevertLabel, BlockedLabel];
 
     private static readonly string[] _neverClimb = [NonRenovateCommit, PrecheckDiff, PrecheckFlagged, PrecheckUnchecked, MigrationDetector.Reason, ApprovalWithdrawn];
+
+    private static readonly string[] _transient = [CiTimeout, PrecheckUnchecked];
 
     private static readonly string[] _livePathLabels = [NeedsReviewLabel, NeedsTriageLabel, AutoApprovedLabel];
 
@@ -393,6 +398,22 @@ public static partial class TriageRules
     }
 
     public static TriageDecision CiTimeoutDecision() => new(TriageVerdict.NeedsReview, CiTimeout, CiTimeoutComment);
+
+    public static bool IsTransient(string reason) => _transient.Contains(reason, StringComparer.Ordinal);
+
+    public static TriageDecision HandOff(TriageDecision wait)
+    {
+        ArgumentNullException.ThrowIfNull(wait);
+        return wait with
+        {
+            Comment = wait.Reason switch
+            {
+                CiTimeout => CiTimeoutHandOffComment,
+                PrecheckUnchecked => PrecheckUncheckedHandOffComment,
+                _ => throw new ArgumentOutOfRangeException(nameof(wait), wait.Reason, "Only a transient reason has a hand-off."),
+            },
+        };
+    }
 
     public static TriageDecision HighRiskDecision(string term)
     {

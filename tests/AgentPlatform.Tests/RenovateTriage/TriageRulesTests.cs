@@ -1,3 +1,4 @@
+using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.RenovateTriage;
 
@@ -1358,7 +1359,8 @@ public class TriageRulesTests
         [Fact]
         public void TheOtherFixedTexts_AreAsApproved()
         {
-            Assert.Equal("**Needs review:** CI didn't finish within 2 hours.", TriageRules.CiTimeoutDecision().Comment);
+            Assert.Equal("**Waiting:** CI didn't finish within 2 hours. Triage runs again when a check suite completes.", TriageRules.CiTimeoutDecision().Comment);
+            Assert.Equal("**Needs review:** CI didn't finish within 2 hours.", TriageRules.HandOff(TriageRules.CiTimeoutDecision()).Comment);
             Assert.Equal("**Needs review:** the triage check couldn't run (Jev error).", TriageRules.JevErrorDecision().Comment);
         }
     }
@@ -1530,16 +1532,16 @@ public class TriageRulesTests
     public class PrecheckAndClimbing
     {
         [Theory]
-        [InlineData(PrecheckVerdict.DiffNotVersionOnly, TriageRules.PrecheckDiff)]
-        [InlineData(PrecheckVerdict.BodyFlagged, TriageRules.PrecheckFlagged)]
-        [InlineData(PrecheckVerdict.BodyUnchecked, TriageRules.PrecheckUnchecked)]
-        public void AFailedPrecheck_IsANeverClimbingNeedsReviewWithANeutralComment(PrecheckVerdict verdict, string reason)
+        [InlineData(PrecheckVerdict.DiffNotVersionOnly, TriageRules.PrecheckDiff, "**Needs review:**")]
+        [InlineData(PrecheckVerdict.BodyFlagged, TriageRules.PrecheckFlagged, "**Needs review:**")]
+        [InlineData(PrecheckVerdict.BodyUnchecked, TriageRules.PrecheckUnchecked, "**Waiting:**")]
+        public void AFailedPrecheck_IsANeverClimbingNeedsReviewWithANeutralComment(PrecheckVerdict verdict, string reason, string prefix)
         {
             var decision = TriageRules.PrecheckDecision(verdict);
 
             Assert.Equal(TriageVerdict.NeedsReview, decision.Verdict);
             Assert.Equal(reason, decision.Reason);
-            Assert.StartsWith("**Needs review:**", decision.Comment, StringComparison.Ordinal);
+            Assert.StartsWith(prefix, decision.Comment, StringComparison.Ordinal);
             Assert.False(TriageRules.Climbs(decision));
         }
 
@@ -1577,6 +1579,37 @@ public class TriageRulesTests
         public void AnApproval_DoesNotClimb()
         {
             Assert.False(TriageRules.Climbs(new TriageDecision(TriageVerdict.Approve, TriageRules.Allowlisted, "c")));
+        }
+
+        [Theory]
+        [InlineData(TriageRules.CiTimeout, true)]
+        [InlineData(TriageRules.PrecheckUnchecked, true)]
+        [InlineData(TriageRules.PrecheckFlagged, false)]
+        [InlineData(TriageRules.PrecheckDiff, false)]
+        [InlineData(TriageRules.JevError, false)]
+        [InlineData(TriageRules.CiFailed, false)]
+        [InlineData(TriageRules.NonRenovateCommit, false)]
+        [InlineData("claude-needs-review", false)]
+        [InlineData(ClaudeBudgetCauses.AttemptsExhausted, false)]
+        [InlineData(ClaudeBudgetCauses.BreakerOpen, false)]
+        public void OnlyCiTimeoutAndPrecheckUnchecked_AreTransient(string reason, bool transient)
+        {
+            Assert.Equal(transient, TriageRules.IsTransient(reason));
+        }
+
+        [Theory]
+        [InlineData(TriageRules.CiTimeout)]
+        [InlineData(TriageRules.PrecheckUnchecked)]
+        public void ATransientDecision_SaysItWaits_AndItsHandOffDoesNot(string reason)
+        {
+            var wait = reason == TriageRules.CiTimeout ? TriageRules.CiTimeoutDecision() : TriageRules.PrecheckDecision(PrecheckVerdict.BodyUnchecked);
+
+            var handOff = TriageRules.HandOff(wait);
+
+            Assert.StartsWith(TriageRules.WaitingPrefix, wait.Comment, StringComparison.Ordinal);
+            Assert.Contains("Triage runs again when a check suite completes.", wait.Comment, StringComparison.Ordinal);
+            Assert.Equal(wait with { Comment = handOff.Comment }, handOff);
+            Assert.StartsWith(TriageRules.NeedsReviewPrefix, handOff.Comment, StringComparison.Ordinal);
         }
     }
 

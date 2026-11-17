@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Temporalio.Testing;
+using static AgentPlatform.Tests.Support.TriageWaits;
 
 namespace AgentPlatform.Tests.Sweeper;
 
@@ -18,10 +19,15 @@ public class SweeperActivitiesTests
 
     internal sealed class Rig
     {
-        public Rig(TriageMode mode = TriageMode.Live, int perHour = 2, IGitHubEventRouter? router = null)
+        public Rig(TriageMode mode = TriageMode.Live, int perHour = 2, IGitHubEventRouter? router = null, TimeSpan? transientMaxAge = null)
         {
             Now = DateTimeOffset.UtcNow;
             var options = Options.Create(new RenovateTriageOptions { Mode = mode });
+            if (transientMaxAge is { } maxAge)
+            {
+                options.Value.TransientMaxAge = maxAge;
+            }
+
             var time = new FixedTimeProvider(Now);
             Sweeper = new SweeperStore(Data.Factory, time);
             Activities = new SweeperActivities(
@@ -801,6 +807,254 @@ public class SweeperActivitiesTests
         var result = await Run(rig.Activities.ReconcileAsync);
 
         Assert.Equal(1, result.Errors);
+    }
+
+    private static async Task WaitSinceAsync(Rig rig, int pr, string reason, TimeSpan age)
+    {
+        await rig.Data.Verdicts.MarkTransientAsync(Repo, pr, Sha, Wait(reason), Ct);
+        await using var db = await rig.Data.Factory.CreateDbContextAsync(Ct);
+        (await db.TriageVerdicts.SingleAsync(v => v.PrNumber == pr, Ct)).CreatedAt = rig.Now - age;
+        await db.SaveChangesAsync(Ct);
+    }
+
+    private static Task<IReadOnlyList<TriageWait>> WaitsAsync(Rig rig) => rig.Data.Verdicts.ListWaitsAsync(DateTimeOffset.MaxValue, Ct);
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AHeadThatEndedInATransientHandOff_IsNotSignalledByReconcile(bool checkCompleted)
+    {
+        var rig = ReconcileRig();
+        rig.Github.OpenPullRequests.Add(Listed(7));
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromHours(1));
+        if (checkCompleted)
+        {
+            rig.OpenCheck(7, "neutral", "completed");
+        }
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Empty(rig.Github.CheckRunWrites);
+        Assert.Equal(new ReconcileResult(1, 0, 0, 0), result);
+    }
+
+    [Theory]
+    [InlineData(TriageRules.CiTimeout, TriageRules.CiTimeoutHandOffComment)]
+    [InlineData(TriageRules.PrecheckUnchecked, TriageRules.PrecheckUncheckedHandOffComment)]
+    public async Task AWaitOlderThanTheMaxAge_GetsTheRealHandOff(string reason, string handOff)
+    {
+        var rig = ReconcileRig();
+        rig.OpenPullRequest(7, "dependencies");
+        rig.Github.Comments.Add(new GitHubIssueComment(40, TriageRules.TriageBotLogin, $"{TriageRules.StickyMarker}\n{Wait(reason).Comment}"));
+        rig.OpenCheck(7, "neutral", "completed");
+        await WaitSinceAsync(rig, 7, reason, TimeSpan.FromDays(4));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(["comment-update:40", $"labels:{TriageRules.NeedsReviewLabel}"], rig.Github.Writes);
+        Assert.Equal($"{TriageRules.StickyMarker}\n{handOff}", Assert.Single(rig.Github.Comments).Body);
+        var check = Assert.Single(rig.Github.StoredCheckRuns).Run;
+        Assert.Equal(("completed", "neutral", handOff), (check.Status, check.Conclusion, check.Summary));
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Equal(1, result.HandedOff);
+        Assert.Empty(await WaitsAsync(rig));
+
+        await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Single(rig.Github.AddedLabels);
+    }
+
+    [Fact]
+    public async Task AnAgedWaitTheAppItselfApproved_IsStillHandedOff()
+    {
+        var rig = ReconcileRig();
+        rig.OpenPullRequest(7, "dependencies");
+        rig.OpenCheck(7, "neutral", "completed");
+        rig.Github.ReviewsByNumber[7] = [new GitHubReview(1, TriageRules.TriageBotLogin, "NONE", "APPROVED", Sha, rig.Now.AddMinutes(1))];
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(4));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(1, result.HandedOff);
+        Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+        Assert.Equal($"{TriageRules.StickyMarker}\n{TriageRules.CiTimeoutHandOffComment}", Assert.Single(rig.Github.Comments).Body);
+        var check = Assert.Single(rig.Github.StoredCheckRuns).Run;
+        Assert.Equal(("completed", "neutral", TriageRules.CiTimeoutHandOffComment), (check.Status, check.Conclusion, check.Summary));
+    }
+
+    [Fact]
+    public async Task AWaitFirstWrittenLongAgo_IsHandedOff_HoweverRecentlyItWasRewritten()
+    {
+        var rig = ReconcileRig();
+        rig.OpenPullRequest(7, "dependencies");
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(7));
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, Wait(), TriageMode.Live, null, Ct);
+        await rig.Data.Verdicts.MarkTransientAsync(Repo, 7, Sha, Wait(), Ct);
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(1, result.HandedOff);
+    }
+
+    [Fact]
+    public async Task TheConfiguredMaxAge_DecidesWhenAWaitIsHandedOff()
+    {
+        var rig = new Rig(transientMaxAge: TimeSpan.FromDays(1));
+        rig.App.Repositories.Add(Repo);
+        rig.OpenPullRequest(7, "dependencies");
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(2));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(1, result.HandedOff);
+    }
+
+    [Fact]
+    public async Task AWaitYoungerThanTheMaxAge_IsLeftAlone()
+    {
+        var rig = ReconcileRig();
+        rig.OpenPullRequest(7, "dependencies");
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(2));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Github.Writes);
+        Assert.Equal(0, result.HandedOff);
+        Assert.Single(await WaitsAsync(rig));
+    }
+
+    [Theory]
+    [InlineData("closed")]
+    [InlineData("merged")]
+    [InlineData("head-moved")]
+    [InlineData("repo-removed")]
+    [InlineData("repo-archived")]
+    [InlineData("not-found")]
+    [InlineData("owner-approved")]
+    [InlineData("owner-handled")]
+    public async Task AnAgedWaitTheOwnerNoLongerNeeds_EndsWithNothingWritten_AndIsNoError(string why)
+    {
+        var rig = new Rig();
+        rig.App.Repositories.Add(why == "repo-removed" ? "anthony-spruyt/gadgets" : Repo);
+        if (why == "repo-archived")
+        {
+            rig.App.Archived.Add(Repo);
+        }
+
+        rig.OpenPullRequest(7, "dependencies");
+        rig.OpenCheck(7, "neutral", "completed");
+        var pr = rig.Github.PullRequestsByNumber[7];
+        switch (why)
+        {
+            case "closed":
+                rig.Github.PullRequestsByNumber[7] = pr with { State = "closed" };
+                break;
+            case "merged":
+                rig.Github.PullRequestsByNumber[7] = pr with { State = "closed", Merged = true };
+                break;
+            case "head-moved":
+                rig.Github.PullRequestsByNumber[7] = pr with { HeadSha = "b" + Sha[1..] };
+                break;
+            case "not-found":
+                rig.Github.PullRequestFailures[7] = new GitHubApiException("Not Found", System.Net.HttpStatusCode.NotFound);
+                break;
+            case "owner-approved":
+                rig.Github.ReviewsByNumber[7] = [new GitHubReview(1, TriageRules.AllowedOwner, "OWNER", "APPROVED", Sha, rig.Now.AddMinutes(-1))];
+                break;
+            case "owner-handled":
+                rig.Github.IssueEvents.Add(new GitHubIssueEvent("labeled", TriageRules.AllowedOwner, TriageRules.BlockedLabel, rig.Now.AddMinutes(1)));
+                break;
+            default:
+                break;
+        }
+
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(4));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Github.Writes);
+        Assert.Empty(rig.Github.CheckRunWrites);
+        Assert.Equal((0, 0), (result.HandedOff, result.Errors));
+        Assert.Empty(await WaitsAsync(rig));
+    }
+
+    [Fact]
+    public async Task AnOwnerChangeBeforeTheLatestWaitWrite_DoesNotStopTheHandOff()
+    {
+        var rig = ReconcileRig();
+        rig.OpenPullRequest(7, "dependencies");
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(4));
+        rig.Github.IssueEvents.Add(new GitHubIssueEvent("labeled", TriageRules.AllowedOwner, TriageRules.BlockedLabel, rig.Now.AddDays(-2)));
+        rig.Github.IssueEvents.Add(new GitHubIssueEvent("unlabeled", TriageRules.AllowedOwner, TriageRules.BlockedLabel, rig.Now.AddDays(-1)));
+        await rig.Data.Verdicts.RecordAsync(Repo, 7, Sha, Wait(), TriageMode.Live, null, Ct);
+        await rig.Data.Verdicts.MarkTransientAsync(Repo, 7, Sha, Wait(), Ct);
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(1, result.HandedOff);
+    }
+
+    [Theory]
+    [InlineData(TriageRules.BlockedLabel)]
+    [InlineData("pending-row")]
+    [InlineData("running")]
+    [InlineData("shadow")]
+    public async Task AnAgedWait_WhosePullRequestIsBlockedOrBusy_IsLeftAlone(string why)
+    {
+        var rig = why == "shadow" ? new Rig(TriageMode.Shadow) : new Rig();
+        rig.App.Repositories.Add(Repo);
+        rig.OpenPullRequest(7, why == TriageRules.BlockedLabel ? ["dependencies", TriageRules.BlockedLabel] : ["dependencies"]);
+        if (why == "pending-row")
+        {
+            await rig.Data.Pending.UpsertAsync(Repo, 7, Sha, "claude-pending", Ct);
+        }
+
+        if (why == "running")
+        {
+            rig.Probe.Running.Add((Repo, 7));
+        }
+
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(4));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Github.Writes);
+        Assert.Equal(0, result.HandedOff);
+        Assert.Single(await WaitsAsync(rig));
+    }
+
+    [Fact]
+    public async Task AnAgedWaitWhoseHandOffFails_IsCountedAndStaysAWait()
+    {
+        var rig = ReconcileRig();
+        rig.OpenPullRequest(7, "dependencies");
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(4));
+        rig.Github.WriteFailure = new GitHubApiException("boom", System.Net.HttpStatusCode.BadGateway);
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal((0, 1), (result.HandedOff, result.Errors));
+        Assert.Single(await WaitsAsync(rig));
+    }
+
+    [Fact]
+    public async Task AHandOffCutShortAfterItsLabel_IsFinishedByTheNextSweep()
+    {
+        var rig = ReconcileRig();
+        await WaitSinceAsync(rig, 7, TriageRules.CiTimeout, TimeSpan.FromDays(4));
+        rig.Data.FailNextSaveWith(new DbUpdateException("boom"));
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => Run(rig.Activities.ReconcileAsync));
+        Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+        Assert.Single(await WaitsAsync(rig));
+
+        var result = await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Equal(1, result.HandedOff);
+        Assert.Single(rig.Github.AddedLabels);
+        Assert.Equal($"{TriageRules.StickyMarker}\n{TriageRules.CiTimeoutHandOffComment}", Assert.Single(rig.Github.Comments).Body);
+        Assert.Empty(await WaitsAsync(rig));
     }
 
     [Fact]

@@ -157,6 +157,13 @@ public sealed class TriagePendingStore(IDbContextFactory<RunDataDbContext> facto
         }
         else
         {
+            if (row.Status is not (TriagePendingStatus.Pending or TriagePendingStatus.Redriven))
+            {
+                row.Status = TriagePendingStatus.Pending;
+                row.HeldAt = null;
+                row.OpenedAt = now;
+            }
+
             row.Reason = reason;
             row.UpdatedAt = now;
         }

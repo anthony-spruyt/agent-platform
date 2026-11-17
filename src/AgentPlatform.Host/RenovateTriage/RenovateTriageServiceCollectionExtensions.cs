@@ -36,6 +36,11 @@ public static class RenovateTriageServiceCollectionExtensions
         {
             throw new InvalidOperationException("RenovateTriage:Sweeper:Interval must be at least one minute.");
         }
+
+        if (triage.TransientMaxAge <= TimeSpan.Zero)
+        {
+            throw new InvalidOperationException("RenovateTriage:TransientMaxAge must be greater than zero.");
+        }
     }
 
     private static void Validate(LiteLlmOptions litellm)
