@@ -109,21 +109,10 @@ public class UntrustedTextScannerClientTests
         Assert.Single(handler.Requests);
     }
 
-    [Fact]
-    public async Task A503ThenAnAnswer_RetriesAndUsesTheAnswer()
-    {
-        var calls = 0;
-        var client = Create(_ => Interlocked.Increment(ref calls) < 3 ? StubHttpHandler.Json("{}", HttpStatusCode.ServiceUnavailable) : Flagged(GoldenHash), out var handler);
-
-        var scan = await client.ScanAsync(GoldenText, Ct);
-
-        Assert.Equal(ScanOutcome.Flagged, scan.Outcome);
-        Assert.Equal(3, handler.Requests.Count);
-    }
-
     [Theory]
     [InlineData(HttpStatusCode.InternalServerError)]
     [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
     [InlineData(HttpStatusCode.GatewayTimeout)]
     public async Task A5xxThenAnAnswer_RetriesAndUsesTheAnswer(HttpStatusCode status)
     {
@@ -148,26 +137,13 @@ public class UntrustedTextScannerClientTests
         Assert.Equal(2, handler.Requests.Count);
     }
 
-    [Fact]
-    public async Task A503ThatOutlastsTheRetryBudget_IsUnchecked()
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task A5xxThatOutlastsTheRetryBudget_IsUnchecked(HttpStatusCode status)
     {
         var client = Create(
-            _ => StubHttpHandler.Json("{}", HttpStatusCode.ServiceUnavailable),
-            out var handler,
-            o => o.RetryBudget = TimeSpan.FromSeconds(60),
-            new SteppingTime());
-
-        var scan = await client.ScanAsync(GoldenText, Ct);
-
-        Assert.Equal(ScanOutcome.Unchecked, scan.Outcome);
-        Assert.True(handler.Requests.Count > 1);
-    }
-
-    [Fact]
-    public async Task A500ThatOutlastsTheRetryBudget_IsUnchecked()
-    {
-        var client = Create(
-            _ => StubHttpHandler.Json("{}", HttpStatusCode.InternalServerError),
+            _ => StubHttpHandler.Json("{}", status),
             out var handler,
             o => o.RetryBudget = TimeSpan.FromSeconds(60),
             new SteppingTime());
