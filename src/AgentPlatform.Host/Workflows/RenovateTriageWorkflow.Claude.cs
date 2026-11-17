@@ -82,8 +82,9 @@ public partial class RenovateTriageWorkflow
     [WorkflowUpdateValidator(nameof(SubmitResultAsync))]
     public void ValidateSubmitResult(SubmitResultPayload payload) => AgentPodStep.Validate(_podStep, payload);
 
-    private static bool WantsAgent(AssessResult assess, TriageDecision? decision) =>
-        decision is not null && assess.Mode == TriageMode.Live && !assess.Stored && TriageRules.Climbs(decision);
+    private bool WantsAgent(AssessResult assess, TriageDecision? decision) =>
+        decision is not null && assess.Mode == TriageMode.Live && !assess.Stored && TriageRules.Climbs(decision)
+        && !(_transient && decision.Reason == TriageRules.CiTimeout);
 
     // Null means the head moved and the caller reassesses; the step counter carries on in _seq.
     private async Task<RenovateTriageResult?> ClimbAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, string reason, ScannedText? body, TriageMode mode)

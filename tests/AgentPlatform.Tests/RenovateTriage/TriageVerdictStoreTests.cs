@@ -315,6 +315,213 @@ public class TriageVerdictStoreTests
         Assert.Equal([TriageRules.ApprovalWithdrawn], JsonSerializer.Deserialize<string[]>(Assert.Single(rows, r => r.Mode == TriageMode.Live && r.HeadSha == Sha).Reasons)!);
     }
 
+    private static TriageDecision Wait() => TriageRules.CiTimeoutDecision() with { Verdict = TriageVerdict.Owner };
+
+    private static TriageDecision Approve() => new(TriageVerdict.Approve, TriageRules.ChangelogPresent, "**Auto-approved:** patch bump.");
+
+    private static async Task<DateTimeOffset> BackdateAsync(InMemoryRunData data, TimeSpan age)
+    {
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var at = DateTimeOffset.UtcNow - age;
+        foreach (var row in await db.TriageVerdicts.ToListAsync(Ct))
+        {
+            row.CreatedAt = at;
+        }
+
+        await db.SaveChangesAsync(Ct);
+        return at;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ANewVerdict_ReplacesATransientRow(bool applied)
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Wait(), TriageMode.Live, null, Ct);
+        if (applied)
+        {
+            Assert.True(await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 7, Sha, Wait(), Ct));
+        }
+
+        var createdAt = await BackdateAsync(data, TimeSpan.FromHours(5));
+
+        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Approve(), TriageMode.Live, LadderRung.Jev, Ct);
+
+        Assert.True(inserted);
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageVerdict.Approve, row.Verdict);
+        Assert.Equal([TriageRules.ChangelogPresent], JsonSerializer.Deserialize<string[]>(row.Reasons)!);
+        Assert.Equal(Approve().Comment, row.Comment);
+        Assert.Equal(LadderRung.Jev, row.Rung);
+        Assert.Null(row.AppliedAt);
+        Assert.Null(row.Action);
+        Assert.Equal(createdAt, row.CreatedAt);
+        Assert.Equal(Approve(), await data.Verdicts.FindUnappliedAsync("anthony-spruyt/widgets", 7, Sha, Ct));
+    }
+
+    [Theory]
+    [InlineData(TriageMode.Live, false)]
+    [InlineData(TriageMode.Live, true)]
+    [InlineData(TriageMode.Shadow, false)]
+    public async Task ANewVerdict_NeverReplacesARealOrShadowRow(TriageMode mode, bool applied)
+    {
+        var data = InMemoryRunData.Create();
+        var first = mode == TriageMode.Shadow ? Wait() : NeedsReview();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, first, mode, null, Ct);
+        if (applied)
+        {
+            await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, first.Verdict, VerdictAction.Comment, Ct);
+        }
+
+        var inserted = await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Approve(), mode, null, Ct);
+
+        Assert.False(inserted);
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(first.Verdict, row.Verdict);
+        Assert.Equal(first.Comment, row.Comment);
+        Assert.Equal(applied, row.AppliedAt is not null);
+    }
+
+    [Fact]
+    public async Task IsJudged_InLive_DoesNotCountATransientRow_ButExistsStillDoes()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Wait(), TriageMode.Live, null, Ct);
+        await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 7, Sha, Wait(), Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 8, Sha, NeedsReview(), TriageMode.Live, null, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 8, Sha, TriageVerdict.NeedsReview, VerdictAction.Comment, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 9, Sha, NeedsReview(), TriageMode.Live, null, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 10, Sha, Wait(), TriageMode.Shadow, null, Ct);
+
+        Assert.False(await data.Verdicts.IsJudgedAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
+        Assert.True(await data.Verdicts.ExistsAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
+        Assert.True(await data.Verdicts.IsJudgedAsync("anthony-spruyt/widgets", 8, Sha, TriageMode.Live, Ct));
+        Assert.False(await data.Verdicts.IsJudgedAsync("anthony-spruyt/widgets", 9, Sha, TriageMode.Live, Ct));
+        Assert.True(await data.Verdicts.IsJudgedAsync("anthony-spruyt/widgets", 10, Sha, TriageMode.Shadow, Ct));
+        Assert.False(await data.Verdicts.IsJudgedAsync("anthony-spruyt/widgets", 11, Sha, TriageMode.Live, Ct));
+    }
+
+    [Fact]
+    public async Task FindUnapplied_SkipsATransientRow()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Wait(), TriageMode.Live, null, Ct);
+
+        Assert.Null(await data.Verdicts.FindUnappliedAsync("anthony-spruyt/widgets", 7, Sha, Ct));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MarkTransient_OverwritesAnUnappliedRowInPlace_AndLeavesNothingUnapplied(bool transientBefore)
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, transientBefore ? Wait() : Approve(), TriageMode.Live, LadderRung.Claude, Ct);
+        var createdAt = await BackdateAsync(data, TimeSpan.FromDays(1));
+        var wait = TriageRules.CiTimeoutDecision();
+
+        Assert.True(await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 7, Sha, wait, Ct));
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(wait.Verdict, row.Verdict);
+        Assert.Equal([TriageRules.CiTimeout], JsonSerializer.Deserialize<string[]>(row.Reasons)!);
+        Assert.Equal(wait.Comment, row.Comment);
+        Assert.Equal(LadderRung.Rule, row.Rung);
+        Assert.NotNull(row.AppliedAt);
+        Assert.Equal(createdAt, row.CreatedAt);
+        Assert.Null(await data.Verdicts.FindUnappliedAsync("anthony-spruyt/widgets", 7, Sha, Ct));
+    }
+
+    [Fact]
+    public async Task MarkTransient_WithoutARow_StoresTheWait()
+    {
+        var data = InMemoryRunData.Create();
+
+        Assert.True(await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 7, Sha, TriageRules.CiTimeoutDecision(), Ct));
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageMode.Live, row.Mode);
+        Assert.Equal(TriageRules.CiTimeoutComment, row.Comment);
+    }
+
+    [Fact]
+    public async Task MarkTransient_NeverOverwritesARealAppliedRow()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Approve(), TriageMode.Live, null, Ct);
+        await data.Verdicts.MarkAppliedAsync("anthony-spruyt/widgets", 7, Sha, TriageVerdict.Approve, VerdictAction.Approve, Ct);
+
+        Assert.False(await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 7, Sha, TriageRules.CiTimeoutDecision(), Ct));
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(TriageVerdict.Approve, row.Verdict);
+        Assert.Equal(VerdictAction.Approve, row.Action);
+    }
+
+    [Fact]
+    public async Task ListWaits_ReturnsOnlyLiveWaitsCreatedInsideTheWindow()
+    {
+        var data = InMemoryRunData.Create();
+        var bodyUnchecked = TriageRules.PrecheckDecision(PrecheckVerdict.BodyUnchecked);
+        await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 1, Sha, Wait(), Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 2, Sha, bodyUnchecked, TriageMode.Live, null, Ct);
+        await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 3, Sha, TriageRules.HandOff(Wait()), Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 4, Sha, Wait(), TriageMode.Shadow, null, Ct);
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 5, Sha, NeedsReview() with { Comment = TriageRules.CiTimeoutComment }, TriageMode.Live, null, Ct);
+        await BackdateAsync(data, TimeSpan.FromDays(4));
+        await data.Verdicts.MarkTransientAsync("anthony-spruyt/widgets", 6, Sha, Wait(), Ct);
+        await using (var db = await data.Factory.CreateDbContextAsync(Ct))
+        {
+            (await db.TriageVerdicts.SingleAsync(v => v.PrNumber == 6, Ct)).CreatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var waits = await data.Verdicts.ListWaitsAsync(DateTimeOffset.UtcNow - TimeSpan.FromDays(5), DateTimeOffset.UtcNow - TimeSpan.FromDays(3), Ct);
+
+        Assert.Equal(
+            [new TriageWait("anthony-spruyt/widgets", 1, Sha, Wait()), new TriageWait("anthony-spruyt/widgets", 2, Sha, bodyUnchecked)],
+            waits.OrderBy(w => w.PrNumber));
+        Assert.Empty(await data.Verdicts.ListWaitsAsync(DateTimeOffset.UtcNow - TimeSpan.FromDays(10), DateTimeOffset.UtcNow - TimeSpan.FromDays(6), Ct));
+    }
+
+    [Fact]
+    public async Task EndWait_RecordsTheHandOff_SoTheRowIsNoLongerAWait()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Wait(), TriageMode.Live, null, Ct);
+        await BackdateAsync(data, TimeSpan.FromDays(4));
+        var handOff = TriageRules.HandOff(Wait());
+
+        await data.Verdicts.EndWaitAsync("anthony-spruyt/widgets", 7, Sha, handOff, Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(handOff.Comment, row.Comment);
+        Assert.NotNull(row.AppliedAt);
+        Assert.Empty(await data.Verdicts.ListWaitsAsync(DateTimeOffset.UtcNow - TimeSpan.FromDays(10), DateTimeOffset.UtcNow, Ct));
+        Assert.False(await data.Verdicts.IsJudgedAsync("anthony-spruyt/widgets", 7, Sha, TriageMode.Live, Ct));
+    }
+
+    [Fact]
+    public async Task EndWait_LeavesARowThatIsNoLongerAWaitAlone()
+    {
+        var data = InMemoryRunData.Create();
+        await data.Verdicts.RecordAsync("anthony-spruyt/widgets", 7, Sha, Approve(), TriageMode.Live, null, Ct);
+
+        await data.Verdicts.EndWaitAsync("anthony-spruyt/widgets", 7, Sha, TriageRules.HandOff(Wait()), Ct);
+
+        await using var db = await data.Factory.CreateDbContextAsync(Ct);
+        var row = await db.TriageVerdicts.SingleAsync(Ct);
+        Assert.Equal(Approve().Comment, row.Comment);
+        Assert.Null(row.AppliedAt);
+    }
+
     [Fact]
     public async Task Record_RetriesOnceWhenTheWriteFailsTransiently()
     {

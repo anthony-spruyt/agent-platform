@@ -99,6 +99,30 @@ public class TriagePendingStoreTests
         Assert.Equal(1, await CountAsync(data));
     }
 
+    [Theory]
+    [InlineData(TriagePendingStatus.Settled)]
+    [InlineData(TriagePendingStatus.Owner)]
+    [InlineData(TriagePendingStatus.OwnerHandled)]
+    public async Task AHeadQueuedAgainAfterATransientHandOff_IsRedrivenWhenItParks(TriagePendingStatus closed)
+    {
+        var (store, data, time) = Create();
+        await store.UpsertAsync(Repo, 7, Sha, "ci-timeout", Ct);
+        await store.SetHeldAsync(Repo, 7, Sha, held: true, Ct);
+        await store.SetStatusAsync(Repo, 7, Sha, closed, Ct);
+        await using (var db = await data.Factory.CreateDbContextAsync(Ct))
+        {
+            (await db.TriagePending.SingleAsync(Ct)).Attempts = 1;
+            await db.SaveChangesAsync(Ct);
+        }
+
+        time.Now += TimeSpan.FromHours(3);
+        var row = await store.UpsertAsync(Repo, 7, Sha, "breaking", Ct);
+
+        Assert.Equal((TriagePendingStatus.Pending, null, time.Now, 1), (row.Status, row.HeldAt, row.OpenedAt, row.Attempts));
+        Assert.Equal(Sha, Assert.Single(await store.ListOpenAsync(Ct)).HeadSha);
+        Assert.Equal(1, await store.CountOpenAsync(Ct));
+    }
+
     [Fact]
     public async Task Upsert_AHeadMove_CarriesTheRowToTheNewHeadAndResetsItsAttempts()
     {

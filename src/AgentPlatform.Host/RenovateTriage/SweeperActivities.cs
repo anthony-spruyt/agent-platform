@@ -11,7 +11,7 @@ public sealed record RedriveResult(int Open, int Running, int Settled, int Redri
 
 public sealed record RedeliverResult(int Pages, int Planned, int Redelivered, int Refused);
 
-public sealed record ReconcileResult(int Repos, int Signalled, int Failed, int Errors);
+public sealed record ReconcileResult(int Repos, int Signalled, int Failed, int Errors, int HandedOff = 0);
 
 public sealed partial class SweeperActivities(
     IGitHubApiClient github,
@@ -174,7 +174,10 @@ public sealed partial class SweeperActivities(
             }
         }
 
-        return new ReconcileResult(repos.Count, signalled, failed, errors);
+        var (handedOff, handOffErrors) = options.Value.Mode == TriageMode.Live
+            ? await HandOffAgedWaitsAsync(cancellationToken).ConfigureAwait(false)
+            : (0, 0);
+        return new ReconcileResult(repos.Count, signalled, failed, errors + handOffErrors, handedOff);
     }
 
     [Activity(RecordSuccessName)]
@@ -267,6 +270,56 @@ public sealed partial class SweeperActivities(
         return Reconciled.Signalled;
     }
 
+    // Reads the store, not the PR listing: a PR waiting longer than the max age has usually dropped out of the Lookback listing.
+    private async Task<(int HandedOff, int Errors)> HandOffAgedWaitsAsync(CancellationToken cancellationToken)
+    {
+        var cutoff = time.GetUtcNow() - options.Value.TransientMaxAge;
+        var waits = await verdicts.ListWaitsAsync(cutoff - Lookback, cutoff, cancellationToken).ConfigureAwait(false);
+        int handedOff = 0, errors = 0;
+        foreach (var wait in waits.Where(w => TriageRules.IsAllowedOwner(w.Repo)))
+        {
+            try
+            {
+                if (await HandOffAsync(wait, cancellationToken).ConfigureAwait(false))
+                {
+                    handedOff++;
+                }
+            }
+            catch (GitHubApiException ex)
+            {
+                errors++;
+                LogWaitFailed(logger, ex, wait.Repo, wait.PrNumber);
+            }
+        }
+
+        return (handedOff, errors);
+    }
+
+    private async Task<bool> HandOffAsync(TriageWait wait, CancellationToken cancellationToken)
+    {
+        var pr = await github.GetPullRequestAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (TriageRules.IsNotOpen(pr.State, pr.Merged, shadow: false)
+            || !string.Equals(pr.HeadSha, wait.HeadSha, StringComparison.Ordinal)
+            || pr.Labels.Any(l => TriageRules.IsBlocking(l, hasPendingRow: false)))
+        {
+            return false;
+        }
+
+        var row = await pendings.FindAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (row is { Status: TriagePendingStatus.Pending or TriagePendingStatus.Redriven }
+            || await probe.IsRunningAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        var handOff = TriageRules.HandOff(wait.Decision);
+        await github.SetExclusiveLabelAsync(wait.Repo, wait.PrNumber, TriageRules.VerdictLabels, TriageRules.NeedsReviewLabel, cancellationToken).ConfigureAwait(false);
+        var sticky = await TriageSticky.FindAsync(github, wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false);
+        await TriageSticky.UpsertAsync(github, wait.Repo, wait.PrNumber, sticky, handOff.Comment!, cancellationToken).ConfigureAwait(false);
+        await verdicts.EndWaitAsync(wait.Repo, wait.PrNumber, wait.HeadSha, handOff, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     private async Task CompleteOpenCheckAsync(string repo, int prNumber, string headSha, string conclusion, string summary, CancellationToken cancellationToken)
     {
         var externalId = TriageCheckActivities.ExternalId(repo, prNumber, headSha);
@@ -291,4 +344,7 @@ public sealed partial class SweeperActivities(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The sweeper could not reconcile {Repo}; it is tried again next run.")]
     private static partial void LogRepoFailed(ILogger logger, Exception exception, string repo);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The sweeper could not hand {Repo}#{PrNumber} to the owner; it is tried again next run.")]
+    private static partial void LogWaitFailed(ILogger logger, Exception exception, string repo, int prNumber);
 }

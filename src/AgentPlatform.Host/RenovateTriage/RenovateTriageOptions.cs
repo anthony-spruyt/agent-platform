@@ -9,6 +9,8 @@ public sealed class RenovateTriageOptions
     public MigrationOptions? Migration { get; set; }
 
     public SweeperOptions Sweeper { get; set; } = new();
+
+    public TimeSpan TransientMaxAge { get; set; } = TimeSpan.FromDays(3);
 }
 
 public sealed class SweeperOptions

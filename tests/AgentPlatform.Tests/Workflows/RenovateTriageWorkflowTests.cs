@@ -299,6 +299,76 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
+    public async Task AfterACiTimeout_ALaterSuiteOnTheSameHead_IsTriagedAgainAndApproved()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "queued", null, "github-actions"));
+
+        var (waited, approved) = await InWorkerAsync(env, rig, async () =>
+        {
+            var first = await RunToResultAsync(await StartAsync(env, Signal(suite: 1)), "renovate-triage-transient-ci-timeout");
+            rig.Github.Checks[1] = new GitHubCheckRun(2, "test", "completed", "success", "github-actions");
+            var second = await RunToResultAsync(await StartAsync(env, Signal(suite: 2)));
+            return (first, second);
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.CiTimeout, TriageVerdict.Owner), waited);
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.ChangelogPresent, TriageVerdict.Approve), approved);
+        Assert.Equal([ShaA], rig.Github.Approvals.Select(a => a.CommitId));
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+        Assert.Equal(TriageVerdict.Approve, Assert.Single(await VerdictsAsync(rig)).Verdict);
+    }
+
+    [Fact]
+    public async Task AfterAPrecheckUncheckedHandOff_ANewHead_IsTriaged()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        rig.Github.PullRequest = FakeGitHubApi.Renovate(body: FakeGitHubApi.Body + "\nheld back");
+        rig.Scanner.Return("held back", ScanOutcome.Unchecked);
+
+        var (waited, judged) = await InWorkerAsync(env, rig, async () =>
+        {
+            var first = await RunToResultAsync(await StartAsync(env, Signal()));
+            rig.Github.PullRequest = FakeGitHubApi.Renovate(sha: ShaB);
+            rig.Github.Commits[0] = FakeGitHubApi.RenovateCommit(ShaB);
+            var second = await RunToResultAsync(await StartAsync(env, Signal(ShaB, suite: 2)));
+            return (first, second);
+        });
+
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaA, TriageRules.PrecheckUnchecked, TriageVerdict.Owner), waited);
+        Assert.Equal(new RenovateTriageResult(RenovateTriageOutcome.Judged, ShaB, TriageRules.ChangelogPresent, TriageVerdict.Approve), judged);
+        Assert.Equal([ShaB], rig.Github.Approvals.Select(a => a.CommitId));
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+    }
+
+    [Theory]
+    [InlineData(TriageRules.CiTimeout, TriageRules.CiTimeoutComment)]
+    [InlineData(TriageRules.PrecheckUnchecked, TriageRules.PrecheckUncheckedComment)]
+    public async Task ATransientHandOff_CompletesTheCheckAsNeutral(string reason, string waiting)
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        var rig = new Rig { Mode = TriageMode.Live };
+        if (reason == TriageRules.CiTimeout)
+        {
+            rig.Github.Checks.Add(new GitHubCheckRun(2, "test", "queued", null, "github-actions"));
+        }
+        else
+        {
+            rig.Scanner.Return("This PR contains", ScanOutcome.Unchecked);
+        }
+
+        var result = await InWorkerAsync(env, rig, async () => await RunToResultAsync(await StartAsync(env, Signal())));
+
+        Assert.Equal(reason, result.Reason);
+        var last = rig.CheckRuns.Reports[^1];
+        Assert.Equal((CheckRunStatus.Completed, CheckRunConclusion.Neutral, waiting), (last.Status, last.Conclusion, last.Summary));
+        Assert.Equal(1, rig.CheckRuns.Reports.Count(r => r.Status == CheckRunStatus.Completed));
+        Assert.Empty(rig.Github.AddedLabels);
+    }
+
+    [Fact]
     public async Task GreenChecksWithoutTheSummaryCheck_WaitForIt_ThenJudge()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
@@ -1064,9 +1134,9 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Theory]
-    [InlineData(ScanOutcome.Flagged, "body_flagged")]
-    [InlineData(ScanOutcome.Unchecked, "body_unchecked")]
-    public async Task ABodyTheScannerHoldsBack_IsFlaggedForAHuman_AndJevIsNeverAsked(ScanOutcome outcome, string stopReason)
+    [InlineData(ScanOutcome.Flagged, "body_flagged", true)]
+    [InlineData(ScanOutcome.Unchecked, "body_unchecked", false)]
+    public async Task ABodyTheScannerHoldsBack_IsFlaggedForAHuman_AndJevIsNeverAsked(ScanOutcome outcome, string stopReason, bool labelled)
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
@@ -1076,7 +1146,7 @@ public partial class RenovateTriageWorkflowTests
 
         Assert.Equal(TriageVerdict.Owner, result.Verdict);
         Assert.Empty(rig.Jev.Bodies);
-        Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+        Assert.Equal(labelled ? [TriageRules.NeedsReviewLabel] : [], rig.Github.AddedLabels);
         Assert.Equal(stopReason, (await StepsAsync(rig)).Single(s => s.Name == "precheck").StopReason);
     }
 
@@ -1354,23 +1424,26 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task AFirstAttemptThatStillShowsWhenTheTwoHoursEnd_IsHandedToTheAgentAsATimeout()
+    public async Task ACiThatNeverFinishes_StartsNoAgentRun_HoweverManySuitesComplete()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };
         FailCi(rig);
         rig.Jev.CiKind = CiFailureKind.Flaky;
 
-        var result = await InWorkerAsync(env, rig, async () =>
+        var results = await InWorkerAsync(env, rig, async () =>
         {
-            var handle = await StartAsync(env, Signal());
+            var handle = await StartAsync(env, Signal(suite: 1));
             await WaitForAsync(() => rig.Github.Reruns.Count == 1);
-            return await RunToResultAsync(handle);
+            var first = await RunToResultAsync(handle);
+            var second = await RunToResultAsync(await StartAsync(env, Signal(suite: 2)));
+            return new[] { first, second };
         });
 
-        Assert.Equal(TriageVerdict.Owner, result.Verdict);
-        Assert.Equal(TriageRules.CiTimeoutDecision().Reason, (await PendingAsync(rig)).Reason);
-        Assert.Equal([900L], rig.Github.Reruns);
+        Assert.All(results, r => Assert.Equal((TriageRules.CiTimeout, TriageVerdict.Owner), (r.Reason, r.Verdict)));
+        Assert.Empty(rig.Pods.Inputs);
+        Assert.Null(await rig.Data.Pending.FindAsync(Repo, 7, Ct));
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
     }
 
     [Fact]

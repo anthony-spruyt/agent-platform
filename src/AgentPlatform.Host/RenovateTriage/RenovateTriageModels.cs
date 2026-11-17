@@ -78,7 +78,7 @@ public enum ApplyOutcome
     Refused,
 }
 
-public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null, TriageDecision? Effective = null, bool StatusPending = false);
+public sealed record ApplyResult(ApplyOutcome Outcome, string? Reason = null, TriageDecision? Effective = null, bool StatusPending = false, bool Waiting = false);
 
 public sealed record WithdrawInput(string Repo, int PrNumber, string HeadSha, TriageMode Mode, TriageDecision? Decision = null);
 
