@@ -21,6 +21,7 @@ public partial class RenovateTriageWorkflow
     private const string StatusPollPatch = "renovate-triage-status-poll-v1";
     private const string CiPollPatch = "renovate-triage-ci-poll-v1";
     private const string CiRecheckPatch = "renovate-triage-ci-recheck-v1";
+    private const string TransientPatch = "renovate-triage-transient-v1";
 
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
@@ -91,6 +92,7 @@ public partial class RenovateTriageWorkflow
     private bool _ciWaitOver;
     private int _applySignals;
     private bool _ciRecheck;
+    private bool _transient;
     private int _assessSignals;
 
     public static string WorkflowId(string repo, int prNumber) => $"renovate-triage/{repo}/{prNumber}";
@@ -126,6 +128,7 @@ public partial class RenovateTriageWorkflow
         _step2 = Workflow.Patched(Step2Patch);
         _claude = Workflow.Patched(ClaudePatch);
         _ciRecheck = Workflow.Patched(CiRecheckPatch);
+        _transient = Workflow.Patched(TransientPatch);
         try
         {
             var result = await JudgeAsync(input, run);
@@ -571,7 +574,11 @@ public partial class RenovateTriageWorkflow
         }
 
         var effective = applied?.Effective ?? decision;
-        if (applied is { Outcome: ApplyOutcome.Applied })
+        if (_transient && applied is { Outcome: ApplyOutcome.Applied, Waiting: true })
+        {
+            await FinishCheckAsync(input, headSha, CheckRunConclusion.Neutral, effective.Comment ?? effective.Reason);
+        }
+        else if (applied is { Outcome: ApplyOutcome.Applied })
         {
             await FinishCheckAsync(input, headSha, CheckRunConclusion.Success, $"Verdict applied: {effective.Reason}.");
         }

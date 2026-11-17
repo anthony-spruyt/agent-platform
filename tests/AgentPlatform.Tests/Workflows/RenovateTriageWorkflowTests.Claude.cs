@@ -200,7 +200,7 @@ public partial class RenovateTriageWorkflowTests
     }
 
     [Fact]
-    public async Task ASafeAnswer_WhoseChecksStayPendingForTheWholeTwoHours_IsHandedToTheOwnerAsACiTimeout()
+    public async Task ASafeAnswer_WhoseChecksStayPendingForTheWholeTwoHours_WaitsAsACiTimeout()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = Climbing();
@@ -215,7 +215,7 @@ public partial class RenovateTriageWorkflowTests
 
         Assert.Equal(TriageVerdict.Safe, result.Verdict);
         Assert.Empty(rig.Github.Approvals);
-        Assert.Contains(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
+        Assert.DoesNotContain(TriageRules.NeedsReviewLabel, rig.Github.AddedLabels);
         Assert.Single(rig.Pods.Inputs);
         Assert.Contains(TriageRules.CiTimeoutComment, Assert.Single(rig.Github.Comments).Body, StringComparison.Ordinal);
         var row = Assert.Single(await VerdictsAsync(rig));

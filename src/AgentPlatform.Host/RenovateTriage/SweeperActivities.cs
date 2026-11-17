@@ -1,3 +1,4 @@
+using System.Net;
 using AgentPlatform.Host.ClaudeBudget;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.Workflows;
@@ -11,7 +12,7 @@ public sealed record RedriveResult(int Open, int Running, int Settled, int Redri
 
 public sealed record RedeliverResult(int Pages, int Planned, int Redelivered, int Refused);
 
-public sealed record ReconcileResult(int Repos, int Signalled, int Failed, int Errors);
+public sealed record ReconcileResult(int Repos, int Signalled, int Failed, int Errors, int HandedOff = 0);
 
 public sealed partial class SweeperActivities(
     IGitHubApiClient github,
@@ -147,7 +148,7 @@ public sealed partial class SweeperActivities(
         var since = time.GetUtcNow() - Lookback;
         var repos = await app.ListInstallationRepositoriesAsync(TriageRules.AllowedOwner, cancellationToken).ConfigureAwait(false);
         int signalled = 0, failed = 0, errors = 0;
-        foreach (var repo in repos.Where(TriageRules.IsAllowedOwner))
+        foreach (var repo in repos.Select(r => r.FullName).Where(TriageRules.IsAllowedOwner))
         {
             try
             {
@@ -174,7 +175,10 @@ public sealed partial class SweeperActivities(
             }
         }
 
-        return new ReconcileResult(repos.Count, signalled, failed, errors);
+        var (handedOff, handOffErrors) = options.Value.Mode == TriageMode.Live
+            ? await HandOffAgedWaitsAsync(repos, cancellationToken).ConfigureAwait(false)
+            : (0, 0);
+        return new ReconcileResult(repos.Count, signalled, failed, errors + handOffErrors, handedOff);
     }
 
     [Activity(RecordSuccessName)]
@@ -267,11 +271,98 @@ public sealed partial class SweeperActivities(
         return Reconciled.Signalled;
     }
 
-    private async Task CompleteOpenCheckAsync(string repo, int prNumber, string headSha, string conclusion, string summary, CancellationToken cancellationToken)
+    // Reads the store, not the PR listing: a PR waiting longer than the max age has usually dropped out of the Lookback listing.
+    private async Task<(int HandedOff, int Errors)> HandOffAgedWaitsAsync(IReadOnlyList<InstallationRepository> repos, CancellationToken cancellationToken)
+    {
+        var waits = await verdicts.ListWaitsAsync(time.GetUtcNow() - options.Value.TransientMaxAge, cancellationToken).ConfigureAwait(false);
+        int handedOff = 0, errors = 0;
+        foreach (var wait in waits.Where(w => TriageRules.IsAllowedOwner(w.Repo)))
+        {
+            try
+            {
+                if (await HandOffAsync(wait, repos, cancellationToken).ConfigureAwait(false))
+                {
+                    handedOff++;
+                }
+            }
+            catch (GitHubApiException ex)
+            {
+                errors++;
+                LogWaitFailed(logger, ex, wait.Repo, wait.PrNumber);
+            }
+        }
+
+        return (handedOff, errors);
+    }
+
+    private async Task<bool> HandOffAsync(TriageWait wait, IReadOnlyList<InstallationRepository> repos, CancellationToken cancellationToken)
+    {
+        var pr = repos.Any(r => !r.Archived && string.Equals(r.FullName, wait.Repo, StringComparison.OrdinalIgnoreCase))
+            ? await FindPullRequestAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (pr is null
+            || TriageRules.IsNotOpen(pr.State, pr.Merged, shadow: false)
+            || !string.Equals(pr.HeadSha, wait.HeadSha, StringComparison.Ordinal))
+        {
+            await verdicts.DropWaitAsync(wait.Repo, wait.PrNumber, wait.HeadSha, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        var row = await pendings.FindAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (row is { Status: TriagePendingStatus.Pending or TriagePendingStatus.Redriven }
+            || await probe.IsRunningAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        var reviews = await github.ListReviewsAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false);
+        var events = await github.ListIssueEventsAsync(wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (TriageRules.IsApproved(reviews, pr.HeadSha, ignoreTriageSignals: true) || OwnerHandling.IsHandled(wait.WaitingSince, reviews, events))
+        {
+            await verdicts.DropWaitAsync(wait.Repo, wait.PrNumber, wait.HeadSha, cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        // The review label on a wait is a hand-off cut short after its label: finish it rather than leave the wait for good.
+        var labelled = pr.Labels.Contains(TriageRules.NeedsReviewLabel, StringComparer.Ordinal);
+        if (!labelled && pr.Labels.Any(l => TriageRules.IsBlocking(l, hasPendingRow: false)))
+        {
+            return false;
+        }
+
+        var handOff = TriageRules.HandOff(wait.Decision);
+        var sticky = await TriageSticky.FindAsync(github, wait.Repo, wait.PrNumber, cancellationToken).ConfigureAwait(false);
+        await TriageSticky.UpsertAsync(github, wait.Repo, wait.PrNumber, sticky, handOff.Comment!, cancellationToken).ConfigureAwait(false);
+        if (!labelled)
+        {
+            await github.SetExclusiveLabelAsync(wait.Repo, wait.PrNumber, TriageRules.VerdictLabels, TriageRules.NeedsReviewLabel, cancellationToken).ConfigureAwait(false);
+        }
+
+        await CompleteCheckAsync(wait.Repo, wait.PrNumber, wait.HeadSha, "neutral", handOff.Comment!, onlyIfOpen: false, cancellationToken).ConfigureAwait(false);
+        await verdicts.EndWaitAsync(wait.Repo, wait.PrNumber, wait.HeadSha, handOff, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<GitHubPullRequest?> FindPullRequestAsync(string repo, int prNumber, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await github.GetPullRequestAsync(repo, prNumber, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GitHubApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    private Task CompleteOpenCheckAsync(string repo, int prNumber, string headSha, string conclusion, string summary, CancellationToken cancellationToken) =>
+        CompleteCheckAsync(repo, prNumber, headSha, conclusion, summary, onlyIfOpen: true, cancellationToken);
+
+    private async Task CompleteCheckAsync(string repo, int prNumber, string headSha, string conclusion, string summary, bool onlyIfOpen, CancellationToken cancellationToken)
     {
         var externalId = TriageCheckActivities.ExternalId(repo, prNumber, headSha);
         var check = await github.FindCheckRunAsync(repo, headSha, TriageCheckActivities.CheckName, externalId, cancellationToken).ConfigureAwait(false);
-        if (check is null || check.Status == "completed")
+        if (check is null || (onlyIfOpen && check.Status == "completed"))
         {
             return;
         }
@@ -291,4 +382,7 @@ public sealed partial class SweeperActivities(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The sweeper could not reconcile {Repo}; it is tried again next run.")]
     private static partial void LogRepoFailed(ILogger logger, Exception exception, string repo);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The sweeper could not hand {Repo}#{PrNumber} to the owner; it is tried again next run.")]
+    private static partial void LogWaitFailed(ILogger logger, Exception exception, string repo, int prNumber);
 }

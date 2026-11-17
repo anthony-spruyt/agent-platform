@@ -99,7 +99,7 @@ public class GitHubAppClientTests
 
         var repos = await client.ListInstallationRepositoriesAsync("anthony-spruyt", Ct);
 
-        Assert.Equal(["anthony-spruyt/one", "anthony-spruyt/two"], repos);
+        Assert.Equal(["anthony-spruyt/one", "anthony-spruyt/two"], repos.Select(r => r.FullName));
         Assert.Equal("Bearer app.jwt.value", handler.Requests[0].Authorization);
         Assert.Equal("Bearer app.jwt.value", handler.Requests[1].Authorization);
         Assert.Equal("""{"permissions":{"metadata":"read"}}""", handler.Requests[1].Body);
@@ -119,7 +119,25 @@ public class GitHubAppClientTests
 
         var repos = await client.ListInstallationRepositoriesAsync("anthony-spruyt", Ct);
 
-        Assert.Equal(["anthony-spruyt/on", "anthony-spruyt/unset"], repos);
+        Assert.Equal(["anthony-spruyt/on", "anthony-spruyt/unset"], repos.Select(r => r.FullName));
+    }
+
+    [Fact]
+    public async Task ListInstallationRepositories_SaysWhichReposAreArchived()
+    {
+        var (client, _) = Create(request => request.Uri.AbsolutePath switch
+        {
+            "/app/installations" => StubHttpHandler.Json("""[{"id":42,"account":{"login":"anthony-spruyt"}}]"""),
+            "/app/installations/42/access_tokens" => StubHttpHandler.Json("""{"token":"ghs_scoped"}""", HttpStatusCode.Created),
+            "/installation/repositories" => StubHttpHandler.Json("""{"total_count":3,"repositories":[{"full_name":"anthony-spruyt/old","archived":true},{"full_name":"anthony-spruyt/live","archived":false},{"full_name":"anthony-spruyt/unset"}]}"""),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+        });
+
+        var repos = await client.ListInstallationRepositoriesAsync("anthony-spruyt", Ct);
+
+        Assert.Equal(
+            [new InstallationRepository("anthony-spruyt/old", Archived: true), new InstallationRepository("anthony-spruyt/live", Archived: false), new InstallationRepository("anthony-spruyt/unset", Archived: false)],
+            repos);
     }
 
     [Fact]

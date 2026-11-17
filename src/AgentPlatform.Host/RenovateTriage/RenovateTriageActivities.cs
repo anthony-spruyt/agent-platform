@@ -83,7 +83,7 @@ public sealed partial class RenovateTriageActivities(
             }
 
             var rowIsForThisHead = hasOpenRow && string.Equals(pending!.HeadSha, sha, StringComparison.Ordinal);
-            if (!rowIsForThisHead && await verdicts.ExistsAsync(input.Repo, input.PrNumber, sha, mode, cancellationToken).ConfigureAwait(false))
+            if (!rowIsForThisHead && await verdicts.IsJudgedAsync(input.Repo, input.PrNumber, sha, mode, cancellationToken).ConfigureAwait(false))
             {
                 return new AssessResult(AssessStatus.AlreadyJudged, sha, Mode: mode);
             }
@@ -215,7 +215,19 @@ public sealed partial class RenovateTriageActivities(
                 return stop;
             }
 
-            var action = await WriteEffectAsync(input, gate, cancellationToken).ConfigureAwait(false);
+            var transient = TriageRules.IsTransient(gate.Decision.Reason);
+            if (transient)
+            {
+                gate = await MarkTransientAsync(input, pr, gate, cancellationToken).ConfigureAwait(false);
+            }
+
+            var (action, waiting) = await WriteEffectAsync(input, gate, cancellationToken).ConfigureAwait(false);
+            if (transient && gate.Waits && !waiting)
+            {
+                gate = gate with { Decision = TriageRules.HandOff(gate.Decision) };
+                await verdicts.EndWaitAsync(input.Repo, input.PrNumber, input.HeadSha, gate.Decision, cancellationToken).ConfigureAwait(false);
+            }
+
             if (pr.Labels.Contains(TriageRules.NeedsTriageLabel, StringComparer.Ordinal))
             {
                 await github.RemoveLabelAsync(input.Repo, input.PrNumber, TriageRules.NeedsTriageLabel, cancellationToken).ConfigureAwait(false);
@@ -224,6 +236,11 @@ public sealed partial class RenovateTriageActivities(
             var handedToOwner = gate.Decision.Verdict is TriageVerdict.Owner or TriageVerdict.NeedsReview;
             await pendings.SetStatusAsync(input.Repo, input.PrNumber, input.HeadSha, handedToOwner ? TriagePendingStatus.Owner : TriagePendingStatus.Settled, cancellationToken).ConfigureAwait(false);
             await pendings.SettleOtherHeadsAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+            if (transient)
+            {
+                return new ApplyResult(ApplyOutcome.Applied, Effective: gate.Decision == input.Decision ? null : gate.Decision, Waiting: waiting);
+            }
+
             if (gate.Decision == input.Decision)
             {
                 await verdicts.MarkAppliedAsync(input.Repo, input.PrNumber, input.HeadSha, input.Decision.Verdict, action, cancellationToken).ConfigureAwait(false);
@@ -295,7 +312,17 @@ public sealed partial class RenovateTriageActivities(
             return new WithdrawResult(dismissed ? WithdrawOutcome.Withdrawn : WithdrawOutcome.DismissRefused, Decision: decision);
         });
 
-    private sealed record Gate(TriageDecision Decision, ApplyResult? Stop = null, string? HighRiskTerm = null);
+    private sealed record Gate(TriageDecision Decision, ApplyResult? Stop = null, string? HighRiskTerm = null, bool Waits = false);
+
+    // The row goes first, so a stored approval is never left unapplied once its hand-off is on GitHub.
+    private async Task<Gate> MarkTransientAsync(ApplyInput input, GitHubPullRequest pr, Gate gate, CancellationToken cancellationToken)
+    {
+        var staysBlocked = pr.Labels.Any(l => !string.Equals(l, TriageRules.NeedsTriageLabel, StringComparison.Ordinal) && TriageRules.IsBlocking(l, hasPendingRow: false));
+        var written = staysBlocked ? gate with { Decision = TriageRules.HandOff(gate.Decision) } : gate with { Waits = true };
+        return await verdicts.MarkTransientAsync(input.Repo, input.PrNumber, input.HeadSha, written.Decision, cancellationToken).ConfigureAwait(false)
+            ? written
+            : gate with { Decision = TriageRules.HandOff(gate.Decision) };
+    }
 
     // A flag is not held to the approval gates, but the owner's own labels still stop it; the label it writes itself does not, so a retry completes.
     private static Gate GateFlag(ApplyInput input, GitHubPullRequest pr, TriageDecision decision)
@@ -392,7 +419,7 @@ public sealed partial class RenovateTriageActivities(
     private static Gate CiPending(ApplyInput input, IReadOnlyList<GitHubCheckRun> checks) =>
         new(input.Decision, new ApplyResult(ApplyOutcome.Aborted, CiPendingReason, StatusPending: TriageRules.HasPendingCommitStatus(checks)));
 
-    private async Task<VerdictAction> WriteEffectAsync(ApplyInput input, Gate gate, CancellationToken cancellationToken)
+    private async Task<(VerdictAction Action, bool Waiting)> WriteEffectAsync(ApplyInput input, Gate gate, CancellationToken cancellationToken)
     {
         var decision = gate.Decision;
         switch (decision.Verdict)
@@ -400,13 +427,13 @@ public sealed partial class RenovateTriageActivities(
             case TriageVerdict.Approve:
             case TriageVerdict.Safe when gate.HighRiskTerm is null:
                 await ApproveAsync(input, decision, cancellationToken).ConfigureAwait(false);
-                return VerdictAction.Approve;
+                return (VerdictAction.Approve, false);
             case TriageVerdict.Safe:
                 await FlagAsync(input, decision with { Comment = TriageRules.HighRiskSafeComment(gate.HighRiskTerm, decision.Comment) }, TriageRules.SafeLabel, cancellationToken).ConfigureAwait(false);
-                return VerdictAction.Comment;
+                return (VerdictAction.Comment, false);
             default:
-                await FlagAsync(input, decision, FlagLabel(decision.Verdict), cancellationToken).ConfigureAwait(false);
-                return VerdictAction.Comment;
+                var waiting = await FlagAsync(input, decision, gate.Waits ? null : FlagLabel(decision.Verdict), cancellationToken).ConfigureAwait(false);
+                return (VerdictAction.Comment, waiting);
         }
     }
 
@@ -443,12 +470,20 @@ public sealed partial class RenovateTriageActivities(
         }
     }
 
-    private async Task FlagAsync(ApplyInput input, TriageDecision decision, string label, CancellationToken cancellationToken)
+    // A null label waits with the comment alone, unless an approval stays undismissed: then it is a hand-off after all.
+    private async Task<bool> FlagAsync(ApplyInput input, TriageDecision decision, string? label, CancellationToken cancellationToken)
     {
         var reviews = await github.ListReviewsAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        var dismissed = true;
         foreach (var stale in reviews.Where(IsBotApproval))
         {
-            await DismissAsync(input, stale, cancellationToken).ConfigureAwait(false);
+            dismissed &= await DismissAsync(input, stale, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (label is null && !dismissed)
+        {
+            label = TriageRules.NeedsReviewLabel;
+            decision = TriageRules.HandOff(decision);
         }
 
         await github.SetExclusiveLabelAsync(input.Repo, input.PrNumber, TriageRules.VerdictLabels, label, cancellationToken).ConfigureAwait(false);
@@ -458,6 +493,8 @@ public sealed partial class RenovateTriageActivities(
             var sticky = await FindStickyAsync(input, cancellationToken).ConfigureAwait(false);
             await UpsertStickyAsync(input, sticky, comment, cancellationToken).ConfigureAwait(false);
         }
+
+        return label is null;
     }
 
     private Task<bool> DismissAsync(ApplyInput input, GitHubReview review, CancellationToken cancellationToken) =>
