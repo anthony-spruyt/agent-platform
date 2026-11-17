@@ -5,6 +5,7 @@ using AgentPlatform.Host.PullRequests;
 using AgentPlatform.Host.RenovateTriage;
 using AgentPlatform.Host.RunData;
 using AgentPlatform.Tests.Support;
+using static AgentPlatform.Tests.Support.TriageWaits;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -939,9 +940,6 @@ public class RenovateTriageActivitiesTests
 
             Assert.Equal(AssessStatus.NeedsJev, (await Assess(rig)).Status);
         }
-
-        private static TriageDecision Wait(string reason) =>
-            (reason == TriageRules.CiTimeout ? TriageRules.CiTimeoutDecision() : TriageRules.PrecheckDecision(PrecheckVerdict.BodyUnchecked)) with { Verdict = TriageVerdict.Owner };
 
         [Theory]
         [InlineData(TriageRules.CiTimeout)]
@@ -2925,9 +2923,6 @@ public class RenovateTriageActivitiesTests
             Assert.Empty(rig.Scanner.Scanned);
         }
 
-        private static TriageDecision Wait(string reason) =>
-            (reason == TriageRules.CiTimeout ? TriageRules.CiTimeoutDecision() : TriageRules.PrecheckDecision(PrecheckVerdict.BodyUnchecked)) with { Verdict = TriageVerdict.Owner };
-
         private static TriageDecision GatedAs(Rig rig, string reason)
         {
             if (reason == TriageRules.CiTimeout)
@@ -3079,7 +3074,24 @@ public class RenovateTriageActivitiesTests
             Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
             Assert.Equal(Sticky(TriageRules.CiTimeoutHandOffComment), Assert.Single(rig.Github.Comments).Body);
             await AssertStoredAsync(rig, TriageVerdict.Owner, TriageRules.CiTimeout, TriageRules.CiTimeoutHandOffComment);
-            Assert.Empty(await rig.Data.Verdicts.ListWaitsAsync(DateTimeOffset.MinValue, DateTimeOffset.MaxValue, Ct));
+            Assert.Empty(await rig.Data.Verdicts.ListWaitsAsync(DateTimeOffset.MaxValue, Ct));
+        }
+
+        [Fact]
+        public async Task AWaitOverAnAppliedRealVerdict_IsHandedOffWithTheLabelAndTheComment()
+        {
+            var rig = Live();
+            var fixable = new TriageDecision(TriageVerdict.Fixable, "agent", "**Fixable:** why.");
+            await Record(rig, fixable);
+            await rig.Data.Verdicts.MarkAppliedAsync(Repo, 7, Sha, TriageVerdict.Fixable, VerdictAction.Comment, Ct);
+            var wait = Wait(TriageRules.CiTimeout);
+
+            var result = await Apply(rig, wait);
+
+            Assert.Equal(new ApplyResult(ApplyOutcome.Applied, Effective: TriageRules.HandOff(wait)), result);
+            Assert.Equal([TriageRules.NeedsReviewLabel], rig.Github.AddedLabels);
+            Assert.Equal(Sticky(TriageRules.CiTimeoutHandOffComment), Assert.Single(rig.Github.Comments).Body);
+            await AssertStoredAsync(rig, TriageVerdict.Fixable, "agent", fixable.Comment);
         }
 
         [Fact]

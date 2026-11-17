@@ -66,10 +66,14 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
     {
         Calls.Add("pr");
         OnPullRequestRead?.Invoke();
-        return Result(PullRequestsByNumber.GetValueOrDefault(number, PullRequest));
+        return PullRequestFailures.TryGetValue(number, out var failure)
+            ? Task.FromException<GitHubPullRequest>(failure)
+            : Result(PullRequestsByNumber.GetValueOrDefault(number, PullRequest));
     }
 
     public Dictionary<int, GitHubPullRequest> PullRequestsByNumber { get; } = [];
+
+    public Dictionary<int, Exception> PullRequestFailures { get; } = [];
 
     public async Task<IReadOnlyList<GitHubCheckRun>> ListCheckRunsAsync(string repo, string sha, CancellationToken cancellationToken)
     {

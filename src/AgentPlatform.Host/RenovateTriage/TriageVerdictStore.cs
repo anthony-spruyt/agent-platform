@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AgentPlatform.Host.RenovateTriage;
 
-public sealed record TriageWait(string Repo, int PrNumber, string HeadSha, TriageDecision Decision);
+public sealed record TriageWait(string Repo, int PrNumber, string HeadSha, TriageDecision Decision, DateTimeOffset WaitingSince);
 
 public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> factory)
 {
@@ -48,34 +48,37 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
     public Task<bool> MarkTransientAsync(string repo, int prNumber, string headSha, TriageDecision decision, CancellationToken cancellationToken) =>
         OverwriteAsync(repo, prNumber, headSha, decision, row => row.AppliedAt is null || TriageRules.IsTransient(ReasonOf(row)), cancellationToken);
 
-    public async Task<IReadOnlyList<TriageWait>> ListWaitsAsync(DateTimeOffset createdFrom, DateTimeOffset createdTo, CancellationToken cancellationToken)
+    // The max age counts from CreatedAt, the head's first wait: a re-triage that waits again moves only AppliedAt.
+    public async Task<IReadOnlyList<TriageWait>> ListWaitsAsync(DateTimeOffset createdBy, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var rows = await db.TriageVerdicts
             .AsNoTracking()
-            .Where(v => v.Mode == TriageMode.Live && v.CreatedAt >= createdFrom && v.CreatedAt <= createdTo && v.Comment != null && v.Comment.StartsWith(TriageRules.WaitingPrefix))
+            .Where(v => v.Mode == TriageMode.Live && v.CreatedAt <= createdBy && v.Comment != null && v.Comment.StartsWith(TriageRules.WaitingPrefix))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return [.. rows.Where(IsWait).Select(r => new TriageWait(r.Repo, r.PrNumber, r.HeadSha, new TriageDecision(r.Verdict, ReasonOf(r), r.Comment)))];
+        return [.. rows.Where(IsWait).Select(r => new TriageWait(r.Repo, r.PrNumber, r.HeadSha, new TriageDecision(r.Verdict, ReasonOf(r), r.Comment), r.AppliedAt ?? r.CreatedAt))];
     }
 
-    public async Task EndWaitAsync(string repo, int prNumber, string headSha, TriageDecision handOff, CancellationToken cancellationToken)
+    public Task EndWaitAsync(string repo, int prNumber, string headSha, TriageDecision handOff, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(handOff);
-        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var row = await db.TriageVerdicts
-            .SingleOrDefaultAsync(v => v.Repo == repo && v.PrNumber == prNumber && v.HeadSha == headSha && v.Mode == TriageMode.Live, cancellationToken)
-            .ConfigureAwait(false);
-        if (row is null || !IsWait(row))
-        {
-            return;
-        }
-
-        row.Comment = handOff.Comment;
-        row.Action = VerdictAction.Comment;
-        row.AppliedAt ??= DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return CloseWaitAsync(
+            repo,
+            prNumber,
+            headSha,
+            row =>
+            {
+                row.Comment = handOff.Comment;
+                row.Action = VerdictAction.Comment;
+                row.AppliedAt ??= DateTimeOffset.UtcNow;
+            },
+            cancellationToken);
     }
+
+    // Clearing the waiting text ends the wait and nothing else: the row stays applied, so reconcile still counts the head as handled.
+    public Task DropWaitAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken) =>
+        CloseWaitAsync(repo, prNumber, headSha, row => row.Comment = null, cancellationToken);
 
     // Only the row of the verdict that was written counts: a flag written over an unapplied approval leaves that approval unapplied.
     public async Task MarkAppliedAsync(string repo, int prNumber, string headSha, TriageVerdict verdict, VerdictAction action, CancellationToken cancellationToken)
@@ -150,12 +153,27 @@ public sealed class TriageVerdictStore(IDbContextFactory<RunDataDbContext> facto
         return true;
     }
 
+    private async Task CloseWaitAsync(string repo, int prNumber, string headSha, Action<RenovateTriageVerdict> close, CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var row = await db.TriageVerdicts
+            .SingleOrDefaultAsync(v => v.Repo == repo && v.PrNumber == prNumber && v.HeadSha == headSha && v.Mode == TriageMode.Live, cancellationToken)
+            .ConfigureAwait(false);
+        if (row is null || !IsWait(row))
+        {
+            return;
+        }
+
+        close(row);
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static string ReasonOf(RenovateTriageVerdict row) => JsonSerializer.Deserialize<string[]>(row.Reasons)?.FirstOrDefault() ?? string.Empty;
 
     private static bool IsWait(RenovateTriageVerdict row) =>
         row.Mode == TriageMode.Live && TriageRules.IsTransient(ReasonOf(row)) && row.Comment?.StartsWith(TriageRules.WaitingPrefix, StringComparison.Ordinal) == true;
 
-    // The first verdict for a commit stands; a concurrent writer can win the unique key, so retry once on a fresh context.
+    // The first real verdict for a commit stands; a concurrent writer can win the unique key, so retry once on a fresh context.
     public async Task<bool> RecordAsync(string repo, int prNumber, string headSha, TriageDecision decision, TriageMode mode, LadderRung? rung, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repo);

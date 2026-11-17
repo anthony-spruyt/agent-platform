@@ -1136,7 +1136,7 @@ public partial class RenovateTriageWorkflowTests
     [Theory]
     [InlineData(ScanOutcome.Flagged, "body_flagged", true)]
     [InlineData(ScanOutcome.Unchecked, "body_unchecked", false)]
-    public async Task ABodyTheScannerHoldsBack_IsFlaggedForAHuman_AndJevIsNeverAsked(ScanOutcome outcome, string stopReason, bool labelled)
+    public async Task ABodyTheScannerHoldsBack_StopsBeforeJev(ScanOutcome outcome, string stopReason, bool labelled)
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
         var rig = new Rig { Mode = TriageMode.Live };

@@ -61,6 +61,26 @@ public class SweeperConfigurationTests
     }
 
     [Fact]
+    public void TheTransientMaxAge_BindsFromConfiguration()
+    {
+        using var provider = Build(new() { ["RenovateTriage:TransientMaxAge"] = "1.00:00:00" });
+
+        var options = provider.GetRequiredService<IOptions<RenovateTriageOptions>>().Value;
+
+        Assert.Equal(TimeSpan.FromDays(1), options.TransientMaxAge);
+    }
+
+    [Theory]
+    [InlineData("00:00:00")]
+    [InlineData("-1.00:00:00")]
+    public void ATransientMaxAgeOfZeroOrLess_FailsAtStartup(string maxAge)
+    {
+        var failure = Assert.Throws<InvalidOperationException>(() => Build(new() { ["RenovateTriage:TransientMaxAge"] = maxAge }));
+
+        Assert.Equal("RenovateTriage:TransientMaxAge must be greater than zero.", failure.Message);
+    }
+
+    [Fact]
     public void TheWorker_HostsTheScheduleService_AndTheSignalerAndProbeTheSweeperUses()
     {
         using var provider = Build();

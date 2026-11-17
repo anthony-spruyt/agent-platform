@@ -43,7 +43,7 @@ public class TriagePendingStoreTests
     }
 
     [Fact]
-    public async Task OpenedAt_MovesWithTheHead_AndNotWithAnyOtherWrite()
+    public async Task OpenedAt_MovesWithTheHeadOrAReopen_AndNotWithAnyOtherWrite()
     {
         var (store, data, time) = Create();
         var opened = time.Now;
@@ -80,7 +80,7 @@ public class TriagePendingStoreTests
     }
 
     [Fact]
-    public async Task Upsert_TheSameHeadAgain_KeepsTheStatusAndAttempts()
+    public async Task Upsert_TheSameHeadAgain_KeepsAnOpenRowsStatusAndAttempts()
     {
         var (store, data, time) = Create();
         await store.UpsertAsync(Repo, 7, Sha, "ci-failed", Ct);
