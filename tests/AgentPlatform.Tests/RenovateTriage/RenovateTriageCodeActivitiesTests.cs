@@ -945,15 +945,64 @@ public class RenovateTriageCodeActivitiesTests
             Assert.NotNull(await rig.Data.Rebases.FindAsync(Repo, 7, Ct));
         }
 
+        private static readonly string TickedBody = BodyWithBox.Replace("- [ ] <!-- rebase-check -->", "- [x] <!-- rebase-check -->", StringComparison.Ordinal);
+
         [Fact]
-        public async Task APullRequestAlreadyRebasedOnThisHead_EndsTheRunWithoutTickingAgain()
+        public async Task APullRequestAlreadyRebasedOnThisHead_WithTheBoxStillTicked_EndsTheRunWithoutTickingAgain()
         {
-            var rig = Refused();
+            var rig = Refused(body: TickedBody);
             await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
 
             var result = await Rerun(rig);
 
-            Assert.Equal(RerunOutcome.Rebase, result.Outcome);
+            Assert.Equal(new RerunResult(false, RerunOutcome.Rebase), result);
+            Assert.Empty(rig.Github.BodyWrites);
+        }
+
+        [Fact]
+        public async Task APullRequestAlreadyRebasedOnThisHead_WhoseBoxRenovateUntickedMeanwhile_IsTickedAgain_WithoutANewRecord()
+        {
+            var rig = Refused();
+            await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+            var recorded = await rig.Data.Rebases.FindAsync(Repo, 7, Ct);
+
+            var result = await Rerun(rig);
+
+            Assert.Equal(new RerunResult(false, RerunOutcome.Rebase), result);
+            Assert.Equal([TickedBody], rig.Github.BodyWrites);
+            var after = await rig.Data.Rebases.FindAsync(Repo, 7, Ct);
+            Assert.Equal((recorded?.Id, recorded?.HeadSha, recorded?.RequestedAt), (after?.Id, after?.HeadSha, after?.RequestedAt));
+        }
+
+        [Fact]
+        public async Task APullRequestAlreadyRebasedOnThisHead_WithNoBoxLeft_EndsTheRunWithoutHandingOff()
+        {
+            var rig = Refused(body: FakeGitHubApi.Body);
+            await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+
+            var result = await Rerun(rig);
+
+            Assert.Equal(new RerunResult(false, RerunOutcome.Rebase), result);
+            Assert.Empty(rig.Github.BodyWrites);
+        }
+
+        [Fact]
+        public async Task APullRequestAlreadyRebasedOnThisHead_WhoseHeadMovedDuringTheRerun_TicksNothing()
+        {
+            var rig = Refused();
+            await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+            var reads = 0;
+            rig.Github.OnPullRequestRead = () =>
+            {
+                if (++reads == 2)
+                {
+                    rig.Github.PullRequest = rig.Github.PullRequest with { HeadSha = OtherSha };
+                }
+            };
+
+            var result = await Rerun(rig);
+
+            Assert.True(result.HeadMoved);
             Assert.Empty(rig.Github.BodyWrites);
         }
 

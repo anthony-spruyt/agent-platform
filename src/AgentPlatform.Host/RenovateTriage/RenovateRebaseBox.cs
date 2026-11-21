@@ -17,18 +17,19 @@ public static partial class RenovateRebaseBox
     {
         ArgumentNullException.ThrowIfNull(body);
 
-        var match = BoxLine().Match(body);
+        var match = RebaseCheckbox().Match(body);
         if (!match.Success)
         {
             return new RebaseBoxTick(RebaseBoxState.Missing, body);
         }
 
         var mark = match.Groups["mark"];
-        return mark.Value == " "
-            ? new RebaseBoxTick(RebaseBoxState.Ticked, string.Concat(body.AsSpan(0, mark.Index), "x", body.AsSpan(mark.Index + 1)))
-            : new RebaseBoxTick(RebaseBoxState.AlreadyTicked, body);
+        return mark.Value == "x"
+            ? new RebaseBoxTick(RebaseBoxState.AlreadyTicked, body)
+            : new RebaseBoxTick(RebaseBoxState.Ticked, string.Concat(body.AsSpan(0, mark.Index), "x", body.AsSpan(mark.Index + 1)));
     }
 
-    [GeneratedRegex(@"^[ \t]*[-*+][ \t]+\[(?<mark>[ xX])\][ \t]*<!-- rebase-check -->", RegexOptions.Multiline | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex BoxLine();
+    // Renovate's own pattern (lib/modules/platform/pr-body.ts): it reads the first match and counts only a lowercase x as ticked.
+    [GeneratedRegex(@"- \[(?<mark>[\sx])\] <!-- rebase-check -->", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex RebaseCheckbox();
 }

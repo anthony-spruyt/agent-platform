@@ -30,12 +30,49 @@ public class RenovateRebaseBoxTests
         Assert.Equal(BodyWith(Ticked, "\r\n"), result.Body);
     }
 
-    [Theory]
-    [InlineData("x")]
-    [InlineData("X")]
-    public void Tick_WhenTheBoxIsAlreadyChecked_LeavesTheBodyAlone(string mark)
+    [Fact]
+    public void Tick_WhenTheBoxIsAlreadyChecked_LeavesTheBodyAlone()
     {
-        var body = BodyWith(Open.Replace("[ ]", $"[{mark}]", StringComparison.Ordinal));
+        var body = BodyWith(Ticked);
+
+        var result = RenovateRebaseBox.Tick(body);
+
+        Assert.Equal(RebaseBoxState.AlreadyTicked, result.State);
+        Assert.Equal(body, result.Body);
+    }
+
+    // Renovate reads the box with /- (?<checkbox>\[[\sx]]) <!-- rebase-check -->/ and only a lowercase x ticks it, so anything else it would not read must not count as a box.
+    [Theory]
+    [InlineData("- [X] <!-- rebase-check -->")]
+    [InlineData("* [ ] <!-- rebase-check -->")]
+    [InlineData("- [ ]  <!-- rebase-check -->")]
+    [InlineData("-  [ ] <!-- rebase-check -->")]
+    public void Tick_IgnoresALineRenovateWouldNotReadAsItsBox(string line)
+    {
+        var body = BodyWith(line);
+
+        var result = RenovateRebaseBox.Tick(body);
+
+        Assert.Equal(RebaseBoxState.Missing, result.State);
+        Assert.Equal(body, result.Body);
+    }
+
+    [Fact]
+    public void Tick_ChecksTheFirstMatchLikeRenovate_EvenWhenAnotherBoxFollows()
+    {
+        var quoted = "Renovate's box reads `- [ ] <!-- rebase-check -->` in the notes.";
+        var body = quoted + "\n\n" + Open;
+
+        var result = RenovateRebaseBox.Tick(body);
+
+        Assert.Equal(RebaseBoxState.Ticked, result.State);
+        Assert.Equal(quoted.Replace("[ ]", "[x]", StringComparison.Ordinal) + "\n\n" + Open, result.Body);
+    }
+
+    [Fact]
+    public void Tick_ReadsTheFirstMatchOnly_SoAFirstTickedBoxIsNotTickedAgain()
+    {
+        var body = BodyWith(Ticked) + "\n" + Open;
 
         var result = RenovateRebaseBox.Tick(body);
 
@@ -52,16 +89,6 @@ public class RenovateRebaseBoxTests
 
         Assert.Equal(RebaseBoxState.Missing, result.State);
         Assert.Equal(body, result.Body);
-    }
-
-    [Fact]
-    public void Tick_IgnoresTheMarkerWhenItIsQuotedInsideAParagraph()
-    {
-        var body = "Renovate's box reads `- [ ] <!-- rebase-check -->` in the body.";
-
-        var result = RenovateRebaseBox.Tick(body);
-
-        Assert.Equal(RebaseBoxState.Missing, result.State);
     }
 
     [Fact]

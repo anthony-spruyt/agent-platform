@@ -227,12 +227,14 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
         });
 
     // Tick before recording: a retry after a failed record finds the box ticked and only records.
+    // A record for this head still re-reads the body: Renovate may have rewritten it after the tick, and the tick is then lost for every later suite on this head.
     private async Task<RerunResult> RebaseAsync(CiCodeInput input, CancellationToken cancellationToken)
     {
         var earlier = await rebases.FindAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
-        if (earlier is not null)
+        var sameHead = earlier is not null && string.Equals(earlier.HeadSha, input.HeadSha, StringComparison.Ordinal);
+        if (earlier is not null && !sameHead)
         {
-            return new RerunResult(false, string.Equals(earlier.HeadSha, input.HeadSha, StringComparison.Ordinal) ? RerunOutcome.Rebase : RerunOutcome.RebaseLimit);
+            return new RerunResult(false, RerunOutcome.RebaseLimit);
         }
 
         var pr = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
@@ -242,7 +244,7 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
         }
 
         var tick = RenovateRebaseBox.Tick(pr.Body ?? string.Empty);
-        if (tick.State == RebaseBoxState.Missing)
+        if (tick.State == RebaseBoxState.Missing && !sameHead)
         {
             return new RerunResult(false, RerunOutcome.NoRebaseBox);
         }
@@ -252,7 +254,11 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
             await github.UpdatePullRequestBodyAsync(input.Repo, input.PrNumber, tick.Body, cancellationToken).ConfigureAwait(false);
         }
 
-        await rebases.RecordAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+        if (!sameHead)
+        {
+            await rebases.RecordAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+        }
+
         return new RerunResult(false, RerunOutcome.Rebase);
     }
 
