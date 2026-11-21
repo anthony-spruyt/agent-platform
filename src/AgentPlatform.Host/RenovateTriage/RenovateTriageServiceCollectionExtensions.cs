@@ -25,6 +25,7 @@ public static class RenovateTriageServiceCollectionExtensions
 #pragma warning restore EXTEXP0001
         services.AddSingleton<TriageVerdictStore>();
         services.AddSingleton<TriagePendingStore>();
+        services.AddSingleton<TriageRebaseStore>();
         services.AddSingleton<IClaudeAttemptLedger, TriageAttemptLedger>();
         services.AddSingleton<SweeperStore>();
         return services;

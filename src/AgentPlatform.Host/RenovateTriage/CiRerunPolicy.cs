@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json.Serialization;
 using AgentPlatform.Host.GitHub;
 
@@ -9,6 +10,9 @@ public enum RerunOutcome
     Rerun,
     AttemptLimit,
     NothingFailed,
+    Rebase,
+    RebaseLimit,
+    NoRebaseBox,
 }
 
 public sealed record CiRerunPlan(RerunOutcome Outcome, IReadOnlyList<long> RunIds);
@@ -44,6 +48,12 @@ public static class CiRerunPolicy
             ? new CiRerunPlan(RerunOutcome.AttemptLimit, [])
             : new CiRerunPlan(RerunOutcome.Rerun, [.. failedJobs.Select(j => j.RunId).Distinct()]);
     }
+
+    // GitHub answers 403 both for a run it will never re-run and for a token that lacks the permission; only the first is worth a rebase.
+    public static bool IsRefusal(HttpStatusCode? status, string? message) =>
+        status == HttpStatusCode.Forbidden
+        && message is not null
+        && (message.Contains("cannot be retried", StringComparison.OrdinalIgnoreCase) || message.Contains("cannot be re-run", StringComparison.OrdinalIgnoreCase));
 
     public static bool AwaitsNewAttempt(IReadOnlyCollection<GitHubJob> failedJobs)
     {

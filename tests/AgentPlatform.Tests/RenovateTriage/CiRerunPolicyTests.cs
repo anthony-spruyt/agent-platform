@@ -1,3 +1,4 @@
+using System.Net;
 using AgentPlatform.Host.GitHub;
 using AgentPlatform.Host.RenovateTriage;
 
@@ -14,6 +15,26 @@ public class CiRerunPolicyTests
 
         Assert.Equal(RerunOutcome.Rerun, plan.Outcome);
         Assert.Equal([900L], plan.RunIds);
+    }
+
+    [Theory]
+    [InlineData("This workflow run cannot be retried")]
+    [InlineData("Jobs in this workflow run cannot be re-run")]
+    [InlineData("THIS WORKFLOW RUN CANNOT BE RETRIED")]
+    public void AForbiddenAnswerSayingTheRunCannotBeRerun_IsARefusal(string message)
+    {
+        Assert.True(CiRerunPolicy.IsRefusal(HttpStatusCode.Forbidden, message));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden, "Resource not accessible by integration")]
+    [InlineData(HttpStatusCode.Forbidden, "")]
+    [InlineData(HttpStatusCode.Forbidden, null)]
+    [InlineData(HttpStatusCode.NotFound, "This workflow run cannot be retried")]
+    [InlineData(null, "This workflow run cannot be retried")]
+    public void AnythingElse_IsNotARefusal(HttpStatusCode? status, string? message)
+    {
+        Assert.False(CiRerunPolicy.IsRefusal(status, message));
     }
 
     [Fact]

@@ -784,6 +784,28 @@ public class SweeperActivitiesTests
     }
 
     [Fact]
+    public async Task ARebasedPullRequest_IsNotSignalledAgain_UntilItsHeadMoves()
+    {
+        var rig = ReconcileRig();
+        rig.Github.OpenPullRequests.Add(Listed(7));
+        rig.OpenCheck(7, "neutral", "completed");
+        await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+
+        await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Empty(rig.Github.CheckRunWrites);
+
+        var moved = "b" + Sha[1..];
+        rig.Github.OpenPullRequests[0] = Listed(7) with { HeadSha = moved };
+
+        await Run(rig.Activities.ReconcileAsync);
+
+        var signal = Assert.Single(rig.Signaler.Signals);
+        Assert.Equal((7, moved), (signal.PrNumber, signal.HeadSha));
+    }
+
+    [Fact]
     public async Task AnOpenTriageCheckWithAPendingRow_OrARunningTriage_IsLeftOpen()
     {
         var rig = ReconcileRig();

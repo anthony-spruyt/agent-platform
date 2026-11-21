@@ -17,7 +17,7 @@ public sealed record DetectMigrationInput(string Repo, int PrNumber, string Head
 
 public sealed record DetectMigrationResult(bool HeadMoved, TriageDecision? Decision);
 
-public sealed record CiCodeInput(string Repo, int PrNumber, string HeadSha, bool AfterRerun = false);
+public sealed record CiCodeInput(string Repo, int PrNumber, string HeadSha, bool AfterRerun = false, bool Rebase = false);
 
 internal sealed record FailingJobLog(string Job, string Tail);
 
@@ -29,7 +29,7 @@ public sealed record BuildContextInput(string Repo, int PrNumber, string HeadSha
 
 public sealed record BuildContextResult(bool HeadMoved, TriageContext? Context, StatedVersions? Stated = null);
 
-public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevClient jev, IUntrustedTextScanner scanner, IOptions<RenovateTriageOptions> options)
+public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevClient jev, IUntrustedTextScanner scanner, IOptions<RenovateTriageOptions> options, TriageRebaseStore rebases)
 {
     public const string PrecheckName = "RenovateTriagePrecheck";
     public const string BuildContextName = "RenovateTriageBuildContext";
@@ -213,11 +213,48 @@ public sealed class RenovateTriageCodeActivities(IGitHubApiClient github, IJevCl
             var plan = CiRerunPolicy.Decide(jobs);
             foreach (var runId in plan.RunIds)
             {
-                await github.RerunFailedJobsAsync(input.Repo, runId, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await github.RerunFailedJobsAsync(input.Repo, runId, cancellationToken).ConfigureAwait(false);
+                }
+                catch (GitHubApiException ex) when (input.Rebase && CiRerunPolicy.IsRefusal(ex.StatusCode, ex.ResponseMessage))
+                {
+                    return await RebaseAsync(input, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             return new RerunResult(false, plan.Outcome);
         });
+
+    // Tick before recording: a retry after a failed record finds the box ticked and only records.
+    private async Task<RerunResult> RebaseAsync(CiCodeInput input, CancellationToken cancellationToken)
+    {
+        var earlier = await rebases.FindAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (earlier is not null)
+        {
+            return new RerunResult(false, string.Equals(earlier.HeadSha, input.HeadSha, StringComparison.Ordinal) ? RerunOutcome.Rebase : RerunOutcome.RebaseLimit);
+        }
+
+        var pr = await github.GetPullRequestAsync(input.Repo, input.PrNumber, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(pr.HeadSha, input.HeadSha, StringComparison.Ordinal))
+        {
+            return new RerunResult(true, RerunOutcome.NothingFailed);
+        }
+
+        var tick = RenovateRebaseBox.Tick(pr.Body ?? string.Empty);
+        if (tick.State == RebaseBoxState.Missing)
+        {
+            return new RerunResult(false, RerunOutcome.NoRebaseBox);
+        }
+
+        if (tick.State == RebaseBoxState.Ticked)
+        {
+            await github.UpdatePullRequestBodyAsync(input.Repo, input.PrNumber, tick.Body, cancellationToken).ConfigureAwait(false);
+        }
+
+        await rebases.RecordAsync(input.Repo, input.PrNumber, input.HeadSha, cancellationToken).ConfigureAwait(false);
+        return new RerunResult(false, RerunOutcome.Rebase);
+    }
 
     private static string JevInput(IReadOnlyList<FailingJobLog> logs)
     {

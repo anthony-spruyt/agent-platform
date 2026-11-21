@@ -22,6 +22,8 @@ public partial class RenovateTriageWorkflow
     private const string CiPollPatch = "renovate-triage-ci-poll-v1";
     private const string CiRecheckPatch = "renovate-triage-ci-recheck-v1";
     private const string TransientPatch = "renovate-triage-transient-v1";
+    private const string RebasePatch = "renovate-triage-rebase-v1";
+    private const string RebaseSummary = "CI failed on a job GitHub will not re-run. Asked Renovate to rebase this pull request; triage runs again when CI completes on its new commit.";
 
     public static readonly TimeSpan CiTimeout = TimeSpan.FromHours(2);
 
@@ -93,6 +95,7 @@ public partial class RenovateTriageWorkflow
     private int _applySignals;
     private bool _ciRecheck;
     private bool _transient;
+    private bool _rebase;
     private int _assessSignals;
 
     public static string WorkflowId(string repo, int prNumber) => $"renovate-triage/{repo}/{prNumber}";
@@ -129,6 +132,7 @@ public partial class RenovateTriageWorkflow
         _claude = Workflow.Patched(ClaudePatch);
         _ciRecheck = Workflow.Patched(CiRecheckPatch);
         _transient = Workflow.Patched(TransientPatch);
+        _rebase = Workflow.Patched(RebasePatch);
         try
         {
             var result = await JudgeAsync(input, run);
@@ -246,6 +250,13 @@ public partial class RenovateTriageWorkflow
                     if (rerun.HeadMoved)
                     {
                         continue;
+                    }
+
+                    if (rerun.Rebased)
+                    {
+                        await FinishCheckAsync(input, assess.HeadSha, CheckRunConclusion.Neutral, RebaseSummary);
+                        await CompleteAsync(run);
+                        return new RenovateTriageResult(RenovateTriageOutcome.Rebased, assess.HeadSha, TriageRules.RebaseRequested, null);
                     }
 
                     if (rerun.Rerun)
@@ -408,7 +419,7 @@ public partial class RenovateTriageWorkflow
         return result;
     }
 
-    private sealed record CiFailureStep(bool HeadMoved, bool Rerun, bool Stale, int Seq, int SignalsBeforeRerun);
+    private sealed record CiFailureStep(bool HeadMoved, bool Rerun, bool Stale, int Seq, int SignalsBeforeRerun, bool Rebased = false);
 
     private async Task<CiFailureStep> ClassifyAndRerunAsync(RenovateTriageInput input, BeginRunResult? run, int seq, string headSha, TriageMode mode, bool afterRerun)
     {
@@ -442,10 +453,16 @@ public partial class RenovateTriageWorkflow
         var signalsBeforeRerun = _signalCount;
         stepStarted = Workflow.UtcNow;
         var rerun = await Workflow.ExecuteActivityAsync(
-            (RenovateTriageCodeActivities activities) => activities.RerunFailedJobsAsync(new CiCodeInput(input.Repo, input.PrNumber, headSha)),
+            (RenovateTriageCodeActivities activities) => activities.RerunFailedJobsAsync(new CiCodeInput(input.Repo, input.PrNumber, headSha, false, _rebase)),
             _activityOptions);
         await RecordStepAsync(run, ++seq, "ci-rerun", LadderRung.Rule, rerun.HeadMoved ? "head_moved" : JsonNamingPolicy.SnakeCaseLower.ConvertName(rerun.Outcome.ToString()), stepStarted, rerun);
-        return new CiFailureStep(rerun.HeadMoved, !rerun.HeadMoved && rerun.Outcome != RerunOutcome.AttemptLimit, false, seq, signalsBeforeRerun);
+        return new CiFailureStep(
+            rerun.HeadMoved,
+            !rerun.HeadMoved && rerun.Outcome is RerunOutcome.Rerun or RerunOutcome.NothingFailed,
+            false,
+            seq,
+            signalsBeforeRerun,
+            !rerun.HeadMoved && rerun.Outcome == RerunOutcome.Rebase);
     }
 
     // A check_suite webhook can be lost and nothing signals a commit status completing, so a wait wakes on a timer too.

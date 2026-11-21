@@ -32,6 +32,7 @@ public enum RenovateTriageOutcome
     AlreadyJudged,
     Judged,
     Parked,
+    Rebased,
 }
 
 public sealed record RenovateTriageInput(string Repo, int PrNumber, bool LateSignal = false);
