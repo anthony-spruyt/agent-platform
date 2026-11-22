@@ -82,6 +82,8 @@ public interface IGitHubApiClient
 
     Task UpdateIssueCommentAsync(string repo, long commentId, string body, CancellationToken cancellationToken);
 
+    Task UpdatePullRequestBodyAsync(string repo, int number, string body, CancellationToken cancellationToken);
+
     Task<long> CreateCheckRunAsync(string repo, GitHubCheckRunWrite run, CancellationToken cancellationToken);
 
     Task UpdateCheckRunAsync(string repo, long checkRunId, GitHubCheckRunWrite run, CancellationToken cancellationToken);
@@ -520,6 +522,20 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task UpdatePullRequestBodyAsync(string repo, int number, string body, CancellationToken cancellationToken)
+    {
+        var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var token = await tokens.GetTokenAsync(repo, _pullRequestsWrite, cancellationToken).ConfigureAwait(false);
+        await GitHubHttp.SendAsync(
+            http,
+            GitHubHttp.Request(HttpMethod.Patch, $"repos/{owner}/{name}/pulls/{number}", token, JsonContent.Create(new { body }, options: GitHubJson.Options)),
+            "pull request body update",
+            cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<long> CreateCheckRunAsync(string repo, GitHubCheckRunWrite run, CancellationToken cancellationToken)
     {
         var (owner, name) = GitHubRepoName.Parse(repo, nameof(repo));
@@ -652,7 +668,7 @@ public sealed class GitHubApiClient(HttpClient http, IGitHubInstallationTokenPro
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(runId);
 
         var token = await tokens.GetTokenAsync(repo, _actionsWrite, cancellationToken).ConfigureAwait(false);
-        await GitHubHttp.SendAsync(
+        await GitHubHttp.SendCarryingErrorMessageAsync(
             http,
             GitHubHttp.Request(HttpMethod.Post, $"repos/{owner}/{name}/actions/runs/{runId}/rerun-failed-jobs", token),
             "failed jobs rerun",

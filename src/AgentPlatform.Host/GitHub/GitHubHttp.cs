@@ -8,18 +8,23 @@ namespace AgentPlatform.Host.GitHub;
 
 public sealed class GitHubApiException : Exception
 {
-    public GitHubApiException(string message, HttpStatusCode? statusCode = null, Exception? innerException = null)
+    public GitHubApiException(string message, HttpStatusCode? statusCode = null, Exception? innerException = null, string? responseMessage = null)
         : base(message, innerException)
     {
         StatusCode = statusCode;
+        ResponseMessage = responseMessage;
     }
 
     public HttpStatusCode? StatusCode { get; }
+
+    public string? ResponseMessage { get; }
 }
 
 internal static class GitHubHttp
 {
     public const string ClientName = "github";
+
+    private const int MaxErrorBodyChars = 4096;
 
     public static void Configure(HttpClient client)
     {
@@ -42,6 +47,20 @@ internal static class GitHubHttp
         {
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             EnsureSuccess(response, operation);
+        }
+    }
+
+    // For calls whose caller must tell GitHub's refusals apart by their message: several refusals share one status.
+    public static async Task SendCarryingErrorMessageAsync(HttpClient client, HttpRequestMessage request, string operation, CancellationToken cancellationToken)
+    {
+        using (request)
+        {
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await ReadErrorMessageAsync(response, cancellationToken).ConfigureAwait(false);
+                throw new GitHubApiException($"GitHub {operation} failed with status {(int)response.StatusCode}.", response.StatusCode, responseMessage: message);
+            }
         }
     }
 
@@ -131,6 +150,29 @@ internal static class GitHubHttp
         if (!response.IsSuccessStatusCode)
         {
             throw new GitHubApiException($"GitHub {operation} failed with status {(int)response.StatusCode}.", response.StatusCode);
+        }
+    }
+
+    private static async Task<string?> ReadErrorMessageAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using (stream.ConfigureAwait(false))
+        {
+            using var reader = new StreamReader(stream);
+            var text = await ReadBoundedAsync(reader, MaxErrorBodyChars, keepTail: false, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                using var document = JsonDocument.Parse(text);
+                return document.RootElement is { ValueKind: JsonValueKind.Object } root
+                    && root.TryGetProperty("message", out var message)
+                    && message.ValueKind == JsonValueKind.String
+                        ? message.GetString()
+                        : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
     }
 

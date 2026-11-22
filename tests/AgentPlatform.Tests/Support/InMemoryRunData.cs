@@ -19,6 +19,7 @@ internal sealed class InMemoryRunData
         Store = new RunDataStore(factory);
         Verdicts = new TriageVerdictStore(factory);
         Pending = new TriagePendingStore(factory, TimeProvider.System);
+        Rebases = new TriageRebaseStore(factory, TimeProvider.System);
     }
 
     public IDbContextFactory<RunDataDbContext> Factory { get; }
@@ -28,6 +29,8 @@ internal sealed class InMemoryRunData
     public TriageVerdictStore Verdicts { get; }
 
     public TriagePendingStore Pending { get; }
+
+    public TriageRebaseStore Rebases { get; }
 
     public RunDataActivities Activities => new(Store);
 

@@ -239,6 +239,66 @@ public class GitHubApiClientCodeRungTests
     }
 
     [Fact]
+    public async Task RerunFailedJobs_WhenGitHubRefusesTheRun_CarriesTheMessageOfTheRefusal()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("""{"message":"This workflow run cannot be retried"}""", HttpStatusCode.Forbidden));
+
+        var ex = await Assert.ThrowsAsync<GitHubApiException>(() => client.RerunFailedJobsAsync("octo/widgets", 900, Ct));
+
+        Assert.Equal(HttpStatusCode.Forbidden, ex.StatusCode);
+        Assert.Equal("This workflow run cannot be retried", ex.ResponseMessage);
+        Assert.DoesNotContain("cannot be retried", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("not json at all")]
+    [InlineData("""{"errors":["x"]}""")]
+    [InlineData("""{"message":42}""")]
+    public async Task RerunFailed_WhenTheErrorBodyHasNoMessage_ThrowsWithoutOne(string body)
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json(body, HttpStatusCode.Forbidden));
+
+        var ex = await Assert.ThrowsAsync<GitHubApiException>(() => client.RerunFailedJobsAsync("octo/widgets", 900, Ct));
+
+        Assert.Equal(HttpStatusCode.Forbidden, ex.StatusCode);
+        Assert.Null(ex.ResponseMessage);
+    }
+
+    [Fact]
+    public async Task RerunFailedJobs_ReadsNoMoreOfAnErrorBodyThanTheMessageNeeds()
+    {
+        var (client, _, _) = Create(_ => StubHttpHandler.Json("{\"message\":\"" + new string('x', 100_000) + "\"}", HttpStatusCode.Forbidden));
+
+        var ex = await Assert.ThrowsAsync<GitHubApiException>(() => client.RerunFailedJobsAsync("octo/widgets", 900, Ct));
+
+        Assert.Null(ex.ResponseMessage);
+    }
+
+    [Fact]
+    public async Task UpdatePullRequestBody_PatchesThePullRequestWithAPullRequestsWriteToken()
+    {
+        var (client, handler, tokens) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await client.UpdatePullRequestBodyAsync("octo/widgets", 7, "line one\n- [x] box", Ct);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        Assert.Equal("/repos/octo/widgets/pulls/7", request.Uri.AbsolutePath);
+        Assert.Equal("""{"body":"line one\n- [x] box"}""", request.Body);
+        Assert.Equal(new Dictionary<string, string> { ["pull_requests"] = "write" }, Assert.Single(tokens.Requests).Permissions);
+    }
+
+    [Fact]
+    public async Task UpdatePullRequestBody_RejectsABadPullRequestNumber()
+    {
+        var (client, handler, _) = Create(_ => StubHttpHandler.Json("{}"));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.UpdatePullRequestBodyAsync("octo/widgets", 0, "x", Ct));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task RerunFailedJobs_RejectsABadRunId()
     {
         var (client, handler, _) = Create(_ => Text(string.Empty));

@@ -83,6 +83,7 @@ public static partial class TriageRules
     public const string PrecheckDiff = "precheck-diff";
     public const string PrecheckFlagged = "precheck-flagged";
     public const string PrecheckUnchecked = "precheck-unchecked";
+    public const string RebaseRequested = "rebase-requested";
 
     public const string NonRenovateCommitComment = "**Needs review:** this PR has commits that Renovate didn't make.";
     public const string CiTimeoutComment = "**Waiting:** CI didn't finish within 2 hours. Triage runs again when a check suite completes.";

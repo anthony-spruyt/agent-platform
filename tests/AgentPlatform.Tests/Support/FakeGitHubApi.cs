@@ -335,6 +335,10 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
         return Result(log is null ? null : log[Math.Max(0, log.Length - maxChars)..]);
     }
 
+    public Dictionary<long, Exception> RerunFailures { get; } = [];
+
+    public List<long> RerunAttempts { get; } = [];
+
     public Task RerunFailedJobsAsync(string repo, long runId, CancellationToken cancellationToken)
     {
         if (WriteFailure is not null)
@@ -342,8 +346,29 @@ internal sealed class FakeGitHubApi : IGitHubApiClient
             return Task.FromException(WriteFailure);
         }
 
+        RerunAttempts.Add(runId);
+        if (RerunFailures.TryGetValue(runId, out var refusal))
+        {
+            return Task.FromException(refusal);
+        }
+
         Writes.Add($"rerun:{runId}");
         Reruns.Add(runId);
+        return Task.CompletedTask;
+    }
+
+    public List<string> BodyWrites { get; } = [];
+
+    public Task UpdatePullRequestBodyAsync(string repo, int number, string body, CancellationToken cancellationToken)
+    {
+        if (WriteFailure is not null)
+        {
+            return Task.FromException(WriteFailure);
+        }
+
+        Writes.Add($"body:{number}");
+        BodyWrites.Add(body);
+        PullRequest = PullRequest with { Body = body };
         return Task.CompletedTask;
     }
 
