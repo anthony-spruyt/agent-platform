@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.27.4](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.3...v1.27.4) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** update dotnet monorepo ([#338](https://github.com/anthony-spruyt/agent-platform/issues/338)) ([3cb571c](https://github.com/anthony-spruyt/agent-platform/commit/3cb571c6087c4a97490daca377e3885e42587869))
+* **deps:** update opentelemetry-dotnet monorepo to 1.21.0 ([#346](https://github.com/anthony-spruyt/agent-platform/issues/346)) ([2b12a80](https://github.com/anthony-spruyt/agent-platform/commit/2b12a80f41b03ca2ee0429c1f8865c04e3d4ae36))
+* **deps:** update temporalio-dotnet to 1.22.0 ([#339](https://github.com/anthony-spruyt/agent-platform/issues/339)) ([276f4ab](https://github.com/anthony-spruyt/agent-platform/commit/276f4abc8857651e3df66c115019b7069208dca4))
+* **triage:** rebase a renovate pr when github refuses to re-run a flaky job ([#350](https://github.com/anthony-spruyt/agent-platform/issues/350)) ([9f09e0b](https://github.com/anthony-spruyt/agent-platform/commit/9f09e0b73a95b236a55acfa65eae446087d02518))
+
 ## [1.27.3](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.2...v1.27.3) (2026-11-17)
 
 
