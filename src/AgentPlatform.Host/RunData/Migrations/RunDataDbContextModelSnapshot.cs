@@ -17,7 +17,7 @@ namespace AgentPlatform.Host.RunData.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.14")
+                .HasAnnotation("ProductVersion", "10.0.15")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -423,6 +423,40 @@ namespace AgentPlatform.Host.RunData.Migrations
                         .IsUnique();
 
                     b.ToTable("renovate_triage_pending", (string)null);
+                });
+
+            modelBuilder.Entity("AgentPlatform.Host.RenovateTriage.TriageRebase", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("HeadSha")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("head_sha");
+
+                    b.Property<int>("PrNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("pr_number");
+
+                    b.Property<string>("Repo")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("repo");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Repo", "PrNumber")
+                        .IsUnique();
+
+                    b.ToTable("renovate_triage_rebases", (string)null);
                 });
 
             modelBuilder.Entity("AgentPlatform.Host.RunData.Prompt", b =>

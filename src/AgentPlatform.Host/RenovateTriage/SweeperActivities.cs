@@ -18,6 +18,7 @@ public sealed partial class SweeperActivities(
     IGitHubApiClient github,
     IGitHubAppClient app,
     TriagePendingStore pendings,
+    TriageRebaseStore rebases,
     ClaudeBudgetStore budget,
     TriageVerdictStore verdicts,
     SweeperStore state,
@@ -225,7 +226,8 @@ public sealed partial class SweeperActivities(
                 var ignoreTriageSignals = unapplied is not null;
                 var honourNeedsReviewLabel = unapplied is not null && TriageRules.IsApproving(unapplied.Verdict);
                 endsSkipped = TriageRules.SkipReason(pr.AuthorId, pr.Labels, ignoreTriageSignals, honourNeedsReviewLabel, hasPendingRow: true) is not null
-                    || TriageRules.IsApproved(reviews, pr.HeadSha, ignoreTriageSignals);
+                    || TriageRules.IsApproved(reviews, pr.HeadSha, ignoreTriageSignals)
+                    || await IsRebasedHeadAsync(row.Repo, row.PrNumber, pr.HeadSha, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -239,6 +241,10 @@ public sealed partial class SweeperActivities(
         await CompleteOpenCheckAsync(row.Repo, row.PrNumber, row.HeadSha, "neutral", "No further agent triage: this pull request is no longer waiting in the queue.", cancellationToken).ConfigureAwait(false);
         return (RowState.Settled, pr);
     }
+
+    // Renovate has been asked to rebase this head: triage reruns on the new commit, so signalling this head again only repeats the same run.
+    private async Task<bool> IsRebasedHeadAsync(string repo, int prNumber, string headSha, CancellationToken cancellationToken) =>
+        (await rebases.FindAsync(repo, prNumber, cancellationToken).ConfigureAwait(false))?.HeadSha == headSha;
 
     private async Task<Reconciled> ReconcileAsync(string repo, GitHubListedPullRequest pr, CancellationToken cancellationToken)
     {
@@ -262,7 +268,8 @@ public sealed partial class SweeperActivities(
         }
 
         if (pr.Labels.Any(l => TriageRules.IsBlocking(l, hasPendingRow: false))
-            || await verdicts.ExistsAsync(repo, pr.Number, pr.HeadSha, options.Value.Mode, cancellationToken).ConfigureAwait(false))
+            || await verdicts.ExistsAsync(repo, pr.Number, pr.HeadSha, options.Value.Mode, cancellationToken).ConfigureAwait(false)
+            || await IsRebasedHeadAsync(repo, pr.Number, pr.HeadSha, cancellationToken).ConfigureAwait(false))
         {
             return Reconciled.Nothing;
         }

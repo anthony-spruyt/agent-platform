@@ -30,6 +30,8 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
 
     public DbSet<TriagePending> TriagePending => Set<TriagePending>();
 
+    public DbSet<TriageRebase> TriageRebases => Set<TriageRebase>();
+
     public DbSet<ClaudeCooldown> ClaudeCooldowns => Set<ClaudeCooldown>();
 
     public DbSet<SweeperState> SweeperState => Set<SweeperState>();
@@ -88,6 +90,16 @@ public sealed class RunDataDbContext(DbContextOptions<RunDataDbContext> options)
             pending.Property(p => p.Reason).HasMaxLength(200);
             pending.Property(p => p.Status).HasConversion<string>().HasMaxLength(16);
             pending.HasIndex(p => new { p.Repo, p.PrNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<TriageRebase>(rebase =>
+        {
+            rebase.ToTable("renovate_triage_rebases");
+            rebase.HasKey(r => r.Id);
+            rebase.Property(r => r.Id).ValueGeneratedNever();
+            rebase.Property(r => r.Repo).HasMaxLength(200);
+            rebase.Property(r => r.HeadSha).HasMaxLength(64);
+            rebase.HasIndex(r => new { r.Repo, r.PrNumber }).IsUnique();
         });
 
         modelBuilder.Entity<ClaudeCooldown>(cooldown =>

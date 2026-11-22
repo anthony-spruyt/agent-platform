@@ -34,6 +34,7 @@ public class SweeperActivitiesTests
                 Github,
                 App,
                 Data.Pending,
+                Data.Rebases,
                 RenovateBudgetFixtures.Store(Data.Factory, time, RenovateBudgetFixtures.Caps(perHour: perHour)),
                 Data.Verdicts,
                 Sweeper,
@@ -236,6 +237,64 @@ public class SweeperActivitiesTests
         Assert.Equal(TriagePendingStatus.Owner, await rig.StatusAsync(7));
         Assert.Equal("neutral", Assert.Single(rig.Github.StoredCheckRuns).Run.Conclusion);
         Assert.Equal("completed", rig.Github.StoredCheckRuns[0].Run.Status);
+        Assert.Equal(1, result.Settled);
+    }
+
+    [Fact]
+    public async Task ARebasedPullRequest_IsNotRedrivenAgain_UntilItsHeadMoves()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7);
+        await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+
+        var first = await Run(rig.Activities.RedriveAsync);
+        var second = await Run(rig.Activities.RedriveAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Equal(TriagePendingStatus.Pending, await rig.StatusAsync(7));
+        Assert.Equal(new RedriveResult(1, 0, 0, 0, 0, 1), first);
+        Assert.Equal(first, second);
+
+        var moved = "b" + Sha[1..];
+        rig.Github.PullRequestsByNumber[7] = rig.Github.PullRequestsByNumber[7] with { HeadSha = moved };
+
+        await Run(rig.Activities.RedriveAsync);
+
+        var signal = Assert.Single(rig.Signaler.Signals);
+        Assert.Equal((7, moved), (signal.PrNumber, signal.HeadSha));
+    }
+
+    [Fact]
+    public async Task ARebasedPullRequest_TakesNoRedriveSlotFromTheOthers()
+    {
+        var rig = new Rig(perHour: 1);
+        foreach (var pr in new[] { 1, 2 })
+        {
+            await rig.ParkAsync(pr);
+            rig.OpenPullRequest(pr);
+        }
+
+        await rig.Data.Rebases.RecordAsync(Repo, 1, Sha, Ct);
+
+        await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal([2], rig.Signaler.Signals.Select(s => s.PrNumber));
+    }
+
+    [Fact]
+    public async Task ARebasedPullRequest_TheOwnerTookOver_IsStillSettled_AndItsOpenCheckClosedNeutral()
+    {
+        var rig = new Rig();
+        await rig.ParkAsync(7);
+        rig.OpenPullRequest(7, TriageRules.NeedsReviewLabel);
+        rig.OpenCheck(7);
+        await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+
+        var result = await Run(rig.Activities.RedriveAsync);
+
+        Assert.Equal(TriagePendingStatus.Owner, await rig.StatusAsync(7));
+        Assert.Equal("neutral", Assert.Single(rig.Github.StoredCheckRuns).Run.Conclusion);
         Assert.Equal(1, result.Settled);
     }
 
@@ -781,6 +840,49 @@ public class SweeperActivitiesTests
 
         Assert.Empty(rig.Signaler.Signals);
         Assert.Empty(rig.Github.CheckRunWrites);
+    }
+
+    [Fact]
+    public async Task ARebasedPullRequest_IsNotSignalledAgain_UntilItsHeadMoves()
+    {
+        var rig = ReconcileRig();
+        rig.Github.OpenPullRequests.Add(Listed(7));
+        rig.OpenCheck(7, "neutral", "completed");
+        await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+
+        await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+        Assert.Empty(rig.Github.CheckRunWrites);
+
+        var moved = "b" + Sha[1..];
+        rig.Github.OpenPullRequests[0] = Listed(7) with { HeadSha = moved };
+
+        await Run(rig.Activities.ReconcileAsync);
+
+        var signal = Assert.Single(rig.Signaler.Signals);
+        Assert.Equal((7, moved), (signal.PrNumber, signal.HeadSha));
+    }
+
+    [Fact]
+    public async Task ARebasedPullRequest_WhoseTriageCheckWasNeverWritten_IsNotSignalledAgain_UntilItsHeadMoves()
+    {
+        var rig = ReconcileRig();
+        rig.Github.OpenPullRequests.Add(Listed(7));
+        await rig.Data.Rebases.RecordAsync(Repo, 7, Sha, Ct);
+
+        await Run(rig.Activities.ReconcileAsync);
+        await Run(rig.Activities.ReconcileAsync);
+
+        Assert.Empty(rig.Signaler.Signals);
+
+        var moved = "b" + Sha[1..];
+        rig.Github.OpenPullRequests[0] = Listed(7) with { HeadSha = moved };
+
+        await Run(rig.Activities.ReconcileAsync);
+
+        var signal = Assert.Single(rig.Signaler.Signals);
+        Assert.Equal((7, moved), (signal.PrNumber, signal.HeadSha));
     }
 
     [Fact]
