@@ -1,13 +1,11 @@
-<Project Sdk="Aspire.AppHost.Sdk/17.0.0">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsPublishable>false</IsPublishable>
-    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.Dotnet" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\AgentPlatform.Host\AgentPlatform.Host.csproj" />
   </ItemGroup>
 </Project>

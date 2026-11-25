@@ -665,7 +665,7 @@ CI fails when the model and the migrations differ (`dotnet ef migrations has-pen
 
 ## Run locally
 
-Needs a .NET SDK at least as new as the one the `Dockerfile` builds with (`global.json` is only a floor) and a container runtime for the Temporal dev server.
+Needs a .NET SDK at least as new as the one the `Dockerfile` builds with (`global.json` is only a floor) and a container runtime for the Temporal dev server. A C# AppHost also needs the Aspire CLI bundle: the build uses an `aspire` on `PATH` and otherwise fetches the matching CLI from NuGet.
 
 ```bash
 dotnet run --project src/AgentPlatform.AppHost
