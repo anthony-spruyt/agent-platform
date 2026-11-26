@@ -5,6 +5,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 const string LocalSessionTokenKey = "local-development-only-session-key";
 const string LocalWebhookSecret = "local-development-only-webhook-secret";
 const string TemporalNamespace = "agent-platform";
+const string HostProject = "../AgentPlatform.Host/AgentPlatform.Host.csproj";
 
 using var githubAppKey = RSA.Create(2048);
 
@@ -18,12 +19,12 @@ var temporal = builder.AddContainer("temporal", "temporalio/temporal", "1.9.1")
 var temporalGrpc = temporal.GetEndpoint("grpc");
 var temporalAddress = ReferenceExpression.Create($"{temporalGrpc.Property(EndpointProperty.HostAndPort)}");
 
-var migrate = builder.AddProject<Projects.AgentPlatform_Host>("migrate")
+var migrate = builder.AddDotnetProject("migrate", HostProject)
     .WithEnvironment("AgentPlatform__Role", "Migrate")
     .WithReference(rundata)
     .WaitFor(rundata);
 
-builder.AddProject<Projects.AgentPlatform_Host>("web")
+builder.AddDotnetProject("web", HostProject)
     .WithEnvironment("AgentPlatform__Role", "Web")
     .WithEnvironment("Temporal__Namespace", TemporalNamespace)
     .WithEnvironment("AgentGateway__SessionTokenKey", LocalSessionTokenKey)
@@ -35,7 +36,7 @@ builder.AddProject<Projects.AgentPlatform_Host>("web")
     .WithHttpHealthCheck("/health", endpointName: "webhooks")
     .WaitFor(temporal);
 
-builder.AddProject<Projects.AgentPlatform_Host>("worker")
+builder.AddDotnetProject("worker", HostProject)
     .WithEnvironment("AgentPlatform__Role", "Worker")
     .WithEnvironment("AgentGateway__SessionTokenKey", LocalSessionTokenKey)
     .WithEnvironment("GitHub__AppId", "1")
