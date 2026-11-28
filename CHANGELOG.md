@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.27.5](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.4...v1.27.5) (2026-11-28)
+
+
+### Bug Fixes
+
+* **deps:** update aspire monorepo to v17 ([#358](https://github.com/anthony-spruyt/agent-platform/issues/358)) ([a7ee98b](https://github.com/anthony-spruyt/agent-platform/commit/a7ee98b73fad5ca845c8240529078e21c0a562d4))
+* **deps:** update dotnet monorepo to 10.11.1 ([#363](https://github.com/anthony-spruyt/agent-platform/issues/363)) ([22217bf](https://github.com/anthony-spruyt/agent-platform/commit/22217bf98a87f799a716d8fc9c658adfca329552))
+* **deps:** update opentelemetry-dotnet-contrib monorepo to 1.21.0 ([#348](https://github.com/anthony-spruyt/agent-platform/issues/348)) ([d110220](https://github.com/anthony-spruyt/agent-platform/commit/d11022045e2a049eba545f506385f170cad7dbd9))
+
 ## [1.27.4](https://github.com/anthony-spruyt/agent-platform/compare/v1.27.3...v1.27.4) (2026-11-22)
 
 
